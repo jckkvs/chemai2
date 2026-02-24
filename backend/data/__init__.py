@@ -27,6 +27,14 @@ from backend.data.dim_reduction import (
     run_tsne,
     run_umap,
 )
+from backend.data.benchmark import (
+    ModelScore,
+    BenchmarkResult,
+    evaluate_regression,
+    evaluate_classification,
+    compute_learning_curve,
+    benchmark_models,
+)
 
 __all__ = [
     "load_file",
@@ -58,4 +66,10 @@ __all__ = [
     "run_pca",
     "run_tsne",
     "run_umap",
+    "ModelScore",
+    "BenchmarkResult",
+    "evaluate_regression",
+    "evaluate_classification",
+    "compute_learning_curve",
+    "benchmark_models",
 ]
