@@ -40,7 +40,7 @@ class DimReductionConfig:
     whiten: bool = False
     # t-SNE
     perplexity: float = 30.0
-    tsne_n_iter: int = 1000
+    tsne_max_iter: int = 1000
     # UMAP
     n_neighbors: int = 15
     min_dist: float = 0.1
@@ -92,11 +92,11 @@ class DimReducer(BaseEstimator, TransformerMixin):
             self._reducer.fit(X_arr)
 
         elif cfg.method == "tsne":
-            # t-SNEはfit_transformのみ対応
+            # t-SNEは内部でfit_transformのみ対応
             self._reducer = TSNE(
                 n_components=cfg.n_components,
                 perplexity=cfg.perplexity,
-                n_iter=cfg.tsne_n_iter,
+                max_iter=cfg.tsne_max_iter,
                 random_state=cfg.random_state,
             )
             self._embedding = self._reducer.fit_transform(X_arr)
@@ -143,7 +143,7 @@ class DimReducer(BaseEstimator, TransformerMixin):
 
         raise ValueError(f"未知の手法: {cfg.method}")
 
-    def fit_transform(
+    def fit_transform(  # type: ignore[override]
         self, X: np.ndarray | pd.DataFrame, y: Any = None, **params: Any
     ) -> np.ndarray:
         """fit + transform を1ステップで実行（t-SNE/UMAP推奨）。"""
@@ -214,7 +214,8 @@ def run_pca(
 
     col_names = [f"PC{i+1}" for i in range(n_components)]
     emb_df = pd.DataFrame(embedding, columns=col_names, index=df.index)
-    return emb_df, reducer.explained_variance_ratio_ or np.array([])
+    evr = reducer.explained_variance_ratio_
+    return emb_df, evr if evr is not None else np.array([])
 
 
 def run_tsne(
