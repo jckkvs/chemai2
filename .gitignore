@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+env/
+venv/
+.venv/
+pip-wheel-metadata/
+
+# 仮想環境
+.conda/
+conda-meta/
+
+# テスト・カバレッジ
+.pytest_cache/
+.coverage
+htmlcov/
+*.xml
+.mutmut-cache
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# MLflow & モデル保存
+mlruns/
+mlartifacts/
+*.joblib
+*.pkl
+*.h5
+*.pt
+*.pth
+
+# データファイル（大容量）
+*.parquet
+data/raw/
+data/processed/
+
+# 一時ファイル
+tmp/
+temp/
+*.tmp
+*.log
+*.bak
+
+# 環境設定（秘密情報）
+.env
+.env.*
+secrets.yaml
+
+# node_modules（Django静的ファイル用）
+node_modules/
+staticfiles/
+
+# Streamlit
+.streamlit/secrets.toml
