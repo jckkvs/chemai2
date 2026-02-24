@@ -13,11 +13,27 @@ import pytest
 
 from backend.data.feature_engineer import (
     InteractionTransformer,
+    GroupAggTransformer,
     DatetimeFeatureExtractor,
     LagRollingTransformer,
     FeatureEngineeringConfig,
     build_feature_engineering_pipeline,
 )
+
+
+# ============================================================
+# フィクスチャ (追加)
+# ============================================================
+
+@pytest.fixture
+def group_df() -> pd.DataFrame:
+    """グループ集約テスト用DataFrameフィクスチャ。"""
+    np.random.seed(42)
+    return pd.DataFrame({
+        "category": ["A", "B", "A", "B", "A", "C", "C"],
+        "val1": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        "val2": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0],
+    })
 
 
 # ============================================================
@@ -223,3 +239,73 @@ class TestFeatureEngineeringConfig:
         steps = build_feature_engineering_pipeline(cfg)
         assert len(steps) == 1
         assert steps[0][0] == "interactions"
+
+
+# ============================================================
+# GroupAggTransformer
+# ============================================================
+
+class TestGroupAggTransformer:
+    """T-FE-005: グループ集約Transformerのテスト。"""
+
+    def test_output_shape(self, group_df: pd.DataFrame) -> None:
+        """出力形状が (n_rows, n_agg_cols × n_agg_funcs) であること。(T-FE-005-01)"""
+        t = GroupAggTransformer(
+            group_col="category",
+            agg_cols=["val1", "val2"],
+            agg_funcs=["mean", "std"],
+        )
+        t.fit(group_df)
+        out = t.transform(group_df)
+        # 2列 × 2関数 = 4列
+        assert out.shape == (7, 4)
+
+    def test_feature_names(self, group_df: pd.DataFrame) -> None:
+        """get_feature_names_out()が (n_col × n_func) 個の名前を返すこと。(T-FE-005-02)"""
+        t = GroupAggTransformer(
+            group_col="category",
+            agg_cols=["val1"],
+            agg_funcs=["mean", "max"],
+        )
+        t.fit(group_df)
+        names = t.get_feature_names_out()
+        assert len(names) == 2
+        assert all("grp_category_val1" in n for n in names)
+
+    def test_group_mean_value(self, group_df: pd.DataFrame) -> None:
+        """グループ平均値が正しく計算されること。(T-FE-005-03)"""
+        t = GroupAggTransformer(
+            group_col="category",
+            agg_cols=["val1"],
+            agg_funcs=["mean"],
+        )
+        t.fit(group_df)
+        out = t.transform(group_df)
+        # カテゴリA: val1 = [1,3,5] → mean=3.0
+        # 行0 はカテゴリA
+        expected_a_mean = (1.0 + 3.0 + 5.0) / 3
+        assert out[0, 0] == pytest.approx(expected_a_mean)
+
+    def test_missing_group_col_raises(self) -> None:
+        """存在しないグループ列を指定するとValueErrorが上がること。(T-FE-005-04)"""
+        t = GroupAggTransformer(group_col="nonexistent", agg_cols=["val1"])
+        df = pd.DataFrame({"val1": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="nonexistent"):
+            t.fit(df)
+
+    def test_fillna_zero_for_new_group(self, group_df: pd.DataFrame) -> None:
+        """transformで学習時にないグループが0埋めされること。(T-FE-005-05)"""
+        t = GroupAggTransformer(
+            group_col="category",
+            agg_cols=["val1"],
+            agg_funcs=["mean"],
+        )
+        t.fit(group_df)
+        # 新規グループ 'D' を含むDataFrame
+        new_df = pd.DataFrame({
+            "category": ["D"],
+            "val1": [99.0],
+            "val2": [999.0],
+        })
+        out = t.transform(new_df)
+        assert out[0, 0] == 0.0
