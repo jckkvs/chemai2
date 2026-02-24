@@ -361,17 +361,35 @@ def run_cross_validation(
     # groupsはCV・cross_validate両方に渡す
     effective_groups = groups if groups is not None else cv_config.groups
 
-    results = cross_validate(
-        model,
-        X,
-        y,
+    # sklearn 1.6+ では fit_params が廃止 → 空でない場合のみ params で渡す
+    import sklearn
+    sklearn_version = tuple(int(x) for x in sklearn.__version__.split(".")[:2])
+
+    cv_kwargs: dict[str, Any] = dict(
         cv=cv,
         scoring=scoring,
         groups=effective_groups,
         n_jobs=n_jobs,
         return_train_score=return_train_score,
-        fit_params=fit_params or {},
     )
+    if fit_params:
+        if sklearn_version >= (1, 6):
+            cv_kwargs["params"] = fit_params
+        else:
+            cv_kwargs["fit_params"] = fit_params
+
+    results = cross_validate(model, X, y, **cv_kwargs)
+
+    # sklearn 1.6+では単一scoringでも "test_score" / "train_score" キーで返る。
+    # 後方互换性のため "test_{scoring}" キーも追加する。
+    if isinstance(scoring, str):
+        expected_key = f"test_{scoring}"
+        if expected_key not in results and "test_score" in results:
+            results[expected_key] = results["test_score"]
+        if return_train_score:
+            train_key = f"train_{scoring}"
+            if train_key not in results and "train_score" in results:
+                results[train_key] = results["train_score"]
 
     # 集計スコアを追加
     if isinstance(scoring, str):
@@ -380,9 +398,8 @@ def run_cross_validation(
             results["mean_test_score"] = float(np.mean(results[test_key]))
             results["std_test_score"] = float(np.std(results[test_key]))
 
-    logger.info(
-        f"CV完了: {cv_config.cv_key} / "
-        f"mean={results.get('mean_test_score', 'n/a'):.4f} "
-        f"±{results.get('std_test_score', 0):.4f}"
-    )
+    mean_v = results.get('mean_test_score', None)
+    std_v = results.get('std_test_score', 0)
+    mean_str = f"{mean_v:.4f}" if isinstance(mean_v, float) else str(mean_v)
+    logger.info(f"CV完了: {cv_config.cv_key} / mean={mean_str} ±{std_v:.4f}")
     return results

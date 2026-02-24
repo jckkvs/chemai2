@@ -2,6 +2,24 @@
 from backend.data.loader import load_file, load_from_bytes, save_dataframe
 from backend.data.type_detector import TypeDetector, ColumnType, ColumnInfo, DetectionResult
 from backend.data.preprocessor import Preprocessor, PreprocessConfig, build_full_pipeline
+from backend.data.feature_engineer import (
+    InteractionTransformer,
+    GroupAggTransformer,
+    DatetimeFeatureExtractor,
+    LagRollingTransformer,
+    FeatureEngineeringConfig,
+    build_feature_engineering_pipeline,
+)
+from backend.data.eda import (
+    ColumnStats,
+    compute_column_stats,
+    summarize_dataframe,
+    compute_correlation,
+    OutlierResult,
+    detect_outliers,
+    compute_distribution,
+    analyze_target,
+)
 
 __all__ = [
     "load_file",
@@ -14,4 +32,18 @@ __all__ = [
     "Preprocessor",
     "PreprocessConfig",
     "build_full_pipeline",
+    "InteractionTransformer",
+    "GroupAggTransformer",
+    "DatetimeFeatureExtractor",
+    "LagRollingTransformer",
+    "FeatureEngineeringConfig",
+    "build_feature_engineering_pipeline",
+    "ColumnStats",
+    "compute_column_stats",
+    "summarize_dataframe",
+    "compute_correlation",
+    "OutlierResult",
+    "detect_outliers",
+    "compute_distribution",
+    "analyze_target",
 ]
