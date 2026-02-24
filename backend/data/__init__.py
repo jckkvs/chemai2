@@ -20,6 +20,13 @@ from backend.data.eda import (
     compute_distribution,
     analyze_target,
 )
+from backend.data.dim_reduction import (
+    DimReductionConfig,
+    DimReducer,
+    run_pca,
+    run_tsne,
+    run_umap,
+)
 
 __all__ = [
     "load_file",
@@ -46,4 +53,9 @@ __all__ = [
     "detect_outliers",
     "compute_distribution",
     "analyze_target",
+    "DimReductionConfig",
+    "DimReducer",
+    "run_pca",
+    "run_tsne",
+    "run_umap",
 ]
