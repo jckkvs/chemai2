@@ -395,7 +395,7 @@ class TypeDetector:
         if sample.empty:
             return False
         try:
-            pd.to_datetime(sample, infer_datetime_format=True)
+            pd.to_datetime(sample)
             return True
         except Exception:
             return False

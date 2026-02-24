@@ -200,6 +200,7 @@ with st.sidebar:
         "⚙️ 前処理設定": "preprocess",
         "🤖 AutoML 実行": "automl",
         "📊 モデル評価": "evaluation",
+        "📐 次元削減": "dim_reduction",
         "🧬 化合物解析": "chem",
         "💡 解釈・SHAP": "interpret",
     }
@@ -358,6 +359,13 @@ elif page == "automl":
 elif page == "evaluation":
     from frontend_streamlit.pages import evaluation_page
     evaluation_page.render()
+
+# ===============================================================
+# 次元削減ページ
+# ===============================================================
+elif page == "dim_reduction":
+    from frontend_streamlit.pages import dim_reduction_page
+    dim_reduction_page.render()
 
 # ===============================================================
 # 化合物解析ページ
