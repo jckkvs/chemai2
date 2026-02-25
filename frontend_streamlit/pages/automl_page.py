@@ -267,7 +267,8 @@ def _run_full_pipeline(
         # ── Phase 2: 前処理確認 ───────────────────────────
         if do_prep:
             phase_status.markdown("**Phase 2/6 — 前処理パイプライン構築中…**")
-            detector = TypeDetector()
+            from backend.data.type_detector import TypeDetector as _TypeDetector
+            detector = _TypeDetector()
             dr = detector.detect(df)
             st.session_state["detection_result"] = dr
             st.session_state["step_preprocess_done"] = True
