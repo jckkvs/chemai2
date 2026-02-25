@@ -388,21 +388,21 @@ if page == "home":
 # データ読み込みページ
 # ===============================================================
 elif page == "data_load":
-    from frontend_streamlit.pages import data_load_page
+    from frontend_streamlit.pages.pipeline import data_load_page
     data_load_page.render()
 
 # ===============================================================
 # EDAページ
 # ===============================================================
 elif page == "eda":
-    from frontend_streamlit.pages import eda_page
+    from frontend_streamlit.pages.pipeline import eda_page
     eda_page.render()
 
 # ===============================================================
 # 前処理設定ページ
 # ===============================================================
 elif page == "preprocess":
-    from frontend_streamlit.pages import preprocess_page
+    from frontend_streamlit.pages.pipeline import preprocess_page
     preprocess_page.render()
 
 # ===============================================================
@@ -416,26 +416,26 @@ elif page == "automl":
 # モデル評価ページ
 # ===============================================================
 elif page == "evaluation":
-    from frontend_streamlit.pages import evaluation_page
+    from frontend_streamlit.pages.pipeline import evaluation_page
     evaluation_page.render()
 
 # ===============================================================
 # 次元削減ページ
 # ===============================================================
 elif page == "dim_reduction":
-    from frontend_streamlit.pages import dim_reduction_page
+    from frontend_streamlit.pages.pipeline import dim_reduction_page
     dim_reduction_page.render()
 
 # ===============================================================
 # 化合物解析ページ
 # ===============================================================
 elif page == "chem":
-    from frontend_streamlit.pages import chem_page
+    from frontend_streamlit.pages.tools import chem_page
     chem_page.render()
 
 # ===============================================================
 # 解釈・SHAPページ
 # ===============================================================
 elif page == "interpret":
-    from frontend_streamlit.pages import interpret_page
+    from frontend_streamlit.pages.pipeline import interpret_page
     interpret_page.render()
