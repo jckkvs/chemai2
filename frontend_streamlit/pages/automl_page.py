@@ -49,24 +49,44 @@ class PipelineResult:
 # メイン render 関数
 # ─────────────────────────────────────────────────────────────
 
-def render() -> None:
-    st.markdown("## 🤖 AutoML 完全パイプライン")
+def render(run_config: dict | None = None) -> None:
+    st.markdown("## 🤖 解析結果")
 
     df = st.session_state.get("df")
     target_col = st.session_state.get("target_col")
 
     if df is None:
         st.warning("⚠️ まずデータを読み込んでください。")
-        if st.button("📂 データ読み込みへ", key="goto_load"):
-            st.session_state["page"] = "data_load"
+        if st.button("🏠 ホームへ", key="goto_home_a"):
+            st.session_state["page"] = "home"
             st.rerun()
         return
 
     if not target_col:
-        st.warning("⚠️ 目的変数が選択されていません。データ読み込みページで設定してください。")
-        if st.button("📂 データ読み込みへ（目的変数設定）", key="goto_load2"):
-            st.session_state["page"] = "data_load"
+        st.warning("⚠️ 目的変数が選択されていません。ホームで設定してください。")
+        if st.button("🏠 ホームへ", key="goto_home_b"):
+            st.session_state["page"] = "home"
             st.rerun()
+        return
+
+    # ── ホームから渡された設定で即実行 ──────────────────────
+    if run_config is not None:
+        _run_full_pipeline(
+            df          = df,
+            target_col  = run_config["target_col"],
+            smiles_col  = run_config.get("smiles_col"),
+            numeric_scaler = run_config.get("scaler", "auto"),
+            task_override  = run_config.get("task", "auto"),
+            cv_folds    = run_config.get("cv_folds", 5),
+            max_models  = run_config.get("max_models", 8),
+            timeout     = run_config.get("timeout", 300),
+            do_eda      = run_config.get("do_eda", True),
+            do_prep     = run_config.get("do_prep", True),
+            do_ml       = True,
+            do_eval     = run_config.get("do_eval", True),
+            do_pca      = run_config.get("do_pca", True),
+            do_shap     = run_config.get("do_shap", True),
+        )
         return
 
     # ── データ概要バー ────────────────────────────────────────
