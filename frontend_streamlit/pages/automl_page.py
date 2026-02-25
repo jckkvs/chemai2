@@ -20,6 +20,7 @@ import streamlit as st
 
 from backend.models.automl import AutoMLEngine, AutoMLResult
 from backend.data.preprocessor import PreprocessConfig
+from backend.data.type_detector import TypeDetector
 from backend.data.eda import summarize_dataframe, compute_column_stats, detect_outliers
 from backend.data.dim_reduction import run_pca
 from backend.data.benchmark import evaluate_regression, evaluate_classification
