@@ -15,11 +15,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from sklearn.pipeline import Pipeline
 import streamlit as st
 
 from backend.models.automl import AutoMLEngine, AutoMLResult
-from backend.data.preprocessor import PreprocessConfig, Preprocessor, build_full_pipeline
-from backend.data.type_detector import TypeDetector
+from backend.data.preprocessor import PreprocessConfig
 from backend.data.eda import summarize_dataframe, compute_column_stats, detect_outliers
 from backend.data.dim_reduction import run_pca
 from backend.data.benchmark import evaluate_regression, evaluate_classification
@@ -292,23 +292,22 @@ def _run_full_pipeline(
             phase_status.markdown("**Phase 4/6 — モデル評価中…**")
             try:
                 ar = result.automl_result
+                # best_pipeline は AutoMLEngine.run() で既に fit済み
+                bp: Pipeline = ar.best_pipeline
                 X = df.drop(columns=[target_col])
                 y = df[target_col].values
 
-                # 最良モデルで予測
-                detector = TypeDetector()
-                dr = detector.detect(df)
-                pipeline = build_full_pipeline(dr, ar.best_estimator_, target_col=target_col)
-                pipeline.fit(X, y)
-                y_pred = pipeline.predict(X)
-
+                y_pred = bp.predict(X)
                 task_str = result.task if result.task in ("regression", "classification") else "regression"
                 if task_str == "regression":
-                    result.model_score = evaluate_regression(y, y_pred, model_key=ar.best_model_key)
+                    result.model_score = evaluate_regression(y, y_pred,
+                                                             model_key=ar.best_model_key,
+                                                             cv_mean=ar.best_score)
                 else:
-                    y_prob = pipeline.predict_proba(X) if hasattr(pipeline, "predict_proba") else None
+                    y_prob = bp.predict_proba(X) if hasattr(bp, "predict_proba") else None
                     result.model_score = evaluate_classification(y, y_pred, y_prob=y_prob,
-                                                                 model_key=ar.best_model_key)
+                                                                 model_key=ar.best_model_key,
+                                                                 cv_mean=ar.best_score)
             except Exception as e:
                 result.warnings.append(f"評価エラー: {e}")
                 _log(f"⚠️ 評価スキップ: {e}")
@@ -318,11 +317,12 @@ def _run_full_pipeline(
         if do_pca:
             phase_status.markdown("**Phase 5/6 — PCA 次元削減中…**")
             try:
-                X_num = df.select_dtypes(include="number").drop(
-                    columns=[target_col], errors="ignore"
-                ).dropna()
-                if X_num.shape[1] >= 2:
-                    emb_df, evr = run_pca(X_num, n_components=min(2, X_num.shape[1]))
+                # run_pca が内部で数値列選択 + target_col除外する
+                X_num_df = df.dropna(subset=df.select_dtypes(include="number").columns)
+                if X_num_df.select_dtypes(include="number").shape[1] >= 3:  # target含む方向で >= 3
+                    emb_df, evr = run_pca(
+                        X_num_df, n_components=2, target_col=target_col
+                    )
                     result.pca_df  = emb_df
                     result.pca_evr = evr
             except Exception as e:
@@ -335,29 +335,42 @@ def _run_full_pipeline(
             phase_status.markdown("**Phase 6/6 — SHAP 特徴量重要度計算中…**")
             try:
                 ar = result.automl_result
-                estimator = ar.best_estimator_
+                bp: Pipeline = ar.best_pipeline
+                # Pipelineの最終ステップ(model)から重要度を取得
+                final_estimator = bp[-1] if hasattr(bp, '__getitem__') else bp
 
-                # feature_importances_ があれば使用（高速・安定）
-                if hasattr(estimator, "feature_importances_"):
-                    X_f = df.drop(columns=[target_col])
-                    feat_names = X_f.columns.tolist()
-                    imps = estimator.feature_importances_
+                # 変換後の特徴量名を取得
+                try:
+                    preprocessor_step = bp[:-1]  # model以外
+                    X_raw = df.drop(columns=[target_col])
+                    X_transformed = preprocessor_step.transform(X_raw)
+                    try:
+                        feat_names = bp[:-1].get_feature_names_out().tolist()
+                    except Exception:
+                        feat_names = [f"feature_{i}" for i in range(X_transformed.shape[1])]
+                except Exception:
+                    feat_names = df.drop(columns=[target_col]).select_dtypes(
+                        include="number"
+                    ).columns.tolist()
+
+                if hasattr(final_estimator, "feature_importances_"):
+                    imps = final_estimator.feature_importances_
+                    names = feat_names[:len(imps)]
                     result.shap_importances = dict(
-                        sorted(zip(feat_names, imps), key=lambda x: x[1], reverse=True)
+                        sorted(zip(names, imps), key=lambda x: x[1], reverse=True)
                     )
-                elif hasattr(estimator, "coef_"):
-                    X_f = df.drop(columns=[target_col]).select_dtypes(include="number")
-                    feat_names = X_f.columns.tolist()
-                    coefs = np.abs(estimator.coef_.ravel()[:len(feat_names)])
+                elif hasattr(final_estimator, "coef_"):
+                    coefs = np.abs(final_estimator.coef_.ravel())
+                    names = feat_names[:len(coefs)]
                     result.shap_importances = dict(
-                        sorted(zip(feat_names, coefs), key=lambda x: x[1], reverse=True)
+                        sorted(zip(names, coefs), key=lambda x: x[1], reverse=True)
                     )
                 else:
-                    # SHAP kernel explainer（低速）
+                    # SHAP KernelExplainer（低速・フォールバック）
                     import shap
                     X_s = df.drop(columns=[target_col]).select_dtypes(include="number").fillna(0)
                     explainer = shap.KernelExplainer(
-                        estimator.predict, shap.sample(X_s, min(50, len(X_s)))
+                        bp.predict, shap.sample(X_s, min(50, len(X_s)))
                     )
                     shap_vals = explainer.shap_values(X_s.head(50))
                     mean_abs = np.abs(shap_vals).mean(axis=0)
@@ -471,13 +484,22 @@ def _show_pipeline_result(pr: PipelineResult) -> None:
         st.markdown("### 📈 モデル評価")
         score = pr.model_score
         if score is not None:
-            # 属性を動的に取得して表示
-            score_dict = {k: v for k, v in vars(score).items()
-                          if v is not None and not k.startswith("_") and k != "model_key"}
+            # to_dict() はNoneフィールドを自動除外する
+            score_dict = {
+                k: v for k, v in score.to_dict().items()
+                if k not in ("model_key", "task")
+            }
+            label_map = {
+                "rmse": "RMSE", "mae": "MAE", "r2": "R²",
+                "accuracy": "Accuracy", "f1_weighted": "F1 (weighted)",
+                "roc_auc": "ROC-AUC", "cv_mean": "CV Mean",
+                "cv_std": "CV Std", "train_time": "学習時間(s)",
+            }
             c_cols = st.columns(min(len(score_dict), 4))
             for i, (k, v) in enumerate(score_dict.items()):
                 with c_cols[i % 4]:
-                    st.metric(k.upper(), f"{v:.4f}" if isinstance(v, float) else v)
+                    st.metric(label_map.get(k, k.upper()),
+                              f"{v:.4f}" if isinstance(v, float) else str(v))
         else:
             st.info("評価は実行されていません。⚙️ 設定で有効化するか、先にAutoMLを実行してください。")
 
