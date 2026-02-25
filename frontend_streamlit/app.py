@@ -165,9 +165,12 @@ def _init_session():
         "file_name": None,
         "detection_result": None,
         "automl_result": None,
+        "pipeline_result": None,   # フルパイプライン結果
         "target_col": None,
         "task": "auto",
         "smiles_col": None,
+        "step_eda_done": False,
+        "step_preprocess_done": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -188,52 +191,108 @@ with st.sidebar:
         key="mode_radio",
     )
     st.session_state["mode"] = mode
-
     st.markdown("---")
 
-    # ナビゲーション
-    st.markdown("### 📋 ナビゲーション")
-    pages = {
-        "🏠 ホーム": "home",
-        "📂 データ読み込み": "data_load",
-        "🔍 データ探索 (EDA)": "eda",
-        "⚙️ 前処理設定": "preprocess",
-        "🤖 AutoML 実行": "automl",
-        "📊 モデル評価": "evaluation",
-        "📐 次元削減": "dim_reduction",
-        "🧬 化合物解析": "chem",
-        "💡 解釈・SHAP": "interpret",
-    }
+    # ── ワークフローステップナビゲーション ──────────────────
+    has_data   = st.session_state["df"] is not None
+    has_target = bool(st.session_state.get("target_col"))
+    has_result = st.session_state["automl_result"] is not None
 
-    for label, page_key in pages.items():
-        is_active = st.session_state["page"] == page_key
-        style = "font-weight:bold; color:#00d4ff;" if is_active else "color:#b0afd0;"
-        if st.button(label, key=f"nav_{page_key}", use_container_width=True):
-            st.session_state["page"] = page_key
+    # ステップ定義: (ステップ番号, アイコン, ラベル, page_key, 有効条件, 完了条件)
+    workflow_steps = [
+        (1, "📂", "データ読み込み", "data_load", True,          has_data),
+        (2, "🔍", "EDA",            "eda",        has_data,      st.session_state["step_eda_done"]),
+        (3, "⚙️", "前処理設定",     "preprocess", has_data,      st.session_state["step_preprocess_done"]),
+        (4, "🤖", "AutoML 実行",    "automl",     has_data and has_target, has_result),
+    ]
 
+    st.markdown(
+        '<div style="font-size:0.75rem; color:#8888aa; margin-bottom:6px; '
+        'text-transform:uppercase; letter-spacing:0.05em;">ワークフロー</div>',
+        unsafe_allow_html=True,
+    )
+
+    for step_num, icon, label, pkey, enabled, done in workflow_steps:
+        cur = st.session_state["page"] == pkey
+        if done:
+            badge = '<span style="color:#4ade80; font-size:0.7rem;">✓ 完了</span>'
+        elif cur:
+            badge = '<span style="color:#00d4ff; font-size:0.7rem;">▶ 実行中</span>'
+        else:
+            badge = ""
+
+        if enabled:
+            label_html = (
+                f'<span style="color:{"#00d4ff" if cur else "#e0e0f0"}; font-weight:{"700" if cur else "400"};">'
+                f'STEP {step_num}  {icon} {label}</span>'
+            )
+            btn_key = f"wf_{pkey}"
+            col_l, col_r = st.columns([4, 2])
+            with col_l:
+                st.markdown(label_html, unsafe_allow_html=True)
+            with col_r:
+                st.markdown(badge, unsafe_allow_html=True)
+            if st.button("→", key=btn_key, use_container_width=True):
+                st.session_state["page"] = pkey
+                st.rerun()
+        else:
+            st.markdown(
+                f'<span style="color:#444466; font-size:0.9rem;">STEP {step_num}  {icon} {label}</span>',
+                unsafe_allow_html=True,
+            )
+        st.markdown('<div style="height:2px;"></div>', unsafe_allow_html=True)
+
+    # ── 詳細分析ツール ──────────────────────────────────────
     st.markdown("---")
-    # データ状態
-    if st.session_state["df"] is not None:
-        df = st.session_state["df"]
-        st.markdown(f"""
-<div style="font-size:0.8rem; color:#4ade80;">
-✅ データ読み込み済み<br>
-📄 {st.session_state['file_name']}<br>
-📏 {df.shape[0]:,}行 × {df.shape[1]}列
-</div>
-""", unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-size:0.75rem; color:#8888aa; margin-bottom:6px; '
+        'text-transform:uppercase; letter-spacing:0.05em;">詳細分析ツール</div>',
+        unsafe_allow_html=True,
+    )
+    detail_pages = [
+        ("📊", "モデル評価",  "evaluation",    has_result),
+        ("📐", "次元削減",    "dim_reduction", has_data),
+        ("💡", "SHAP 解釈",   "interpret",     has_result),
+        ("🧬", "化合物解析",  "chem",          True),
+    ]
+    for icon, label, pkey, enabled in detail_pages:
+        cur = st.session_state["page"] == pkey
+        color = "#00d4ff" if cur else ("#b0afd0" if enabled else "#444466")
+        if enabled and st.button(
+            f"{icon} {label}", key=f"nav_{pkey}", use_container_width=True
+        ):
+            st.session_state["page"] = pkey
+            st.rerun()
+        elif not enabled:
+            st.markdown(
+                f'<span style="color:#444466; font-size:0.9rem;">{icon} {label}</span>',
+                unsafe_allow_html=True,
+            )
+
+    # ── データ状態サマリー ──────────────────────────────────
+    st.markdown("---")
+    if has_data:
+        _df = st.session_state["df"]
+        st.markdown(
+            f'<div style="font-size:0.78rem; color:#4ade80;">'
+            f'✅ {st.session_state["file_name"]}<br>'
+            f'📏 {_df.shape[0]:,}行 × {_df.shape[1]}列'
+            f'{"<br>🎯 目的変数: " + st.session_state["target_col"] if has_target else ""}'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
     else:
-        st.markdown('<div style="font-size:0.8rem; color:#fbbf24;">⚠️ データ未読み込み</div>',
-                    unsafe_allow_html=True)
-
-    if st.session_state["automl_result"] is not None:
+        st.markdown(
+            '<div style="font-size:0.78rem; color:#fbbf24;">⚠️ データ未読み込み</div>',
+            unsafe_allow_html=True,
+        )
+    if has_result:
         r = st.session_state["automl_result"]
-        st.markdown(f"""
-<div style="font-size:0.8rem; color:#c084fc; margin-top:0.5rem;">
-🏆 最良モデル: {r.best_model_key}<br>
-📈 スコア: {r.best_score:.4f}
-</div>
-""", unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="font-size:0.78rem; color:#c084fc; margin-top:0.5rem;">'
+            f'🏆 {r.best_model_key}<br>📈 {r.best_score:.4f}</div>',
+            unsafe_allow_html=True,
+        )
 
 # ── ページルーティング ────────────────────────────────────────
 page = st.session_state["page"]

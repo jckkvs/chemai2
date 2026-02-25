@@ -1,171 +1,579 @@
 """
 frontend_streamlit/pages/automl_page.py
-AutoML実行ページ。ワンクリックでデータ→学習→結果を実行する。
+
+AutoML 完全パイプライン実行ページ。
+EDA → 前処理 → モデル学習 → 評価 → 次元削減 → SHAP解析まで
+ワンクリックで実行する。
 """
 from __future__ import annotations
 
 import time
-import pandas as pd
+import traceback
+from dataclasses import dataclass, field
+from typing import Any
+
 import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from backend.models.automl import AutoMLEngine, AutoMLResult
-from backend.data.preprocessor import PreprocessConfig
+from backend.data.preprocessor import PreprocessConfig, Preprocessor, build_full_pipeline
+from backend.data.type_detector import TypeDetector
+from backend.data.eda import summarize_dataframe, compute_column_stats, detect_outliers
+from backend.data.dim_reduction import run_pca
+from backend.data.benchmark import evaluate_regression, evaluate_classification
 
+
+# ─────────────────────────────────────────────────────────────
+# データクラス: フルパイプライン結果
+# ─────────────────────────────────────────────────────────────
+
+@dataclass
+class PipelineResult:
+    """フルパイプライン実行結果を保持するデータクラス。"""
+    eda_summary: dict[str, Any] = field(default_factory=dict)
+    col_stats: list = field(default_factory=list)
+    outlier_results: list = field(default_factory=list)
+    automl_result: AutoMLResult | None = None
+    model_score: Any | None = None          # ModelScore (回帰/分類)
+    pca_df: pd.DataFrame | None = None
+    pca_evr: np.ndarray | None = None
+    shap_importances: dict[str, float] = field(default_factory=dict)
+    task: str = "regression"
+    elapsed: float = 0.0
+    warnings: list[str] = field(default_factory=list)
+
+
+# ─────────────────────────────────────────────────────────────
+# メイン render 関数
+# ─────────────────────────────────────────────────────────────
 
 def render() -> None:
-    st.markdown("## 🤖 AutoML 実行")
+    st.markdown("## 🤖 AutoML 完全パイプライン")
 
     df = st.session_state.get("df")
     target_col = st.session_state.get("target_col")
 
     if df is None:
         st.warning("⚠️ まずデータを読み込んでください。")
-        if st.button("📂 データ読み込みへ"):
+        if st.button("📂 データ読み込みへ", key="goto_load"):
             st.session_state["page"] = "data_load"
             st.rerun()
         return
 
     if not target_col:
         st.warning("⚠️ 目的変数が選択されていません。データ読み込みページで設定してください。")
+        if st.button("📂 データ読み込みへ（目的変数設定）", key="goto_load2"):
+            st.session_state["page"] = "data_load"
+            st.rerun()
         return
 
-    # ── 設定パネル ────────────────────────────────────────────
-    with st.expander("⚙️ AutoML 詳細設定", expanded=False):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            cv_folds = st.slider("CV分割数", 2, 10, 5)
-            max_models = st.slider("試すモデル数(最大)", 1, 15, 8)
-        with col2:
-            timeout = st.slider("タイムアウト(秒)", 30, 3600, 300)
-            numeric_scaler = st.selectbox(
-                "数値スケーラー",
-                ["auto", "standard", "robust", "minmax", "none"],
-            )
-        with col3:
-            task_override = st.selectbox(
-                "タスク", ["auto", "regression", "classification"]
-            )
-            smiles_col = st.selectbox(
-                "SMILES列（化合物の場合）",
-                ["なし"] + df.columns.tolist(),
-                index=0,
-            )
-            smiles_col = None if smiles_col == "なし" else smiles_col
-
-    # 設定サマリー
-    task_display = st.session_state.get("task", "auto")
-    if task_override != "auto":
-        task_display = task_override
-
-    col1, col2, col3, col4 = st.columns(4)
-    metrics = [
-        (col1, str(df.shape[0]), "学習サンプル数"),
-        (col2, str(df.shape[1] - 1), "特徴量数"),
-        (col3, str(cv_folds), "CV分割数"),
-        (col4, str(max_models), "試行モデル数"),
+    # ── データ概要バー ────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    metric_items = [
+        (c1, str(df.shape[0]), "サンプル数"),
+        (c2, str(df.shape[1] - 1), "特徴量数"),
+        (c3, target_col, "目的変数"),
+        (c4, str(df.select_dtypes(include="number").shape[1]), "数値列数"),
     ]
-    for col, val, label in metrics:
+    for col, val, lbl in metric_items:
         with col:
-            st.markdown(f"""
-<div class="metric-card">
-  <div class="metric-value">{val}</div>
-  <div class="metric-label">{label}</div>
-</div>""", unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="metric-card"><div class="metric-value" style="font-size:1.2rem;">'
+                f'{val}</div><div class="metric-label">{lbl}</div></div>',
+                unsafe_allow_html=True,
+            )
 
     st.markdown("---")
 
-    # 学習済み結果があれば表示
-    existing = st.session_state.get("automl_result")
-    if existing is not None:
-        st.success(f"✅ 前回の結果: 最良モデル = **{existing.best_model_key}** | スコア = `{existing.best_score:.4f}`")
-        if st.button("🔄 再実行", use_container_width=True):
-            st.session_state["automl_result"] = None
-            st.rerun()
-        _show_leaderboard(existing)
+    # ── Pipeline設定パネル（折り畳み） ────────────────────────
+    with st.expander("⚙️ パイプライン詳細設定", expanded=False):
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.markdown("**ML設定**")
+            cv_folds   = st.slider("CV分割数", 2, 10, 5, key="pl_cv")
+            max_models = st.slider("試すモデル数", 1, 15, 8, key="pl_max")
+            timeout    = st.slider("タイムアウト(秒)", 30, 3600, 300, key="pl_to")
+        with col_b:
+            st.markdown("**前処理設定**")
+            numeric_scaler  = st.selectbox("数値スケーラー",
+                ["auto", "standard", "robust", "minmax", "none"], key="pl_scaler")
+            task_override   = st.selectbox("タスク",
+                ["auto", "regression", "classification"], key="pl_task")
+            smiles_col_raw  = st.selectbox("SMILES列",
+                ["なし"] + df.columns.tolist(), key="pl_smiles")
+            smiles_col = None if smiles_col_raw == "なし" else smiles_col_raw
+        with col_c:
+            st.markdown("**実行するフェーズ**")
+            do_eda   = st.checkbox("Phase 1: EDA",         value=True, key="pl_eda")
+            do_prep  = st.checkbox("Phase 2: 前処理確認",  value=True, key="pl_prep")
+            do_ml    = st.checkbox("Phase 3: AutoML",       value=True, key="pl_ml")
+            do_eval  = st.checkbox("Phase 4: 評価",         value=True, key="pl_eval")
+            do_pca   = st.checkbox("Phase 5: 次元削減(PCA)",value=True, key="pl_pca")
+            do_shap  = st.checkbox("Phase 6: SHAP解析",     value=True, key="pl_shap")
+
+    # ── 既存結果の表示 ─────────────────────────────────────
+    existing_pl = st.session_state.get("pipeline_result")
+    existing_ml = st.session_state.get("automl_result")
+
+    # タブ表示 (結果がある場合)
+    if existing_pl is not None:
+        _show_pipeline_result(existing_pl)
+        st.markdown("---")
+        col_re1, col_re2 = st.columns(2)
+        with col_re1:
+            if st.button("🔄 パイプラインを再実行", use_container_width=True, key="rerun_pl"):
+                st.session_state["pipeline_result"] = None
+                st.session_state["automl_result"] = None
+                st.rerun()
+        with col_re2:
+            if existing_ml and st.button("🤖 AutoMLのみ再実行", use_container_width=True, key="rerun_ml"):
+                st.session_state["automl_result"] = None
+                st.rerun()
         return
 
-    # ── 実行ボタン ────────────────────────────────────────────
-    c1, c2, c3 = st.columns([1, 2, 1])
+    elif existing_ml is not None:
+        # 旧形式 (AutoMLのみ) 結果表示
+        st.success(f"✅ 前回の結果: 最良モデル = **{existing_ml.best_model_key}** | "
+                   f"スコア = `{existing_ml.best_score:.4f}`")
+        _show_leaderboard(existing_ml)
+        if st.button("🔄 再実行", use_container_width=True, key="rerun_old"):
+            st.session_state["automl_result"] = None
+            st.rerun()
+        return
+
+    # ── 実行ボタン ───────────────────────────────────────────
+    c1, c2, c3 = st.columns([1, 3, 1])
     with c2:
-        run_clicked = st.button("🚀  AutoML を実行する", use_container_width=True)
+        run_clicked = st.button(
+            "🚀 フルパイプライン実行（EDA → AutoML → SHAP）",
+            use_container_width=True,
+            key="run_full",
+            type="primary",
+        )
 
     if not run_clicked:
         st.markdown("""
 <div style="text-align:center; padding:3rem; color:#555;">
-<div style="font-size:3rem;">🤖</div>
-<div style="margin-top:1rem;">「AutoML を実行する」を押してワンクリック機械学習を開始</div>
+  <div style="font-size:3rem;">🔬</div>
+  <div style="margin-top:1rem; color:#8888aa;">
+    「フルパイプライン実行」を押すと、EDA → 前処理 → AutoML → 評価 → 次元削減 → SHAP を自動で実行します
+  </div>
+  <div style="margin-top:0.5rem; font-size:0.85rem; color:#666;">
+    各フェーズは上の⚙️設定で個別にON/OFFできます
+  </div>
 </div>""", unsafe_allow_html=True)
         return
 
-    # ── 実行 ─────────────────────────────────────────────────
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    log_area = st.empty()
-    log_lines: list[str] = []
+    # ── フルパイプライン実行 ─────────────────────────────────
+    _run_full_pipeline(
+        df=df,
+        target_col=target_col,
+        smiles_col=smiles_col,
+        numeric_scaler=numeric_scaler,
+        task_override=task_override,
+        cv_folds=cv_folds,
+        max_models=max_models,
+        timeout=timeout,
+        do_eda=do_eda,
+        do_prep=do_prep,
+        do_ml=do_ml,
+        do_eval=do_eval,
+        do_pca=do_pca,
+        do_shap=do_shap,
+    )
 
-    def _cb(step: int, total: int, msg: str) -> None:
-        progress_bar.progress(step / total)
-        status_text.markdown(f"**{msg}**")
-        log_lines.append(f"[{step}/{total}] {msg}")
+
+# ─────────────────────────────────────────────────────────────
+# フルパイプライン実行
+# ─────────────────────────────────────────────────────────────
+
+def _run_full_pipeline(
+    df: pd.DataFrame,
+    target_col: str,
+    *,
+    smiles_col: str | None,
+    numeric_scaler: str,
+    task_override: str,
+    cv_folds: int,
+    max_models: int,
+    timeout: int,
+    do_eda: bool,
+    do_prep: bool,
+    do_ml: bool,
+    do_eval: bool,
+    do_pca: bool,
+    do_shap: bool,
+) -> None:
+    """フルパイプラインを順番に実行してsession_stateに保存する。"""
+    TOTAL_PHASES = sum([do_eda, do_prep, do_ml, do_eval, do_pca, do_shap])
+    result = PipelineResult()
+    start_time = time.time()
+
+    progress_bar = st.progress(0.0)
+    phase_status = st.empty()
+    log_area     = st.empty()
+    log_lines: list[str] = []
+    phase_done   = 0
+
+    def _log(msg: str) -> None:
+        log_lines.append(msg)
         log_area.markdown(
-            "<br>".join(f'<span style="color:#8888aa;font-size:0.85rem;">{l}</span>'
-                        for l in log_lines[-5:]),
+            "<br>".join(
+                f'<span style="color:#8888aa;font-size:0.82rem;">{l}</span>'
+                for l in log_lines[-6:]
+            ),
             unsafe_allow_html=True,
         )
 
-    cfg = PreprocessConfig(
-        numeric_scaler=numeric_scaler,
-        exclude_smiles=True,
-        exclude_constant=True,
-    )
-    engine = AutoMLEngine(
-        task=task_override,
-        cv_folds=cv_folds,
-        max_models=max_models,
-        timeout_seconds=timeout,
-        progress_callback=_cb,
-    )
+    def _advance(phase_name: str) -> None:
+        nonlocal phase_done
+        phase_done += 1
+        progress_bar.progress(phase_done / max(TOTAL_PHASES, 1))
+        phase_status.markdown(f"**▶ {phase_name}**")
+        _log(f"✅ {phase_name} 完了")
 
     try:
-        start = time.time()
-        result = engine.run(df, target_col=target_col, smiles_col=smiles_col,
-                            preprocess_config=cfg)
-        elapsed = time.time() - start
+        # ── Phase 1: EDA ─────────────────────────────────
+        if do_eda:
+            phase_status.markdown("**Phase 1/6 — EDA 実行中…**")
+            result.eda_summary  = summarize_dataframe(df)
+            result.col_stats    = compute_column_stats(df)
+            result.outlier_results = detect_outliers(df, method="iqr")
+            _advance("Phase 1: EDA")
 
-        st.session_state["automl_result"] = result
-        progress_bar.progress(1.0)
-        status_text.empty()
-        log_area.empty()
+        # ── Phase 2: 前処理確認 ───────────────────────────
+        if do_prep:
+            phase_status.markdown("**Phase 2/6 — 前処理パイプライン構築中…**")
+            detector = TypeDetector()
+            dr = detector.detect(df)
+            st.session_state["detection_result"] = dr
+            st.session_state["step_preprocess_done"] = True
+            _advance("Phase 2: 前処理")
 
-        st.balloons()
-        st.success(
-            f"✅ AutoML 完了！ ({elapsed:.1f}秒) | "
-            f"最良モデル: **{result.best_model_key}** | "
-            f"スコア: `{result.best_score:.4f}`"
-        )
+        # ── Phase 3: AutoML ──────────────────────────────
+        if do_ml:
+            phase_status.markdown("**Phase 3/6 — AutoML 実行中（しばらくお待ちください）…**")
+            automl_log: list[str] = []
 
-        if result.warnings:
-            for w in result.warnings:
-                st.warning(f"⚠️ {w}")
+            def _cb(step: int, total: int, msg: str) -> None:
+                progress_bar.progress(
+                    (phase_done / max(TOTAL_PHASES, 1))
+                    + (step / total) / max(TOTAL_PHASES, 1)
+                )
+                _log(f"  [{step}/{total}] {msg}")
 
-        _show_leaderboard(result)
+            cfg = PreprocessConfig(
+                numeric_scaler=numeric_scaler,
+                exclude_smiles=True,
+                exclude_constant=True,
+            )
+            engine = AutoMLEngine(
+                task=task_override,
+                cv_folds=cv_folds,
+                max_models=max_models,
+                timeout_seconds=timeout,
+                progress_callback=_cb,
+            )
+            automl_res = engine.run(
+                df, target_col=target_col, smiles_col=smiles_col,
+                preprocess_config=cfg,
+            )
+            result.automl_result = automl_res
+            result.task = automl_res.task if hasattr(automl_res, "task") else task_override
+            st.session_state["automl_result"] = automl_res
+            if automl_res.warnings:
+                result.warnings.extend(automl_res.warnings)
+            _advance("Phase 3: AutoML")
+
+        # ── Phase 4: 評価 ────────────────────────────────
+        if do_eval and result.automl_result is not None:
+            phase_status.markdown("**Phase 4/6 — モデル評価中…**")
+            try:
+                ar = result.automl_result
+                X = df.drop(columns=[target_col])
+                y = df[target_col].values
+
+                # 最良モデルで予測
+                detector = TypeDetector()
+                dr = detector.detect(df)
+                pipeline = build_full_pipeline(dr, ar.best_estimator_, target_col=target_col)
+                pipeline.fit(X, y)
+                y_pred = pipeline.predict(X)
+
+                task_str = result.task if result.task in ("regression", "classification") else "regression"
+                if task_str == "regression":
+                    result.model_score = evaluate_regression(y, y_pred, model_key=ar.best_model_key)
+                else:
+                    y_prob = pipeline.predict_proba(X) if hasattr(pipeline, "predict_proba") else None
+                    result.model_score = evaluate_classification(y, y_pred, y_prob=y_prob,
+                                                                 model_key=ar.best_model_key)
+            except Exception as e:
+                result.warnings.append(f"評価エラー: {e}")
+                _log(f"⚠️ 評価スキップ: {e}")
+            _advance("Phase 4: 評価")
+
+        # ── Phase 5: PCA 次元削減 ────────────────────────
+        if do_pca:
+            phase_status.markdown("**Phase 5/6 — PCA 次元削減中…**")
+            try:
+                X_num = df.select_dtypes(include="number").drop(
+                    columns=[target_col], errors="ignore"
+                ).dropna()
+                if X_num.shape[1] >= 2:
+                    emb_df, evr = run_pca(X_num, n_components=min(2, X_num.shape[1]))
+                    result.pca_df  = emb_df
+                    result.pca_evr = evr
+            except Exception as e:
+                result.warnings.append(f"PCAエラー: {e}")
+                _log(f"⚠️ PCAスキップ: {e}")
+            _advance("Phase 5: 次元削減")
+
+        # ── Phase 6: SHAP 解析 ──────────────────────────
+        if do_shap and result.automl_result is not None:
+            phase_status.markdown("**Phase 6/6 — SHAP 特徴量重要度計算中…**")
+            try:
+                ar = result.automl_result
+                estimator = ar.best_estimator_
+
+                # feature_importances_ があれば使用（高速・安定）
+                if hasattr(estimator, "feature_importances_"):
+                    X_f = df.drop(columns=[target_col])
+                    feat_names = X_f.columns.tolist()
+                    imps = estimator.feature_importances_
+                    result.shap_importances = dict(
+                        sorted(zip(feat_names, imps), key=lambda x: x[1], reverse=True)
+                    )
+                elif hasattr(estimator, "coef_"):
+                    X_f = df.drop(columns=[target_col]).select_dtypes(include="number")
+                    feat_names = X_f.columns.tolist()
+                    coefs = np.abs(estimator.coef_.ravel()[:len(feat_names)])
+                    result.shap_importances = dict(
+                        sorted(zip(feat_names, coefs), key=lambda x: x[1], reverse=True)
+                    )
+                else:
+                    # SHAP kernel explainer（低速）
+                    import shap
+                    X_s = df.drop(columns=[target_col]).select_dtypes(include="number").fillna(0)
+                    explainer = shap.KernelExplainer(
+                        estimator.predict, shap.sample(X_s, min(50, len(X_s)))
+                    )
+                    shap_vals = explainer.shap_values(X_s.head(50))
+                    mean_abs = np.abs(shap_vals).mean(axis=0)
+                    result.shap_importances = dict(
+                        sorted(zip(X_s.columns.tolist(), mean_abs),
+                               key=lambda x: x[1], reverse=True)
+                    )
+            except Exception as e:
+                result.warnings.append(f"SHAP計算エラー: {e}")
+                _log(f"⚠️ SHAPスキップ: {e}")
+            _advance("Phase 6: SHAP")
 
     except Exception as e:
         progress_bar.empty()
-        status_text.empty()
-        st.error(f"❌ AutoML実行エラー: {e}")
-        import traceback
+        phase_status.empty()
+        st.error(f"❌ パイプラインエラー: {e}")
         with st.expander("エラー詳細"):
             st.code(traceback.format_exc())
+        return
 
+    result.elapsed = time.time() - start_time
+    st.session_state["pipeline_result"] = result
+    st.session_state["step_eda_done"] = do_eda
+    st.session_state["step_preprocess_done"] = do_prep
+
+    progress_bar.progress(1.0)
+    phase_status.empty()
+    log_area.empty()
+    st.balloons()
+    st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────
+# 結果表示
+# ─────────────────────────────────────────────────────────────
+
+def _show_pipeline_result(pr: PipelineResult) -> None:
+    """PipelineResult を6フェーズタブで表示する。"""
+    ar = pr.automl_result
+
+    # ヘッダー
+    best_info = (
+        f"最良モデル: **{ar.best_model_key}** | スコア: `{ar.best_score:.4f}`"
+        if ar else "AutoML は実行されていません"
+    )
+    st.success(f"✅ パイプライン完了！ ({pr.elapsed:.1f}秒) | {best_info}")
+
+    for w in pr.warnings:
+        st.warning(f"⚠️ {w}")
+
+    # タブ
+    tabs = st.tabs(["📊 EDA", "⚙️ 前処理", "🤖 AutoML", "📈 評価", "📐 次元削減", "💡 SHAP"])
+
+    # ── Tab 0: EDA ──────────────────────────────────────────
+    with tabs[0]:
+        st.markdown("### 📊 データ探索サマリー")
+        if pr.eda_summary:
+            summ = pr.eda_summary
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("行数", f"{summ.get('n_rows', '-'):,}")
+            c2.metric("列数", summ.get('n_cols', '-'))
+            c3.metric("欠損セル数", summ.get('n_missing', '-'))
+            c4.metric("重複行数", summ.get('n_duplicates', '-'))
+
+        if pr.col_stats:
+            st.markdown("#### 列ごとの統計")
+            rows = []
+            for cs in pr.col_stats:
+                rows.append({
+                    "列名": cs.name,
+                    "型": cs.dtype,
+                    "ユニーク数": cs.n_unique,
+                    "欠損率": f"{cs.null_rate:.1%}",
+                    "平均": f"{cs.mean:.3g}" if cs.mean is not None else "-",
+                    "標準偏差": f"{cs.std:.3g}" if cs.std is not None else "-",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        if pr.outlier_results:
+            n_out_cols = sum(1 for r in pr.outlier_results if r.n_outliers > 0)
+            st.info(f"IQR外れ値検出: **{n_out_cols}列** に外れ値あり")
+        else:
+            st.info("EDA は実行されていません。⚙️ 設定で有効化してください。")
+
+    # ── Tab 1: 前処理 ────────────────────────────────────────
+    with tabs[1]:
+        st.markdown("### ⚙️ 前処理パイプライン")
+        dr = st.session_state.get("detection_result")
+        if dr:
+            col_types: dict[str, list[str]] = {}
+            for col, info in dr.column_info.items():
+                t = info.col_type.value if hasattr(info.col_type, "value") else str(info.col_type)
+                col_types.setdefault(t, []).append(col)
+
+            rows = [{"列型": t, "列数": len(cols), "列名": ", ".join(cols[:5]) + ("..." if len(cols) > 5 else "")}
+                    for t, cols in col_types.items()]
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.caption("TypeDetector によって自動で各列の型が判定され、最適なスケーラー/エンコーダが選定されます。")
+        else:
+            st.info("前処理は実行されていませんでした。⚙️ 設定で有効化してください。")
+
+    # ── Tab 2: AutoML ────────────────────────────────────────
+    with tabs[2]:
+        if ar:
+            _show_leaderboard(ar)
+        else:
+            st.info("AutoML は実行されていません。⚙️ 設定で有効化してください。")
+
+    # ── Tab 3: 評価 ─────────────────────────────────────────
+    with tabs[3]:
+        st.markdown("### 📈 モデル評価")
+        score = pr.model_score
+        if score is not None:
+            # 属性を動的に取得して表示
+            score_dict = {k: v for k, v in vars(score).items()
+                          if v is not None and not k.startswith("_") and k != "model_key"}
+            c_cols = st.columns(min(len(score_dict), 4))
+            for i, (k, v) in enumerate(score_dict.items()):
+                with c_cols[i % 4]:
+                    st.metric(k.upper(), f"{v:.4f}" if isinstance(v, float) else v)
+        else:
+            st.info("評価は実行されていません。⚙️ 設定で有効化するか、先にAutoMLを実行してください。")
+
+    # ── Tab 4: 次元削減 ─────────────────────────────────────
+    with tabs[4]:
+        st.markdown("### 📐 PCA 次元削減")
+        if pr.pca_df is not None:
+            evr = pr.pca_evr
+            if evr is not None and len(evr) >= 2:
+                st.caption(f"PC1 寄与率: {evr[0]:.1%} | PC2 寄与率: {evr[1]:.1%} | 累積: {evr.sum():.1%}")
+
+            df_plot = pr.pca_df.copy()
+            target_series = st.session_state["df"][st.session_state["target_col"]].values
+            df_plot["target"] = target_series[:len(df_plot)]
+
+            fig = go.Figure(go.Scatter(
+                x=df_plot["PC1"], y=df_plot["PC2"],
+                mode="markers",
+                marker=dict(
+                    color=df_plot["target"],
+                    colorscale="Viridis",
+                    showscale=True,
+                    size=6,
+                    opacity=0.7,
+                ),
+                text=[f"{st.session_state['target_col']}={v:.3g}" for v in df_plot["target"]],
+                hovertemplate="%{text}<extra></extra>",
+            ))
+            fig.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#e0e0f0"),
+                xaxis=dict(title="PC1", gridcolor="#333"),
+                yaxis=dict(title="PC2", gridcolor="#333"),
+                height=420,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("次元削減は実行されていません。⚙️ 設定で有効化してください。")
+
+    # ── Tab 5: SHAP ─────────────────────────────────────────
+    with tabs[5]:
+        st.markdown("### 💡 特徴量重要度 (SHAP/Feature Importance)")
+        if pr.shap_importances:
+            top_n = 20
+            items = list(pr.shap_importances.items())[:top_n]
+            keys = [k for k, _ in reversed(items)]
+            vals = [v for _, v in reversed(items)]
+
+            fig = go.Figure(go.Bar(
+                x=vals, y=keys,
+                orientation="h",
+                marker_color=[
+                    f"rgba({int(255 * v / max(vals))}, 100, 255, 0.85)" for v in vals
+                ],
+                text=[f"{v:.4f}" for v in vals],
+                textposition="outside",
+            ))
+            fig.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#e0e0f0"),
+                xaxis=dict(title="重要度", gridcolor="#333"),
+                yaxis=dict(gridcolor="#333"),
+                height=max(300, len(keys) * 28),
+                margin=dict(l=150, r=60, t=20, b=40),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("SHAP解析は実行されていません。⚙️ 設定で有効化してください。")
+
+    # ── 次のアクションボタン ─────────────────────────────────
+    st.markdown("---")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("📊 モデル評価（詳細）", use_container_width=True, key="goto_eval"):
+            st.session_state["page"] = "evaluation"
+            st.rerun()
+    with c2:
+        if st.button("💡 SHAP 詳細解析", use_container_width=True, key="goto_shap"):
+            st.session_state["page"] = "interpret"
+            st.rerun()
+    with c3:
+        if st.button("📐 次元削減（詳細）", use_container_width=True, key="goto_dimred"):
+            st.session_state["page"] = "dim_reduction"
+            st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────
+# リーダーボード表示（共通）
+# ─────────────────────────────────────────────────────────────
 
 def _show_leaderboard(result: AutoMLResult) -> None:
-    """モデルリーダーボードを表示する。"""
+    """モデルリーダーボードとスコアバーチャートを表示する。"""
     st.markdown("### 🏆 モデルリーダーボード")
-
-    # スコアを正の方向に変換して表示
-    scores = result.model_scores
+    scores  = result.model_scores
     details = result.model_details
 
     df_lb = pd.DataFrame([
@@ -183,25 +591,19 @@ def _show_leaderboard(result: AutoMLResult) -> None:
     ])
     st.dataframe(df_lb, use_container_width=True, hide_index=True)
 
-    # バーチャート
     st.markdown("### 📊 スコア比較")
-    import plotly.graph_objects as go
-
     sorted_items = sorted(scores.items(), key=lambda x: x[1])
     keys = [k for k, _ in sorted_items]
     vals = [v for _, v in sorted_items]
     colors = ["#7b2ff7" if k == result.best_model_key else "#00d4ff" for k in keys]
 
     fig = go.Figure(go.Bar(
-        x=vals, y=keys,
-        orientation="h",
+        x=vals, y=keys, orientation="h",
         marker_color=colors,
-        text=[f"{v:.4f}" for v in vals],
-        textposition="outside",
+        text=[f"{v:.4f}" for v in vals], textposition="outside",
     ))
     fig.update_layout(
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#e0e0f0"),
         xaxis=dict(gridcolor="#333", title=result.scoring),
         yaxis=dict(gridcolor="#333"),
@@ -209,13 +611,3 @@ def _show_leaderboard(result: AutoMLResult) -> None:
         margin=dict(l=120, r=50, t=30, b=30),
     )
     st.plotly_chart(fig, use_container_width=True)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📊 モデル評価へ", use_container_width=True):
-            st.session_state["page"] = "evaluation"
-            st.rerun()
-    with col2:
-        if st.button("💡 SHAP解釈へ", use_container_width=True):
-            st.session_state["page"] = "interpret"
-            st.rerun()
