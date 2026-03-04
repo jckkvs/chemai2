@@ -252,11 +252,17 @@ if page == "home":
             st.session_state["file_name"]   = name
             st.session_state["automl_result"]  = None
             st.session_state["pipeline_result"] = None
+            st.session_state["smiles_col"]     = None  # 必ずリセット
             detector = TypeDetector()
             dr = detector.detect(df)
             st.session_state["detection_result"] = dr
             if dr.smiles_columns:
                 st.session_state["smiles_col"] = dr.smiles_columns[0]
+            else:
+                for col in df.columns:
+                    if col.lower() == "smiles":
+                        st.session_state["smiles_col"] = col
+                        break
             # デフォルト目的変数: 最終列
             st.session_state["target_col"] = df.columns[-1]
 
@@ -308,11 +314,19 @@ if page == "home":
             st.session_state["file_name"]      = uploaded.name
             st.session_state["automl_result"]  = None
             st.session_state["pipeline_result"] = None
+            st.session_state["smiles_col"]     = None  # 必ずリセット
             detector = TypeDetector()
             dr = detector.detect(df_new)
             st.session_state["detection_result"] = dr
+            # SMILES列を自動検出（TypeDetectorが検出した場合）
             if dr.smiles_columns:
                 st.session_state["smiles_col"] = dr.smiles_columns[0]
+            # TypeDetectorが検出できなくても列名が'smiles'なら設定
+            else:
+                for col in df_new.columns:
+                    if col.lower() == "smiles":
+                        st.session_state["smiles_col"] = col
+                        break
             st.session_state["target_col"] = df_new.columns[-1]  # 初期値
         except Exception as e:
             st.error(f"❌ 読み込みエラー: {e}")
