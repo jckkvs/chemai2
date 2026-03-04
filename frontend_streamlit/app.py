@@ -424,7 +424,8 @@ if page == "home":
                 get_target_categories,
                 get_targets_by_category,
                 get_all_descriptor_categories,
-                get_descriptors_by_category
+                get_descriptors_by_category,
+                get_all_target_recommendations
             )
 
             all_adapters = [RDKitAdapter(compute_fp=True), MordredAdapter(selected_only=True), XTBAdapter(), CosmoAdapter(), UniPkaAdapter(), GroupContribAdapter()]
@@ -541,6 +542,34 @@ if page == "home":
 
             selected_desc = list(current_selected)
             st.caption(f"✅ 現在 {len(selected_desc)} 件の記述子が選択されています。")
+            if len(selected_desc) > 0:
+                with st.expander("選択中の記述子詳細を確認", expanded=(len(selected_desc) <= 10)):
+                    recs = get_all_target_recommendations()
+                    desc_details = {}
+                    for rec in recs:
+                        for d in rec.descriptors:
+                            if d.name not in desc_details:
+                                desc_details[d.name] = {"meaning": d.meaning, "targets": set(), "library": d.library}
+                            desc_details[d.name]["targets"].add(rec.target_name)
+
+                    if len(selected_desc) <= 30:
+                        display_descs = selected_desc
+                        hidden_count = 0
+                    else:
+                        display_descs = selected_desc[:30]
+                        hidden_count = len(selected_desc) - 30
+
+                    for d_name in display_descs:
+                        info = desc_details.get(d_name)
+                        if info:
+                            tgts = "、".join(list(info["targets"]))
+                            st.markdown(f"- **{d_name}** ({info['library']}): {info['meaning']}<br>&nbsp;&nbsp;<span style='color:#888;font-size:0.85em;'>適した目的変数: {tgts}</span>", unsafe_allow_html=True)
+                        else:
+                            # データベースに明示的な意味登録がないその他記述子
+                            st.markdown(f"- **{d_name}** <span style='color:#888;font-size:0.85em;'>(全般的な記述子)</span>", unsafe_allow_html=True)
+                    
+                    if hidden_count > 0:
+                        st.markdown(f"- ...他 **{hidden_count}** 件（省略）")
 
             # 詳細設定の値をセッションに保存
             st.session_state["_adv"] = dict(
