@@ -53,7 +53,15 @@ def render() -> None:
                 else:
                     _show_classification_metrics(y_true, y_pred, result.best_pipeline, X)
             except Exception as e:
-                st.error(f"予測中にエラー: {e}")
+                err_msg = str(e)
+                if "columns are missing" in err_msg:
+                    st.warning(
+                        "⚠️ コラム不一致エラーが発生しました。"
+                        "旐しいバージョンのAutoMLで学習したモデルとセッションデータの不一致です。\n"
+                        "「🔄 AutoMLを再実行」ボタンから再学習してください。"
+                    )
+                else:
+                    st.error(f"予測中にエラー: {e}")
         else:
             st.info("データまたは目的変数が設定されていません。")
 
@@ -116,6 +124,7 @@ def render() -> None:
                 with st.spinner("計算中..."):
                     try:
                         from backend.data.benchmark import compute_learning_curve
+                        # Pipeline内にSMILES Transformerが有るので元データ（SMILES列含む）をそのまま渡す
                         X = df.drop(columns=[target_col])
                         y = df[target_col]
                         lc = compute_learning_curve(
@@ -169,7 +178,13 @@ def render() -> None:
                 else:
                     _show_confusion_matrix(y_true, y_pred)
             except Exception as e:
-                st.error(f"❌ エラー: {e}")
+                err_msg = str(e)
+                if "columns are missing" in err_msg:
+                    st.warning(
+                        "⚠️ コラム不一致エラー。「🔄 AutoML再実行」で再学習してください。"
+                    )
+                else:
+                    st.error(f"❌ エラー: {e}")
         else:
             st.info("データが読み込まれていません。")
 
