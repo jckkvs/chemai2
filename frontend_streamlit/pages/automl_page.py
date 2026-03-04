@@ -333,9 +333,8 @@ def _run_full_pipeline(
                 result.warnings.extend(automl_res.warnings)
             _advance("Phase 3: AutoML")
 
+        # X_base: 記述子変換はPipeline内部で自動処理されるため、元の列構成(除目的変数)をそのまま渡せば良い
         X_base = df.drop(columns=[target_col])
-        if result.automl_result and getattr(result.automl_result, "processed_X", None) is not None:
-            X_base = result.automl_result.processed_X
 
         # ── Phase 4: 評価 ────────────────────────────────
         if do_eval and result.automl_result is not None:

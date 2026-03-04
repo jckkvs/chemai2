@@ -27,6 +27,7 @@ from backend.data.preprocessor import Preprocessor, PreprocessConfig, build_full
 from backend.models.factory import get_model, get_default_automl_models
 from backend.models.cv_manager import CVConfig, run_cross_validation
 from backend.chem.rdkit_adapter import RDKitAdapter
+from backend.chem.smiles_transformer import SmilesDescriptorTransformer
 from backend.utils.config import RANDOM_STATE, AUTOML_CV_FOLDS
 
 logger = logging.getLogger(__name__)
@@ -131,50 +132,20 @@ class AutoMLEngine:
         X = df.drop(columns=[target_col])
 
         if smiles_col and smiles_col in X.columns:
-            self.progress_callback(4, total_steps, "SMILES記述子を計算中...")
+            self.progress_callback(4, total_steps, "SMILES記述子Transformerを適用中...")
             
-            from backend.chem import RDKitAdapter, XTBAdapter, CosmoAdapter, UniPkaAdapter, GroupContribAdapter, MordredAdapter
-            
-            adapters = [
-                RDKitAdapter(compute_fp=True),
-                MordredAdapter(selected_only=True),
-                XTBAdapter(),
-                CosmoAdapter(),
-                UniPkaAdapter(),
-                GroupContribAdapter()
-            ]
-            
-            smiles_list = X[smiles_col].tolist()
-            desc_dfs = []
-            
-            for adapter in adapters:
-                if adapter.is_available():
-                    try:
-                        desc_res = adapter.compute(smiles_list)
-                        desc_dfs.append(desc_res.descriptors)
-                    except Exception as e:
-                        logger.warning(f"{adapter.name} の計算中にエラーが発生しました: {e}")
-            
-            if desc_dfs:
-                X_chem = pd.concat(desc_dfs, axis=1)
-                
-                # 指定された記述子がある場合はフィルタリング
-                # Noneまたは空リストの場合は、全記述子（上位互換性のため）を使用
-                if self.selected_descriptors:
-                    valid_cols = [c for c in self.selected_descriptors if c in X_chem.columns]
-                    if valid_cols:
-                        X_chem = X_chem[valid_cols]
-                    else:
-                        warnings.append("選択された記述子が1つも計算できなかったため、フォールバックとしてRDKitのみを使用します。")
-                        X_chem = desc_dfs[0] # RDKit fallback
-                
-                # 元のSMILES列を削除し、計算された記述子を結合
-                X = X.drop(columns=[smiles_col])
-                X = pd.concat([X.reset_index(drop=True), X_chem.reset_index(drop=True)], axis=1)
-                logger.info(f"SMILES記述子を追加: {X_chem.shape[1]}次元")
-            else:
-                warnings.append("利用可能な化合物計算アダプタがなく、SMILES処理をスキップしました。")
-                X = X.drop(columns=[smiles_col])
+            smiles_transformer = SmilesDescriptorTransformer(
+                smiles_col=smiles_col,
+                selected_descriptors=self.selected_descriptors or None,
+            )
+            try:
+                X = smiles_transformer.fit_transform(X)
+                # TypeDetectorを再実行して記述子列の型情報を更新
+                detection_result = detector.detect(X)
+                logger.info(f"SMILES記述子展開後の形状: {X.shape}")
+            except Exception as e:
+                warnings.append(f"SMILES記述子変換中にエラー: {e}")
+                X = X.drop(columns=[smiles_col], errors="ignore")
 
         # 特徴量が1つも残っていない場合のチェック
         if X.shape[1] == 0:
