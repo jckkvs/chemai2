@@ -131,31 +131,33 @@ class AutoMLEngine:
         y = df[target_col].values
         X = df.drop(columns=[target_col])
 
+        # SMILES列がある場合、SmilesDescriptorTransformerをPipeline内に組こむための準備だけ行い、
+        # X自体は変換しない（predictCallも同じ入力Xから埋め込み変換される）
+        smiles_transformer: SmilesDescriptorTransformer | None = None
         if smiles_col and smiles_col in X.columns:
-            self.progress_callback(4, total_steps, "SMILES記述子Transformerを適用中...")
-            
             smiles_transformer = SmilesDescriptorTransformer(
                 smiles_col=smiles_col,
                 selected_descriptors=self.selected_descriptors or None,
             )
+            self.progress_callback(4, total_steps, "SMILES記述子Transformerを初期化中...")
             try:
-                X = smiles_transformer.fit_transform(X)
-                # TypeDetectorを再実行して記述子列の型情報を更新
-                detection_result = detector.detect(X)
-                logger.info(f"SMILES記述子展開後の形状: {X.shape}")
+                # fitだけ: カラムの名前を記憰させる
+                smiles_transformer.fit(X)
+                # TypeDetectorのために一度変換して型一覧を得る
+                X_for_detect = smiles_transformer.transform(X)
+                detection_result = detector.detect(X_for_detect)
+                logger.info(f"SMILES記述子展開後の形状: {X_for_detect.shape}")
             except Exception as e:
                 warnings.append(f"SMILES記述子変換中にエラー: {e}")
+                smiles_transformer = None
                 X = X.drop(columns=[smiles_col], errors="ignore")
-
+                detection_result = detector.detect(X)
+        
         # 特徴量が1つも残っていない場合のチェック
-        if X.shape[1] == 0:
+        if not smiles_transformer and X.shape[1] == 0:
             raise ValueError("学習に使用できる特徴量がありません。SMILESの解析に失敗したか、有効な列が存在しません。")
 
         groups = df[group_col].values if group_col and group_col in df.columns else None
-
-        # Step 5: 変数型再判定（化学記述子を含めるため）
-        detector = TypeDetector()
-        detection_result = detector.detect(X)
 
         # Step 5: モデル学習
         self.progress_callback(4, total_steps, "複数モデルで学習中...")
@@ -173,6 +175,9 @@ class AutoMLEngine:
 
         preprocess_cfg = preprocess_config or PreprocessConfig()
         deadline = start + self.timeout_seconds
+
+        # CV用X: SMILES変換が有る場合は変換済みを渡す
+        X_train = smiles_transformer.transform(X) if smiles_transformer else X
 
         for i, mkey in enumerate(model_keys):
             if time.time() > deadline:
@@ -196,10 +201,10 @@ class AutoMLEngine:
                     extra_params=cv_extra_params
                 )
                 result = run_cross_validation(
-                    pipeline, X, y, cv_config,
+                    pipeline, X_train, y, cv_config,
                     scoring=scoring,
                     groups=groups,
-                    n_jobs=1,  # AutoML内部はシングル（並列はモデルレベルで）
+                    n_jobs=1,
                 )
                 score_key = f"test_{scoring}"
                 if score_key in result:
@@ -223,23 +228,32 @@ class AutoMLEngine:
                 msg = f"{mkey} の学習中にエラー: {str(e)}"
                 logger.warning(msg)
                 warnings.append(msg)
-                # デバッグ用にトレースバックも警告に追加（任意）
                 import traceback
                 logger.debug(traceback.format_exc())
 
         if not best_key:
-            err_details = "\n".join(warnings[-3:]) # 直近3つのエラー
+            err_details = "\n".join(warnings[-3:])
             raise RuntimeError(f"全モデルの学習に失敗しました。詳細:\n{err_details}")
 
         # Step 6: 最良モデルを全データで再学習
         self.progress_callback(5, total_steps, f"最良モデル({best_key})を全データで学習中...")
         best_model = get_model(best_key, task=task)
-        best_pipeline = build_full_pipeline(
+        best_pipeline_inner = build_full_pipeline(
             detection_result, best_model,
             target_col=target_col,
             config=preprocess_cfg,
         )
-        best_pipeline.fit(X, y)
+        best_pipeline_inner.fit(X_train, y)
+
+        # SMILES TransformerをPipelineの先頭ステップに埋め込む（predict時に自動変換）
+        if smiles_transformer:
+            best_pipeline = Pipeline([
+                ("smiles", smiles_transformer),
+                ("preprocess", best_pipeline_inner["preprocess"]),
+                ("model", best_pipeline_inner["model"]),
+            ])
+        else:
+            best_pipeline = best_pipeline_inner
 
         self.progress_callback(6, total_steps, "完了!")
         elapsed = time.time() - start
