@@ -1,0 +1,104 @@
+"""
+tests/test_chem.py
+
+backend/chem モジュールのユニットテスト。
+RDKitAdapter を中心にテストする。
+"""
+import pytest
+import numpy as np
+import pandas as pd
+from backend.chem.rdkit_adapter import RDKitAdapter
+from backend.chem.base import DescriptorResult
+
+@pytest.fixture
+def rdkit_adapter() -> RDKitAdapter:
+    return RDKitAdapter(compute_fp=True, morgan_bits=128, rdkit_fp_bits=128)
+
+def test_rdkit_adapter_name(rdkit_adapter: RDKitAdapter) -> None:
+    assert rdkit_adapter.name == "rdkit"
+
+def test_rdkit_adapter_availability(rdkit_adapter: RDKitAdapter) -> None:
+    # 環境によって異なる可能性があるが、基本的に True を期待
+    assert rdkit_adapter.is_available() in [True, False]
+
+def test_compute_descriptors(rdkit_adapter: RDKitAdapter) -> None:
+    """有効なSMILESに対して記述子が計算されること。"""
+    if not rdkit_adapter.is_available():
+        pytest.skip("RDKit is not available")
+    
+    smiles = ["CCO", "c1ccccc1"]
+    result = rdkit_adapter.compute(smiles)
+    
+    assert isinstance(result, DescriptorResult)
+    assert len(result.descriptors) == 2
+    assert "MolWt" in result.descriptors.columns
+    assert "Morgan_r2_0" in result.descriptors.columns
+    assert result.failed_indices == []
+
+def test_compute_with_invalid_smiles(rdkit_adapter: RDKitAdapter) -> None:
+    """無効なSMILESが含まれる場合に正しく処理され、failed_indices が記録されること。"""
+    if not rdkit_adapter.is_available():
+        pytest.skip("RDKit is not available")
+    
+    smiles = ["CCO", "invalid_smiles", "CCC"]
+    result = rdkit_adapter.compute(smiles)
+    
+    assert len(result.descriptors) == 3
+    assert result.failed_indices == [1]
+    # 失敗した行は 0.0 で埋められているか (型によってはNaNもあるためfillnaしてからcheck)
+    row = result.descriptors.iloc[1].fillna(0.0)
+    # pd.to_numericで数値型になっている列のみチェック
+    numeric_row = pd.to_numeric(row, errors='coerce').fillna(0.0)
+    assert numeric_row.sum() == 0.0
+
+def test_get_descriptor_names(rdkit_adapter: RDKitAdapter) -> None:
+    """記述子名のリストが正しく取得できること。"""
+    names = rdkit_adapter.get_descriptor_names()
+    assert "MolWt" in names
+    assert "Morgan_r2_127" in names
+    assert "RDKitFP_127" in names
+
+# --- 新規追加アダプタのテスト ---
+
+def test_mordred_adapter() -> None:
+    from backend.chem.mordred_adapter import MordredAdapter
+    adapter = MordredAdapter()
+    assert adapter.name == "mordred"
+    
+    # 環境によってMordredが入っているかは異なるが、is_availableの型はbool
+    assert isinstance(adapter.is_available(), bool)
+    
+    if adapter.is_available():
+        res = adapter.compute(["CCO", "c1ccccc1"])
+        assert len(res.descriptors) == 2
+        # デフォルトではselected_onlyなので限られた記述子が返る
+        assert "MW" in res.descriptors.columns
+        assert "SLogP" in res.descriptors.columns
+    else:
+        # インストールされていない場合、computeを呼ぶと例外が出る
+        import pytest
+        with pytest.raises(RuntimeError):
+            adapter.compute(["CCO"])
+
+def test_stub_adapters() -> None:
+    """現在未統合(スタブ)の各アダプタがダミー値を返さず常にis_available=Falseとなり
+    エラーを送出する厳格な挙動になっているかをテスト。"""
+    from backend.chem.xtb_adapter import XTBAdapter
+    from backend.chem.cosmo_adapter import CosmoAdapter
+    from backend.chem.unipka_adapter import UniPkaAdapter
+    from backend.chem.group_contrib_adapter import GroupContribAdapter
+    import pytest
+
+    stubs = [
+        XTBAdapter(),
+        CosmoAdapter(),
+        UniPkaAdapter(),
+        GroupContribAdapter(),
+    ]
+
+    for adapter in stubs:
+        assert list(adapter.get_descriptor_names())  # 名前リストは返る
+        assert adapter.is_available() is False
+        with pytest.raises(RuntimeError):
+            adapter.compute(["CCO"])
+

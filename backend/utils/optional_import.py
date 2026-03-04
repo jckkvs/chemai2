@@ -32,12 +32,12 @@ def safe_import(module_name: str, alias: str | None = None) -> Any:
         mod = importlib.import_module(module_name)
         _availability_cache[name] = True
         return mod
-    except ImportError as e:
-        logger.warning(f"[optional] '{name}' は利用不可: {e}")
+    except (ImportError, ValueError, AttributeError) as e:
+        logger.warning(f"[optional] '{name}' は利用不可（環境エラー）: {e}")
         _availability_cache[name] = False
         return None
     except Exception as e:
-        logger.warning(f"[optional] '{name}' のimport中にエラー: {e}")
+        logger.warning(f"[optional] '{name}' のimport中に予期せぬエラー: {e}")
         _availability_cache[name] = False
         return None
 
@@ -116,6 +116,13 @@ def probe_all_optional_libraries() -> dict[str, bool]:
         ("crest", "crest"),
         ("torch", "torch"),
         ("mlflow", "mlflow"),
+        ("statsmodels", "statsmodels"),
+        # パイプライン拡張
+        ("skrebate", "relieff"),
+        ("sklearn_genetic", "sklearn-genetic-opt"),
+        ("group_lasso", "group-lasso"),
+        ("linear_tree", "linear-tree"),
+        ("mlxtend", "mlxtend"),
     ]
 
     for module_name, alias in probes:

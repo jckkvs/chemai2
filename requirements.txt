@@ -31,6 +31,13 @@ scikit-optimize>=0.9
 umap-learn>=0.5
 mordred>=1.2
 
+# ========== パイプライン拡張（オプション） ==========
+skrebate>=0.62           # ReliefF (scikit-rebate)
+boruta>=0.3              # Boruta
+sklearn-genetic-opt>=5.0 # GeneticSelection
+linear-tree>=0.6         # LinearTree
+group-lasso>=0.4         # GroupLasso
+
 # ========== 開発用 ==========
 pytest>=7.4
 pytest-cov>=4.1

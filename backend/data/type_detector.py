@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy import stats
+# from scipy import stats (環境エラー回避のため遅延インポートへ移動)
 
 from backend.utils.config import (
     TYPE_DETECTOR_CARDINALITY_THRESHOLD,
@@ -301,6 +301,7 @@ class TypeDetector:
             outlier_ratio = 0.0
 
         # 歪度
+        from scipy import stats
         skewness = float(stats.skew(series))
 
         # 右裾重い & 全正 → 対数変換候補
@@ -357,36 +358,58 @@ class TypeDetector:
     def _looks_like_smiles(self, series: pd.Series, col_name: str) -> bool:
         """
         列名のヒントと値のパターンでSMILESかどうかを判定する。
-        RDKitが使えない場合は列名ヒントのみで判定する。
-
-        Note:
-            数字や記号を含む通常の文字列（例: "item_0"）を誤判定しないよう、
-            SMILES特有の原子記号（C, N, O, c, n, o等）の存在も確認する。
+        RDKitが利用可能な場合は、SMILESパーサーで直接判定を試みる。
+        利用不可の場合はヒューリスティックな判定（SMILES特有の文字）で判定する。
         """
-        # 列名ヒント
+        # 1. 列名ヒントによる判定
         col_lower = col_name.lower()
         name_match = any(hint in col_lower for hint in self.smiles_col_hints)
         if name_match:
             return True
 
-        # 値パターン: SMILES特有の文字（(, ), =, #, @等）が多いかつ
-        # 化学元素記号（C, N, O, S, P, c, n, o等）を含むこと
         sample = series.dropna().astype(str).head(20)
         if sample.empty:
             return False
 
-        # SMILES固有の記号（数字除外: 数字だけの文字列は通常のIDの可能性が高い）
-        smiles_special = set("()=#@+-[]\\/%")
-        # 化学元素記号の存在確認
-        atom_symbols = set("CNOScnoBrFIPS")
+        # 2. RDKitを利用した厳密なSMILES解釈
+        from backend.chem.rdkit_adapter import _rdkit
+        if _rdkit:
+            from rdkit import Chem
+            def _is_valid_smiles_rdkit(s: str) -> bool:
+                # 極端に短い、または単一文字構成のもの（カテゴリ列「A, B, C」など）を除外
+                if len(s) < 3 and s.isalpha():
+                    return False
+                # ログ出力を抑制してパースを試みる
+                _rdkit.RDLogger.DisableLog('rdApp.*')
+                try:
+                    mol = Chem.MolFromSmiles(s)
+                    return mol is not None
+                finally:
+                    _rdkit.RDLogger.EnableLog('rdApp.*')
+            
+            frac_smiles_rdkit = sample.apply(_is_valid_smiles_rdkit).mean()
+            return frac_smiles_rdkit > 0.6
 
-        def _is_smiles_like(s: str) -> bool:
-            has_special = sum(1 for c in s if c in smiles_special) >= 1
+        # 3. フォールバック判定 (RDKitがない場合)
+        # 化学元素記号の存在確認 (SMILESを構成する主要な原子)
+        atom_symbols = set("BNOFPSClBrI") | set("bcnosp")
+        # 特殊記号や結合、リング、枝分かれ、アイソトープ等のSMILES記号
+        smiles_chars = set("()=#@+-[]\\/%1234567890") | atom_symbols
+        
+        def _is_smiles_like_heuristic(s: str) -> bool:
+            # 極端に短いまたは長すぎるものは除外 (ID列などの誤爆防止)
+            if not (1 <= len(s) <= 2000):
+                return False
+            # SMILES構成文字以外が含まれているかチェック
+            if any(c not in smiles_chars for c in s):
+                return False
+            # 少なくとも1つは主要な化学元素記号を含む
             has_atom = any(c in atom_symbols for c in s)
-            return has_special and has_atom
+            return has_atom
 
-        frac_smiles = sample.apply(_is_smiles_like).mean()
-        return frac_smiles > 0.6
+        frac_smiles_heuristic = sample.apply(_is_smiles_like_heuristic).mean()
+        return frac_smiles_heuristic > 0.8
+
 
     @staticmethod
     def _looks_like_datetime(series: pd.Series) -> bool:

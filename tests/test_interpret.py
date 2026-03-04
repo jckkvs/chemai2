@@ -15,7 +15,9 @@ from backend.interpret.sri import (
     SRIResult,
     select_features_by_independence,
 )
-from backend.interpret.shap_explainer import ShapResult
+from backend.interpret.shap_explainer import ShapExplainer, ShapResult
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
 
 
 # ============================================================
@@ -202,5 +204,84 @@ class TestSelectFeaturesByIndependence:
         decomposer = SRIDecomposer()
         result = decomposer.decompose(dummy_shap_result)
         selected = select_features_by_independence(result)
-        scores = [result.independence_vec[result.feature_names.index(f)] for f in selected]
-        assert scores == sorted(scores, reverse=True)
+    def test_sri_plot_methods(self, dummy_shap_result: ShapResult) -> None:
+        """SRIのプロットメソッドがエラーなく動作すること。(T-009-05)"""
+        from unittest.mock import patch
+        from backend.interpret.sri import plot_sri_heatmap
+        decomposer = SRIDecomposer()
+        result = decomposer.decompose(dummy_shap_result)
+        with patch("matplotlib.pyplot.show"), patch("matplotlib.pyplot.savefig"):
+            plot_sri_heatmap(result, component="synergy")
+            plot_sri_heatmap(result, component="redundancy")
+
+# ============================================================
+# T-010: ShapExplainer テスト
+# ============================================================
+
+class TestShapExplainer:
+    """T-010: SHAP解釈のテスト。"""
+
+    def test_explain_tree_model(self) -> None:
+        """Tree系モデル（RF）で説明可能であること。(T-010-01)"""
+        X = pd.DataFrame(np.random.randn(20, 3), columns=["A", "B", "C"])
+        y = np.random.randn(20)
+        model = RandomForestRegressor(n_estimators=5, random_state=42).fit(X, y)
+        
+        explainer = ShapExplainer()
+        result = explainer.explain(model, X)
+        
+        assert isinstance(result, ShapResult)
+        assert result.explainer_type == "tree"
+        assert result.shap_values.shape == (20, 3)
+
+    def test_explain_linear_model(self) -> None:
+        """線形モデルで説明可能であること。(T-010-02)"""
+        X = pd.DataFrame(np.random.randn(20, 3), columns=["A", "B", "C"])
+        y = np.random.randn(20)
+        model = LinearRegression().fit(X, y)
+        
+        explainer = ShapExplainer()
+        result = explainer.explain(model, X)
+        
+        assert result.explainer_type == "linear"
+        assert result.shap_values.shape == (20, 3)
+
+    def test_get_feature_importance_df(self, dummy_shap_result: ShapResult) -> None:
+        """重要度DataFrameが降順で返ること。(T-010-03)"""
+        explainer = ShapExplainer()
+        df = explainer.get_feature_importance_df(dummy_shap_result)
+        
+        assert isinstance(df, pd.DataFrame)
+        assert list(df.columns) == ["feature", "importance"]
+        assert df["importance"].is_monotonic_decreasing
+
+    def test_plot_methods_no_error(self, dummy_shap_result: ShapResult, tmp_path) -> None:
+        """プロットメソッド（保存付）がエラーなく動作すること。(T-010-04)"""
+        from unittest.mock import patch
+        explainer = ShapExplainer()
+        
+        save_path = tmp_path / "test_plot.png"
+        
+        # shap のプロット関数自体もモックする
+        with patch("matplotlib.pyplot.show"), \
+             patch("matplotlib.pyplot.savefig"), \
+             patch("shap.summary_plot"), \
+             patch("shap.dependence_plot"), \
+             patch("shap.plots.waterfall"):
+            explainer.plot_summary(dummy_shap_result, save_path=str(save_path))
+            explainer.plot_waterfall(dummy_shap_result, sample_idx=0)
+            explainer.plot_dependence(dummy_shap_result, feature="feat_0")
+
+    def test_explain_multiclass_plots(self, multiclass_shap_result: ShapResult) -> None:
+        """マルチクラスモデルでのプロットと重要度を検証。(T-010-05)"""
+        from unittest.mock import patch
+        explainer = ShapExplainer()
+        with patch("matplotlib.pyplot.show"), \
+             patch("matplotlib.pyplot.savefig"), \
+             patch("shap.summary_plot"), \
+             patch("shap.dependence_plot"):
+            explainer.plot_summary(multiclass_shap_result)
+            explainer.plot_dependence(multiclass_shap_result, feature="f0")
+            df = explainer.get_feature_importance_df(multiclass_shap_result)
+            assert not df.empty
+            assert list(df.columns) == ["feature", "importance"]

@@ -16,6 +16,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from backend.chem.recommender import get_target_recommendation_by_name
+
 # ── ページ設定 ──────────────────────────────────────────────
 st.set_page_config(
     page_title="ChemAI ML Studio",
@@ -189,10 +191,12 @@ with st.sidebar:
         ("📂", "データ詳細",     "data_load",    has_data),
         ("🔍", "EDA 詳細",       "eda",           has_data),
         ("⚙️", "前処理設定",     "preprocess",    has_data),
+        ("🔬", "パイプライン",   "pipeline",      has_data),
         ("📊", "モデル評価",     "evaluation",    has_result),
         ("📐", "次元削減",       "dim_reduction", has_data),
         ("💡", "SHAP 解釈",      "interpret",     has_result),
         ("🧬", "化合物解析",     "chem",          True),
+        ("📚", "推奨変数ヘルプ", "help_page",     True),
     ]
     for icon, label, pkey, enabled in expert_pages:
         cur = st.session_state["page"] == pkey
@@ -348,6 +352,12 @@ if page == "home":
                 key="home_target",
             )
             st.session_state["target_col"] = target
+            
+            # 目的変数に基づく推奨説明変数のヒント表示
+            rec = get_target_recommendation_by_name(target)
+            if rec:
+                st.info(f"💡 **推奨される説明変数**: {rec.summary} \n\n" + 
+                        ", ".join([f"`{d.name}` ({d.library})" for d in rec.descriptors]))
         with col_task:
             task_opt = st.selectbox(
                 "📋 タスク種別",
@@ -362,8 +372,26 @@ if page == "home":
             with ca:
                 st.markdown("**ML設定**")
                 cv_folds   = st.slider("CV分割数", 2, 10, 5, key="adv_cv")
-                max_models = st.slider("試すモデル数", 1, 15, 8, key="adv_max")
                 timeout    = st.slider("タイムアウト(秒)", 30, 3600, 300, key="adv_to")
+                
+                # タスクに応じた利用可能モデルの取得
+                from backend.models.factory import list_models, get_default_automl_models
+                _tmp_task = st.session_state.get("task", "auto")
+                if _tmp_task == "auto":
+                    _tmp_task = "regression" if pd.api.types.is_float_dtype(df[st.session_state.get("target_col")]) else "classification"
+                
+                available_models = list_models(task=_tmp_task, available_only=True)
+                model_options = {m["key"]: f'{m["name"]} {"" if m["available"] else "(未インストール)"}' for m in available_models}
+                default_models = get_default_automl_models(task=_tmp_task)
+                
+                selected_models = st.multiselect(
+                    "使用するモデル",
+                    options=list(model_options.keys()),
+                    default=default_models,
+                    format_func=lambda x: model_options.get(x, x),
+                    key="adv_models",
+                    help="AutoMLで評価するモデルを選択します"
+                )
             with cb:
                 st.markdown("**前処理設定**")
                 scaler    = st.selectbox("数値スケーラー",
@@ -379,12 +407,140 @@ if page == "home":
                 do_pca  = st.checkbox("次元削減(PCA)", value=True, key="adv_pca")
                 do_shap = st.checkbox("SHAP解析", value=True, key="adv_shap")
 
+            st.markdown("---")
+            st.markdown("**🧪 記述子計算設定（任意）**")
+
+            from backend.chem import RDKitAdapter, XTBAdapter, CosmoAdapter, UniPkaAdapter, GroupContribAdapter, MordredAdapter
+            from backend.chem.recommender import (
+                get_target_recommendation_by_name,
+                get_target_categories,
+                get_targets_by_category,
+                get_all_descriptor_categories,
+                get_descriptors_by_category
+            )
+
+            all_adapters = [RDKitAdapter(compute_fp=True), MordredAdapter(selected_only=True), XTBAdapter(), CosmoAdapter(), UniPkaAdapter(), GroupContribAdapter()]
+            
+            # 辞書化してライブラリごとの記述子を持っておく（タブ3用）
+            lib_descriptors = {}
+            all_available_descriptors = []
+            for adp in all_adapters:
+                if adp.is_available():
+                    lib_name = adp.__class__.__name__.replace("Adapter", "")
+                    names = adp.get_descriptor_names()
+                    lib_descriptors[lib_name] = names
+                    all_available_descriptors.extend(names)
+
+            # --- 現在の選択状態（セッション）を取得 ---
+            # Session Stateに初期値がない場合は全選択（または前回選択値）
+            default_desc = st.session_state.get("adv_desc", all_available_descriptors)
+            current_selected = set([d for d in default_desc if d in all_available_descriptors])
+
+            # 状態更新用コールバック（変更があった場合のみrerunする）
+            def update_desc_state(new_selection: set):
+                st.session_state["adv_desc"] = list(new_selection)
+                st.rerun()
+
+            tab1, tab2, tab3 = st.tabs(["目的変数の系統から選ぶ", "記述子の意味から選ぶ", "計算ライブラリから選ぶ"])
+
+            with tab1:
+                st.markdown("予測したい目的変数の系統（光、強度など）に合わせて、推奨される記述子のセットを一括で追加・削除できます。")
+                target_col_val = st.session_state.get("target_col", "")
+                rec = get_target_recommendation_by_name(target_col_val)
+                if rec:
+                    st.info(f"💡 現在選択中の目的変数「**{target_col_val}**」は「**{rec.category}**」に属します。\n\n{rec.summary}")
+                
+                categories = get_target_categories()
+                for cat in categories:
+                    with st.expander(f"📁 {cat}"):
+                        targets = get_targets_by_category(cat)
+                        for t in targets:
+                            desc_names = [d.name for d in t.descriptors if d.name in all_available_descriptors]
+                            if not desc_names:
+                                continue
+                                
+                            col_t_left, col_t_right = st.columns([3, 1])
+                            with col_t_left:
+                                st.markdown(f"**{t.target_name}**")
+                                st.caption(t.summary)
+                            with col_t_right:
+                                # このターゲットの全記述子が既に選択されているかチェック
+                                is_all_selected = all(d in current_selected for d in desc_names)
+                                if st.button("一括追加" if not is_all_selected else "一括解除", key=f"btn_tgt_{t.target_name}"):
+                                    if not is_all_selected:
+                                        update_desc_state(current_selected.union(desc_names))
+                                    else:
+                                        update_desc_state(current_selected.difference(desc_names))
+
+            with tab2:
+                st.markdown("物理的・化学的意味のカテゴリごとに記述子を選択できます。")
+                desc_cats = get_all_descriptor_categories()
+                for dcat in desc_cats:
+                    descs = get_descriptors_by_category(dcat)
+                    valid_descs = [d for d in descs if d.name in all_available_descriptors]
+                    if not valid_descs:
+                        continue
+                        
+                    with st.expander(f"🧩 {dcat} ({len(valid_descs)}件)"):
+                        # 全選択/全解除ボタン
+                        c1, c2, _ = st.columns([1, 1, 3])
+                        all_desc_names_in_cat = [d.name for d in valid_descs]
+                        if c1.button("全選択", key=f"sel_all_{dcat}"):
+                            update_desc_state(current_selected.union(all_desc_names_in_cat))
+                        if c2.button("全解除", key=f"desel_all_{dcat}"):
+                            update_desc_state(current_selected.difference(all_desc_names_in_cat))
+                            
+                        # 個別のチェックボックス
+                        for d in valid_descs:
+                            is_checked = d.name in current_selected
+                            changed = st.checkbox(f"**{d.name}** ({d.library}): {d.meaning}", value=is_checked, key=f"chk_mean_{dcat}_{d.name}")
+                            if changed != is_checked:
+                                if changed:
+                                    current_selected.add(d.name)
+                                else:
+                                    current_selected.remove(d.name)
+                                st.session_state["adv_desc"] = list(current_selected)
+
+            with tab3:
+                st.markdown("計算エンジン（ライブラリ）ごとにすべての記述子を個別に選択できます。")
+                for lib, d_names in lib_descriptors.items():
+                    if not d_names:
+                        continue
+                    with st.expander(f"⚙️ {lib} ({len(d_names)}件)"):
+                        c1, c2, _ = st.columns([1, 1, 3])
+                        if c1.button("全選択", key=f"sel_all_lib_{lib}"):
+                            update_desc_state(current_selected.union(d_names))
+                        if c2.button("全解除", key=f"desel_all_lib_{lib}"):
+                            update_desc_state(current_selected.difference(d_names))
+                            
+                        # マルチセレクトでまとめて編集させる
+                        lib_selected = [d for d in d_names if d in current_selected]
+                        new_lib_selected = st.multiselect(
+                            f"{lib} の出力記述子",
+                            options=d_names,
+                            default=lib_selected,
+                            key=f"ms_lib_{lib}",
+                            label_visibility="collapsed"
+                        )
+                        
+                        # 差分があれば更新
+                        if set(new_lib_selected) != set(lib_selected):
+                            diff_add = set(new_lib_selected) - set(lib_selected)
+                            diff_remove = set(lib_selected) - set(new_lib_selected)
+                            current_selected.update(diff_add)
+                            current_selected.difference_update(diff_remove)
+                            st.session_state["adv_desc"] = list(current_selected)
+
+            selected_desc = list(current_selected)
+            st.caption(f"✅ 現在 {len(selected_desc)} 件の記述子が選択されています。")
+
             # 詳細設定の値をセッションに保存
             st.session_state["_adv"] = dict(
-                cv_folds=cv_folds, max_models=max_models, timeout=timeout,
+                cv_folds=cv_folds, models=selected_models, timeout=timeout,
                 scaler=scaler,
                 do_eda=do_eda, do_prep=do_prep, do_eval=do_eval,
                 do_pca=do_pca, do_shap=do_shap,
+                selected_descriptors=selected_desc,
             )
 
         # ── 実行ボタン（主役） ───────────────────────────────
@@ -407,7 +563,7 @@ if page == "home":
                         smiles_col = st.session_state.get("smiles_col"),
                         task       = st.session_state.get("task", "auto"),
                         cv_folds   = adv.get("cv_folds", 5),
-                        max_models = adv.get("max_models", 8),
+                        models     = adv.get("models", []),
                         timeout    = adv.get("timeout", 300),
                         scaler     = adv.get("scaler", "auto"),
                         do_eda     = adv.get("do_eda", True),
@@ -415,6 +571,7 @@ if page == "home":
                         do_eval    = adv.get("do_eval", True),
                         do_pca     = adv.get("do_pca", True),
                         do_shap    = adv.get("do_shap", True),
+                        selected_descriptors = adv.get("selected_descriptors", None),
                     )
                     st.session_state["page"] = "automl"
                     st.rerun()
@@ -492,3 +649,11 @@ elif page == "chem":
 elif page == "interpret":
     from frontend_streamlit.pages.pipeline import interpret_page
     interpret_page.render()
+
+elif page == "pipeline":
+    from frontend_streamlit.pages.pipeline import pipeline_page
+    pipeline_page.render()
+
+elif page == "help_page":
+    from frontend_streamlit.pages import help_page
+    help_page.render_help_page()

@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 _xgb = safe_import("xgboost", "xgboost")
 _lgb = safe_import("lightgbm", "lightgbm")
 _cat = safe_import("catboost", "catboost")
+_linear_tree = safe_import("linear_tree", "linear-tree")
 
 
 def _xgb_regressor(**kw: Any) -> Any:
@@ -53,6 +54,30 @@ def _xgb_regressor(**kw: Any) -> Any:
 def _xgb_classifier(**kw: Any) -> Any:
     from xgboost import XGBClassifier  # type: ignore
     return XGBClassifier(random_state=RANDOM_STATE, eval_metric="logloss", **kw)
+
+
+def _xgbrf_regressor(**kw: Any) -> Any:
+    from xgboost import XGBRFRegressor  # type: ignore
+    return XGBRFRegressor(random_state=RANDOM_STATE, eval_metric="rmse", **kw)
+
+
+def _xgbrf_classifier(**kw: Any) -> Any:
+    from xgboost import XGBRFClassifier  # type: ignore
+    return XGBRFClassifier(random_state=RANDOM_STATE, eval_metric="logloss", **kw)
+
+
+def _lineartree_regressor(**kw: Any) -> Any:
+    from linear_tree import LinearTreeRegressor  # type: ignore
+    from sklearn.linear_model import Ridge
+    base = kw.pop("base_estimator", Ridge())
+    return LinearTreeRegressor(base_estimator=base, **kw)
+
+
+def _lineartree_classifier(**kw: Any) -> Any:
+    from linear_tree import LinearTreeClassifier  # type: ignore
+    from sklearn.linear_model import LogisticRegression
+    base = kw.pop("base_estimator", LogisticRegression(max_iter=500))
+    return LinearTreeClassifier(base_estimator=base, **kw)
 
 
 def _lgb_regressor(**kw: Any) -> Any:
@@ -279,6 +304,20 @@ _REGRESSION_REGISTRY: dict[str, dict[str, Any]] = {
         "available": True,
         "tags": ["linear", "dimensionality"],
     },
+    "xgbrf": {
+        "name": "XGBoost Random Forest (XGBRFRegressor)",
+        "factory": _xgbrf_regressor,
+        "default_params": {"n_estimators": 100},
+        "available": bool(_xgb),
+        "tags": ["ensemble", "tree", "rf"],
+    },
+    "lineartree": {
+        "name": "Linear Tree Regressor",
+        "factory": _lineartree_regressor,
+        "default_params": {"max_depth": 5},
+        "available": bool(_linear_tree),
+        "tags": ["tree", "linear", "interpretable"],
+    },
 }
 
 # ============================================================
@@ -422,6 +461,20 @@ _CLASSIFICATION_REGISTRY: dict[str, dict[str, Any]] = {
         "default_params": {"random_state": RANDOM_STATE},
         "available": True,
         "tags": ["probabilistic"],
+    },
+    "xgbrf_c": {
+        "name": "XGBoost Random Forest (XGBRFClassifier)",
+        "factory": _xgbrf_classifier,
+        "default_params": {"n_estimators": 100},
+        "available": bool(_xgb),
+        "tags": ["ensemble", "tree", "rf"],
+    },
+    "lineartree_c": {
+        "name": "Linear Tree Classifier",
+        "factory": _lineartree_classifier,
+        "default_params": {"max_depth": 5},
+        "available": bool(_linear_tree),
+        "tags": ["tree", "linear", "interpretable"],
     },
 }
 

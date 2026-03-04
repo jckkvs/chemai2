@@ -322,8 +322,8 @@ class Preprocessor:
         steps.append(("impute", self._build_numeric_imputer()))
         if cfg.add_missing_indicator:
             # MissingIndicator は ColumnTransformer 外で追加するのが一般的だが、
-            # FunctionTransformerで簡易対応
-            pass  # passthrough で後処理 or FeatureUnion で別対応
+            # FunctionTransformerなどで将来的に検討
+            logger.debug("MissingIndicator is not yet implemented in this pipeline")
 
         # Scaler / Transformer
         effective_scaler = scaler_name if scaler_name != "auto" else "standard"

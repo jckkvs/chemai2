@@ -154,8 +154,9 @@ def evaluate_classification(
                 roc = float(roc_auc_score(y_true, prob))
             else:
                 roc = float(roc_auc_score(y_true, y_prob, multi_class="ovr", average="weighted"))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"ROC-AUC calculation failed: {e}")
+            roc = None
     logger.info(f"[evaluate_classification] {model_key}: Acc={acc:.4f}, F1={f1:.4f}")
     return ModelScore(
         model_key=model_key, task="classification",
@@ -248,8 +249,9 @@ def benchmark_models(
         if task == "classification" and hasattr(model, "predict_proba"):
             try:
                 y_prob = model.predict_proba(X_test)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"predict_proba failed for {key}: {e}")
+                y_prob = None
 
         if task == "regression":
             score = evaluate_regression(

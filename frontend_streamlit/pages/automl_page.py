@@ -79,7 +79,7 @@ def render(run_config: dict | None = None) -> None:
             numeric_scaler = run_config.get("scaler", "auto"),
             task_override  = run_config.get("task", "auto"),
             cv_folds    = run_config.get("cv_folds", 5),
-            max_models  = run_config.get("max_models", 8),
+            models      = run_config.get("models", []),
             timeout     = run_config.get("timeout", 300),
             do_eda      = run_config.get("do_eda", True),
             do_prep     = run_config.get("do_prep", True),
@@ -110,29 +110,40 @@ def render(run_config: dict | None = None) -> None:
 
     # ── Pipeline設定パネル（折り畳み） ────────────────────────
     with st.expander("⚙️ パイプライン詳細設定", expanded=False):
-        col_a, col_b, col_c = st.columns(3)
+        col_a, col_b = st.columns(2)
         with col_a:
-            st.markdown("**ML設定**")
-            cv_folds   = st.slider("CV分割数", 2, 10, 5, key="pl_cv")
-            max_models = st.slider("試すモデル数", 1, 15, 8, key="pl_max")
+            st.markdown("**全般設定**")
             timeout    = st.slider("タイムアウト(秒)", 30, 3600, 300, key="pl_to")
-        with col_b:
-            st.markdown("**前処理設定**")
             numeric_scaler  = st.selectbox("数値スケーラー",
                 ["auto", "standard", "robust", "minmax", "none"], key="pl_scaler")
+        with col_b:
+            st.markdown("**タスク & SMILES**")
             task_override   = st.selectbox("タスク",
                 ["auto", "regression", "classification"], key="pl_task")
             smiles_col_raw  = st.selectbox("SMILES列",
                 ["なし"] + df.columns.tolist(), key="pl_smiles")
             smiles_col = None if smiles_col_raw == "なし" else smiles_col_raw
-        with col_c:
-            st.markdown("**実行するフェーズ**")
-            do_eda   = st.checkbox("Phase 1: EDA",         value=True, key="pl_eda")
-            do_prep  = st.checkbox("Phase 2: 前処理確認",  value=True, key="pl_prep")
-            do_ml    = st.checkbox("Phase 3: AutoML",       value=True, key="pl_ml")
-            do_eval  = st.checkbox("Phase 4: 評価",         value=True, key="pl_eval")
-            do_pca   = st.checkbox("Phase 5: 次元削減(PCA)",value=True, key="pl_pca")
-            do_shap  = st.checkbox("Phase 6: SHAP解析",     value=True, key="pl_shap")
+
+        st.markdown("**実行フェーズ選択**")
+        c_p1, c_p2 = st.columns(2)
+        with c_p1:
+            do_pca   = st.checkbox("次元削減(PCA)を表示", value=True, key="pl_pca")
+        with c_p2:
+            do_shap  = st.checkbox("SHAP解析(特徴量重要度)を表示", value=True, key="pl_shap")
+
+        st.markdown("**高度なパラメータ設定 (JSON)**")
+        extra_params_raw = st.text_area(
+            "高度な引数をJSON形式で直接指定（例: {\"cv\": {\"shuffle\": true}, \"pca\": {\"whiten\": true}}）",
+            value="{}",
+            help="sklearnの各コンポーネントに渡す追加引数を指定できます。キー: 'cv', 'pca', 'tsne', 'umap', 'model'",
+            key="pl_extra_json"
+        )
+        import json
+        try:
+            extra_params = json.loads(extra_params_raw)
+        except json.JSONDecodeError:
+            st.error("❌ 高度なパラメータのJSON形式が正しくありません。")
+            extra_params = {}
 
     # ── 既存結果の表示 ─────────────────────────────────────
     existing_pl = st.session_state.get("pipeline_result")
@@ -194,15 +205,16 @@ def render(run_config: dict | None = None) -> None:
         smiles_col=smiles_col,
         numeric_scaler=numeric_scaler,
         task_override=task_override,
-        cv_folds=cv_folds,
-        max_models=max_models,
+        cv_folds=5,      # 固定または自動
+        models=[],       # 空リストを渡すとバックエンド側で全モデルを自動選択
         timeout=timeout,
-        do_eda=do_eda,
-        do_prep=do_prep,
-        do_ml=do_ml,
-        do_eval=do_eval,
+        do_eda=True,     # デフォルトON
+        do_prep=True,
+        do_ml=True,
+        do_eval=True,
         do_pca=do_pca,
         do_shap=do_shap,
+        extra_params=extra_params,
     )
 
 
@@ -218,7 +230,7 @@ def _run_full_pipeline(
     numeric_scaler: str,
     task_override: str,
     cv_folds: int,
-    max_models: int,
+    models: list[str],
     timeout: int,
     do_eda: bool,
     do_prep: bool,
@@ -226,8 +238,10 @@ def _run_full_pipeline(
     do_eval: bool,
     do_pca: bool,
     do_shap: bool,
+    extra_params: dict[str, Any] | None = None,
 ) -> None:
     """フルパイプラインを順番に実行してsession_stateに保存する。"""
+    extra_params = extra_params or {}
     TOTAL_PHASES = sum([do_eda, do_prep, do_ml, do_eval, do_pca, do_shap])
     result = PipelineResult()
     start_time = time.time()
@@ -294,13 +308,15 @@ def _run_full_pipeline(
             engine = AutoMLEngine(
                 task=task_override,
                 cv_folds=cv_folds,
-                max_models=max_models,
+                model_keys=models if models else None,
                 timeout_seconds=timeout,
                 progress_callback=_cb,
             )
+            # engine.run に extra_params を渡す (backend側での対応が必要な場合は別途修正)
             automl_res = engine.run(
                 df, target_col=target_col, smiles_col=smiles_col,
                 preprocess_config=cfg,
+                cv_extra_params=extra_params.get("cv", {}),
             )
             result.automl_result = automl_res
             result.task = automl_res.task if hasattr(automl_res, "task") else task_override
@@ -340,13 +356,19 @@ def _run_full_pipeline(
             phase_status.markdown("**Phase 5/6 — PCA 次元削減中…**")
             try:
                 # run_pca が内部で数値列選択 + target_col除外する
-                X_num_df = df.dropna(subset=df.select_dtypes(include="number").columns)
-                if X_num_df.select_dtypes(include="number").shape[1] >= 3:  # target含む方向で >= 3
-                    emb_df, evr = run_pca(
-                        X_num_df, n_components=2, target_col=target_col
+                if df.select_dtypes(include="number").shape[1] >= 3:  # target含む方向で >= 3
+                    from backend.data.dim_reduction import DimReductionConfig as _DimReductionConfig
+                    from backend.data.dim_reduction import DimReducer as _DimReducer
+                    
+                    pca_cfg = _DimReductionConfig(
+                        method="pca", n_components=2, 
+                        method_params=extra_params.get("pca", {})
                     )
-                    result.pca_df  = emb_df
-                    result.pca_evr = evr
+                    reducer = _DimReducer(pca_cfg)
+                    emb_df = reducer.fit_transform(df.drop(columns=[target_col]))
+                    
+                    result.pca_df  = pd.DataFrame(emb_df, columns=["PC1", "PC2"], index=df.index)
+                    result.pca_evr = reducer.explained_variance_ratio_
             except Exception as e:
                 result.warnings.append(f"PCAエラー: {e}")
                 _log(f"⚠️ PCAスキップ: {e}")

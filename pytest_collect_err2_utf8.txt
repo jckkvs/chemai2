@@ -1,0 +1,45 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.13.12, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\Users\horie\chemai2
+configfile: pyproject.toml
+plugins: anyio-4.12.0, cov-7.0.0, xdist-3.8.0
+collected 0 items / 1 error
+
+=================================== ERRORS ====================================
+____________________ ERROR collecting tests/test_models.py ____________________
+ImportError while importing test module 'C:\Users\horie\chemai2\tests\test_models.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_models.py:14: in <module>
+    from tests.conftest import regression_df
+E   ImportError: cannot import name 'regression_df' from 'tests.conftest' (C:\Users\horie\chemai2\tests\conftest.py)
+------------------------------- Captured stderr -------------------------------
+[optional] 'catboost' は利用不可（環境エラー）: No module named 'catboost'
+[optional] 'optuna' は利用不可（環境エラー）: No module named 'optuna'
+[optional] 'scikit-optimize' は利用不可（環境エラー）: No module named 'skopt'
+[optional] 'phate' は利用不可（環境エラー）: No module named 'phate'
+[optional] 'sage-importance' は利用不可（環境エラー）: No module named 'sage'
+[optional] 'lime' は利用不可（環境エラー）: No module named 'lime'
+[optional] 'eli5' は利用不可（環境エラー）: No module named 'eli5'
+[optional] 'boruta' は利用不可（環境エラー）: No module named 'boruta'
+[optional] 'mordred' は利用不可（環境エラー）: No module named 'mordred'
+[optional] 'dscribe' は利用不可（環境エラー）: No module named 'dscribe'
+[optional] 'xtb-python' は利用不可（環境エラー）: No module named 'xtb'
+[optional] 'mace-torch' は利用不可（環境エラー）: No module named 'mace'
+[optional] 'torchani' は利用不可（環境エラー）: No module named 'torchani'
+[optional] 'uma' は利用不可（環境エラー）: No module named 'fairchem'
+[optional] 'deepchem' は利用不可（環境エラー）: No module named 'deepchem'
+[optional] 'unipka' は利用不可（環境エラー）: No module named 'unipka'
+[optional] 'crest' は利用不可（環境エラー）: No module named 'crest'
+[optional] 'statsmodels' は利用不可（環境エラー）: No module named 'statsmodels'
+[optional] 'relieff' は利用不可（環境エラー）: No module named 'skrebate'
+[optional] 'sklearn-genetic-opt' は利用不可（環境エラー）: No module named 'sklearn_genetic'
+[optional] 'group-lasso' は利用不可（環境エラー）: No module named 'group_lasso'
+[optional] 'linear-tree' は利用不可（環境エラー）: No module named 'linear_tree'
+=========================== short test summary info ===========================
+ERROR tests/test_models.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+============================== 1 error in 0.17s ===============================

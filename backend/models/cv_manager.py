@@ -7,8 +7,10 @@ sklearn の全クロスバリデーション手法を統合管理するモジュ
 from __future__ import annotations
 
 import logging
+import importlib
+import inspect
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, Iterator, Type
 
 import numpy as np
 import pandas as pd
@@ -249,6 +251,43 @@ _CV_REGISTRY: dict[str, dict[str, Any]] = {
     },
 }
 
+def _get_cv_class(class_name: str) -> Type[Any]:
+    """sklearn.model_selection から CV クラスを動的に取得する。"""
+    # 既知のエイリアス解決
+    alias_map = {
+        "kfold": "KFold",
+        "stratified_kfold": "StratifiedKFold",
+        "group_kfold": "GroupKFold",
+        "stratified_group_kfold": "StratifiedGroupKFold",
+        "loo": "LeaveOneOut",
+        "lpo": "LeavePOut",
+        "logo": "LeaveOneGroupOut",
+        "lpgo": "LeavePGroupsOut",
+        "repeated_kfold": "RepeatedKFold",
+        "repeated_stratified_kfold": "RepeatedStratifiedKFold",
+        "shuffle_split": "ShuffleSplit",
+        "stratified_shuffle_split": "StratifiedShuffleSplit",
+        "group_shuffle_split": "GroupShuffleSplit",
+        "timeseries": "TimeSeriesSplit",
+        "predefined": "PredefinedSplit",
+    }
+    
+    target_name = alias_map.get(class_name.lower(), class_name)
+    
+    # 内部クラス（WalkForward等）をチェック
+    if target_name == "WalkForwardSplit":
+        return WalkForwardSplit
+
+    # sklearn から取得
+    try:
+        mod = importlib.import_module("sklearn.model_selection")
+        cls = getattr(mod, target_name, None)
+        if cls is None:
+            raise AttributeError(f"sklearn.model_selection にクラス '{target_name}' が見つかりません。")
+        return cls
+    except (ImportError, AttributeError) as e:
+        raise ValueError(f"CV手法 '{class_name}' (クラス名: {target_name}) をロードできませんでした: {e}")
+
 
 @dataclass
 class CVConfig:
@@ -262,34 +301,54 @@ class CVConfig:
 def get_cv(config: CVConfig) -> Any:
     """
     CVConfig に基づいて CV スプリッタを返す。
+    全引数が extra_params 経由で設定可能。
 
     Args:
         config: CVConfig インスタンス
 
     Returns:
         sklearn互換のCV スプリッタ
-
-    Raises:
-        ValueError: 未知のCV手法
     """
     key = config.cv_key
-    if key not in _CV_REGISTRY:
-        raise ValueError(
-            f"未知のCV手法 '{key}'。利用可能: {list(_CV_REGISTRY.keys())}"
-        )
+    
+    # クラスの取得
+    if key in _CV_REGISTRY:
+        entry = _CV_REGISTRY[key]
+        cv_class = entry["class"]
+        params = {**entry.get("default_params", {})}
+    else:
+        cv_class = _get_cv_class(key)
+        params = {}
 
-    entry = _CV_REGISTRY[key]
-    params = {**entry["default_params"]}
-    if "n_splits" in params:
+    # 基本パラメータの上書き
+    if "n_splits" in inspect.signature(cv_class.__init__).parameters:
         params["n_splits"] = config.n_splits
+    
+    # ユーザ指定の追加パラメータ（全引数対応）
     params.update(config.extra_params)
 
-    # PredefinedSplit は特殊（test_fold必須）
-    if key == "predefined":
-        if "test_fold" not in params:
-            raise ValueError("PredefinedSplit には 'test_fold' 配列が必要です。")
+    # 特殊ケース: PredefinedSplit
+    if cv_class.__name__ == "PredefinedSplit" and "test_fold" not in params:
+        raise ValueError("PredefinedSplit には 'test_fold' 配列が必要です。")
 
-    return entry["class"](**params)
+    # 引数バリデーション
+    sig = inspect.signature(cv_class.__init__)
+    valid_params = {}
+    invalid_params = []
+    
+    for k, v in params.items():
+        if k in sig.parameters or sig.parameters.get("kwargs"):
+            valid_params[k] = v
+        else:
+            invalid_params.append(k)
+            
+    if invalid_params:
+        logger.warning(f"CVクラス {cv_class.__name__} に無効な引数が指定されました（無視します）: {invalid_params}")
+
+    try:
+        return cv_class(**valid_params)
+    except Exception as e:
+        raise ValueError(f"CVスプリッタ {cv_class.__name__} の初期化に失敗しました: {e}")
 
 
 def list_cv_methods(

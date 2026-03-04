@@ -188,12 +188,20 @@ def _plot_scatter(df: pd.DataFrame, numeric_cols: list[str], target_col: str | N
 
     color_col = target_col if target_col and target_col in df.columns else None
 
+    # backend.utils.optional_import を使用して可用性をチェック
+    from backend.utils.optional_import import is_available
+    sm_available = is_available("statsmodels")
+    
+    trendline_opt = "ols" if sm_available else None
+    if not sm_available:
+        st.info("💡 `statsmodels` がインストールされていないため、回帰直線（トレンドライン）は表示されません。")
+
     fig = px.scatter(
         df, x=x_col, y=y_col, color=color_col,
         opacity=0.7,
         color_continuous_scale="Viridis",
         template="plotly_dark",
-        trendline="ols",
+        trendline=trendline_opt,
     )
     fig.update_layout(
         plot_bgcolor="rgba(0,0,0,0)",

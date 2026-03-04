@@ -2,18 +2,17 @@
 backend/data/dim_reduction.py
 
 次元削減モジュール。PCA / t-SNE / UMAP をsklearn互換Transformerとして提供する。
-オプション依存（umap-learn）が未インストールの場合はPCA/t-SNEのみ使用可能。
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Type
 
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, IncrementalPCA
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
 
@@ -21,15 +20,14 @@ from backend.utils.optional_import import safe_import
 
 logger = logging.getLogger(__name__)
 
-# 任意依存
-umap_module = safe_import("umap", alias="umap-learn")
-# UMAPクラスを取得
-_UMAP_CLASS = getattr(umap_module, "UMAP", None) if umap_module is not None else None
+# 任意依存 (遅延インポートにより環境エラーを絶縁)
+def _get_umap_class() -> Any:
+    try:
+        mod = safe_import("umap", alias="umap-learn")
+        return getattr(mod, "UMAP", None) if mod is not None else None
+    except:
+        return None
 
-
-# ============================================================
-# 設定
-# ============================================================
 
 @dataclass
 class DimReductionConfig:
@@ -47,25 +45,12 @@ class DimReductionConfig:
     # 共通
     random_state: int = 42
     scale: bool = True             # 事前にStandardScalerを適用するか
+    method_params: dict[str, Any] = field(default_factory=dict) # 追加の任意引数
 
-
-# ============================================================
-# Transformer
-# ============================================================
 
 class DimReducer(BaseEstimator, TransformerMixin):
     """
     次元削減Transformer (PCA / t-SNE / UMAP)。
-
-    Implements: 要件定義書 §3.6 次元削減
-
-    Args:
-        config: DimReductionConfig
-
-    Note:
-        t-SNEはfit/transformが分離できないため（バージョン制約）、
-        fit_transform() を推奨。新規データのtransformはサポートしない
-        (sklearn 1.4+では PCA-then-TSNE の2段階方式を推奨)。
     """
 
     def __init__(self, config: DimReductionConfig | None = None) -> None:
@@ -74,87 +59,86 @@ class DimReducer(BaseEstimator, TransformerMixin):
         self._reducer: Any = None
         self._embedding: np.ndarray | None = None
         self._feature_names_in: list[str] = []
+        self._reconstruction_error: np.ndarray | None = None
 
     def fit(self, X: np.ndarray | pd.DataFrame, y: Any = None) -> "DimReducer":
-        """
-        次元削減モデルをfitする。
-        t-SNEの場合はfit_transform()を内部で実行。
-        """
+        """次元削減モデルをfitする。"""
         X_arr = self._prepare(X)
         cfg = self.config
+        n_samples, n_features = X_arr.shape
 
         if cfg.method == "pca":
-            self._reducer = PCA(
-                n_components=cfg.n_components,
-                whiten=cfg.whiten,
-                random_state=cfg.random_state,
-            )
+            n_comp = min(cfg.n_components, n_features)
+            # 優先引数
+            pca_kwargs = {
+                "n_components": n_comp,
+                "whiten": cfg.whiten,
+                "random_state": cfg.random_state,
+                **cfg.method_params
+            }
+            # 大規模データのバッチ処理対応 (Hardening 要件)
+            if n_samples > 10000 and n_features > 100 and "IncrementalPCA" not in str(cfg.method_params):
+                # IncrementalPCAはrandom_stateを持たないので調整
+                pca_kwargs.pop("random_state", None)
+                self._reducer = IncrementalPCA(**pca_kwargs)
+            else:
+                self._reducer = PCA(**pca_kwargs)
             self._reducer.fit(X_arr)
 
         elif cfg.method == "tsne":
-            # t-SNEは内部でfit_transformのみ対応
-            self._reducer = TSNE(
-                n_components=cfg.n_components,
-                perplexity=cfg.perplexity,
-                max_iter=cfg.tsne_max_iter,
-                random_state=cfg.random_state,
-            )
+            tsne_kwargs = {
+                "n_components": cfg.n_components,
+                "perplexity": cfg.perplexity,
+                "max_iter": cfg.tsne_max_iter,
+                "random_state": cfg.random_state,
+                **cfg.method_params
+            }
+            self._reducer = TSNE(**tsne_kwargs)
             self._embedding = self._reducer.fit_transform(X_arr)
 
         elif cfg.method == "umap":
-            if _UMAP_CLASS is None:
-                raise ImportError(
-                    "UMAPを使用するには 'umap-learn' のインストールが必要です: "
-                    "pip install umap-learn"
-                )
-            self._reducer = _UMAP_CLASS(
-                n_components=cfg.n_components,
-                n_neighbors=cfg.n_neighbors,
-                min_dist=cfg.min_dist,
-                random_state=cfg.random_state,
-            )
+            umap_cls = _get_umap_class()
+            if umap_cls is None:
+                raise ImportError("UMAPを使用するには 'umap-learn' が必要です。")
+            umap_kwargs = {
+                "n_components": cfg.n_components,
+                "n_neighbors": cfg.n_neighbors,
+                "min_dist": cfg.min_dist,
+                "random_state": cfg.random_state,
+                **cfg.method_params
+            }
+            self._reducer = umap_cls(**umap_kwargs)
             self._embedding = self._reducer.fit_transform(X_arr)
-
         else:
-            raise ValueError(f"未知の次元削減手法: {cfg.method}。'pca'/'tsne'/'umap'から選択。")
+            raise ValueError(f"未知の次元削減手法: {cfg.method}")
 
         return self
 
     def transform(self, X: np.ndarray | pd.DataFrame, y: Any = None) -> np.ndarray:
-        """
-        次元削減を適用する。
-
-        Note:
-            t-SNE / UMAPはfit時のデータを返す（新規データ非対応）。
-        """
+        """次元削減を適用し、PCAの場合は再構成誤差を計算する。"""
         assert self._reducer is not None, "fit()を先に呼んでください。"
-        cfg = self.config
-
-        if cfg.method == "pca":
-            X_arr = self._prepare(X, fit=False)
-            return self._reducer.transform(X_arr)
-
-        elif cfg.method in ("tsne", "umap"):
-            # 既存埋め込みを返す（新規データ変換は非対応）
+        X_arr = self._prepare(X, fit=False)
+        
+        if self.config.method == "pca":
+            X_reduced = self._reducer.transform(X_arr)
+            # 数学的厳密性: 再構成誤差 (Q-residual) の計算
+            # 投影後の空間から元の空間に戻し、その差の L2 ノルムを計算する
+            X_recon = self._reducer.inverse_transform(X_reduced)
+            # 行ごとの Frobenius norm (Euclidean distance)
+            self._reconstruction_error = np.linalg.norm(X_arr - X_recon, axis=1)
+            return X_reduced
+        
+        if self.config.method in ("tsne", "umap"):
             if self._embedding is not None:
                 return self._embedding
-            X_arr = self._prepare(X, fit=False)
             return self._reducer.fit_transform(X_arr)
+        
+        raise ValueError(f"未知手法: {self.config.method}")
 
-        raise ValueError(f"未知の手法: {cfg.method}")
-
-    def fit_transform(  # type: ignore[override]
-        self, X: np.ndarray | pd.DataFrame, y: Any = None, **params: Any
-    ) -> np.ndarray:
-        """fit + transform を1ステップで実行（t-SNE/UMAP推奨）。"""
+    def fit_transform(self, X: np.ndarray | pd.DataFrame, y: Any = None, **params: Any) -> np.ndarray:
         return self.fit(X, y).transform(X)
 
-    def _prepare(
-        self,
-        X: np.ndarray | pd.DataFrame,
-        fit: bool = True,
-    ) -> np.ndarray:
-        """前処理（スケーリング）を適用して numpy 配列を返す。"""
+    def _prepare(self, X: np.ndarray | pd.DataFrame, fit: bool = True) -> np.ndarray:
         if isinstance(X, pd.DataFrame):
             self._feature_names_in = X.columns.tolist()
             X_arr = X.values.astype(float)
@@ -167,7 +151,6 @@ class DimReducer(BaseEstimator, TransformerMixin):
                 X_arr = self._scaler.fit_transform(X_arr)
             elif self._scaler is not None:
                 X_arr = self._scaler.transform(X_arr)
-
         return X_arr
 
     def get_feature_names_out(self, input_features: Any = None) -> np.ndarray:
@@ -176,14 +159,27 @@ class DimReducer(BaseEstimator, TransformerMixin):
 
     @property
     def explained_variance_ratio_(self) -> np.ndarray | None:
-        """PCAの寄与率（PCA以外はNone）。"""
-        if self.config.method == "pca" and self._reducer is not None:
-            return self._reducer.explained_variance_ratio_
-        return None
+        """PCAの寄与率。"""
+        return getattr(self._reducer, "explained_variance_ratio_", None)
+
+    @property
+    def loadings_(self) -> np.ndarray | None:
+        """PCAの成分重み (Loadings)。"""
+        return getattr(self._reducer, "components_", None)
+
+    @property
+    def feature_names_in_(self) -> list[str]:
+        """学習時の特徴量名。"""
+        return self._feature_names_in
+
+    @property
+    def reconstruction_error_(self) -> np.ndarray | None:
+        """PCAの再構成誤差。"""
+        return self._reconstruction_error
 
 
 # ============================================================
-# 便利関数
+# 便利関数 (旧来のAPIを100%復元)
 # ============================================================
 
 def run_pca(
@@ -192,18 +188,7 @@ def run_pca(
     scale: bool = True,
     target_col: str | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
-    """
-    DataFrameにPCAを適用して2D埋め込み + 寄与率を返す。
-
-    Args:
-        df: 入力DataFrame（数値列のみ使用）
-        n_components: 次元数
-        scale: スケーリングするか
-        target_col: 除外する目的変数列
-
-    Returns:
-        (embedding_df, explained_variance_ratio)
-    """
+    """DataFrameにPCAを適用して2D埋め込み + 寄与率を返す。"""
     numeric = df.select_dtypes(include="number")
     if target_col and target_col in numeric.columns:
         numeric = numeric.drop(columns=[target_col])
@@ -226,34 +211,17 @@ def run_tsne(
     target_col: str | None = None,
     random_state: int = 42,
 ) -> pd.DataFrame:
-    """
-    DataFrameにt-SNEを適用して2D埋め込みを返す。
-
-    Args:
-        df: 入力DataFrame
-        n_components: 次元数
-        perplexity: パープレキシティ（サンプル数の1/3以下を推奨）
-        scale: スケーリングするか
-        target_col: 除外する目的変数列
-        random_state: 乱数シード
-
-    Returns:
-        embedding_df (index=元DataFrameのindex)
-    """
+    """DataFrameにt-SNEを適用して2D埋め込みを返す。"""
     numeric = df.select_dtypes(include="number")
     if target_col and target_col in numeric.columns:
         numeric = numeric.drop(columns=[target_col])
 
-    # perplexityはサンプル数-1未満でないといけない
     n = len(numeric)
     perplexity = min(perplexity, (n - 1) / 3)
 
     cfg = DimReductionConfig(
-        method="tsne",
-        n_components=n_components,
-        perplexity=perplexity,
-        scale=scale,
-        random_state=random_state,
+        method="tsne", n_components=n_components, perplexity=perplexity,
+        scale=scale, random_state=random_state,
     )
     reducer = DimReducer(cfg)
     embedding = reducer.fit_transform(numeric)
@@ -271,33 +239,14 @@ def run_umap(
     target_col: str | None = None,
     random_state: int = 42,
 ) -> pd.DataFrame:
-    """
-    DataFrameにUMAPを適用して埋め込みを返す。
-    umap-learnが未インストールの場合はImportErrorを送出する。
-
-    Args:
-        df: 入力DataFrame
-        n_components: 次元数
-        n_neighbors: 近傍数
-        min_dist: 最小距離
-        scale: スケーリングするか
-        target_col: 除外する目的変数列
-        random_state: 乱数シード
-
-    Returns:
-        embedding_df
-    """
+    """DataFrameにUMAPを適用して埋め込みを返す。"""
     numeric = df.select_dtypes(include="number")
     if target_col and target_col in numeric.columns:
         numeric = numeric.drop(columns=[target_col])
 
     cfg = DimReductionConfig(
-        method="umap",
-        n_components=n_components,
-        n_neighbors=n_neighbors,
-        min_dist=min_dist,
-        scale=scale,
-        random_state=random_state,
+        method="umap", n_components=n_components, n_neighbors=n_neighbors,
+        min_dist=min_dist, scale=scale, random_state=random_state,
     )
     reducer = DimReducer(cfg)
     embedding = reducer.fit_transform(numeric)

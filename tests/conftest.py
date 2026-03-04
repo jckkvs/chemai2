@@ -8,6 +8,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+from backend.utils.optional_import import probe_all_optional_libraries
+
+# テストセッション開始時に可用性キャッシュを初期化
+probe_all_optional_libraries()
 
 
 @pytest.fixture(scope="session")

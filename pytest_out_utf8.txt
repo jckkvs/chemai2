@@ -1,0 +1,66 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.13.12, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\Users\horie\chemai2
+configfile: pyproject.toml
+plugins: anyio-4.12.0, cov-7.0.0, xdist-3.8.0
+collected 1 item
+
+tests\test_models.py F
+ERROR: Coverage failure: total of 16 is less than fail-under=85
+                                                                         [100%]
+
+================================== FAILURES ===================================
+_______________ TestAutoMLEngine.test_automl_engine_regression ________________
+
+self = <tests.test_models.TestAutoMLEngine object at 0x000001F0C6B56E90>
+
+    def test_automl_engine_regression(self) -> None:
+        """AutoMLの回帰タスク実行テスト"""
+>       df = generate_numeric_data(n_samples=50, n_features=3, task="regression")
+             ^^^^^^^^^^^^^^^^^^^^^
+E       NameError: name 'generate_numeric_data' is not defined
+
+tests\test_models.py:368: NameError
+=============================== tests coverage ================================
+______________ coverage: platform win32, python 3.13.12-final-0 _______________
+
+Name                                    Stmts   Miss Branch BrPart  Cover   Missing
+-----------------------------------------------------------------------------------
+backend\__init__.py                         0      0      0      0   100%
+backend\chem\__init__.py                    3      0      0      0   100%
+backend\chem\base.py                       41      8      2      0    77%   41-42, 47, 106, 113-114, 120-121
+backend\chem\rdkit_adapter.py              70     51     24      0    20%   65-69, 73, 77, 80, 97-152, 165-171
+backend\data\__init__.py                    8      0      0      0   100%
+backend\data\benchmark.py                  94     57     14      0    34%   54, 66-67, 72-79, 110-114, 146-161, 194-205, 236-269
+backend\data\dim_reduction.py             136     93     30      0    26%   25-29, 57-62, 66-115, 119-136, 139, 142-154, 157-158, 163, 168, 173, 178, 192-203, 215-230, 243-255
+backend\data\eda.py                       146    106     34      0    22%   54-88, 104-114, 146-155, 194-249, 270-277, 304-346
+backend\data\feature_engineer.py          143     99     46      0    23%   44-48, 51-61, 64-65, 68-71, 94-97, 100-106, 109-114, 117-119, 144-146, 150-153, 156-157, 160-197, 200, 223-227, 230-244, 247-263, 266, 308-315
+backend\data\loader.py                    120     99     36      0    13%   59-89, 108-131, 137-145, 149-150, 154, 158, 162, 166-180, 185-193, 198-208, 213-227, 253-270, 275
+backend\data\preprocessor.py              190    135     64      0    22%   55, 58, 61-62, 65-66, 76, 79, 82-84, 87, 162-164, 182-314, 318-362, 366-380, 384-446, 451-453, 474-476
+backend\data\type_detector.py             167    111     44      0    27%   56, 65, 83, 90-96, 103-108, 115-126, 153-157, 169-192, 196-266, 279-322, 336-353, 368-390, 395-402
+backend\interpret\__init__.py               3      3      0      0     0%   2-5
+backend\interpret\shap_explainer.py       116    116     26      0     0%   8-299
+backend\interpret\sri.py                  105    105     30      0     0%   21-293
+backend\mlops\__init__.py                   2      2      0      0     0%   2-4
+backend\mlops\mlflow_manager.py           119    119     34      0     0%   7-312
+backend\models\__init__.py                  3      0      0      0   100%
+backend\models\automl.py                  148    111     34      0    20%   72-76, 101-246, 262-269, 274-276, 285-296
+backend\models\cv_manager.py              115     89     44      0    16%   63-65, 84-100, 108, 257-289, 312-351, 368-380, 418-464
+backend\models\factory.py                  90     55     18      0    32%   50-51, 55-56, 60-61, 65-66, 70-73, 77-80, 84-85, 89-90, 94-95, 99-100, 505-524, 543-558, 566-573, 578-583
+backend\models\tuner.py                   108     72     34      0    25%   32-33, 78-93, 101-111, 116-128, 133-147, 152-167, 172-223, 233-251, 256-257
+backend\pipeline\__init__.py                7      7      0      0     0%   22-39
+backend\pipeline\col_preprocessor.py      188    188     76      0     0%   18-483
+backend\pipeline\column_selector.py        89     89     24      0     0%   8-269
+backend\pipeline\feature_generator.py      56     56     10      0     0%   12-162
+backend\pipeline\feature_selector.py      245    245     82      0     0%   21-592
+backend\pipeline\pipeline_builder.py       86     86     20      0     0%   14-281
+backend\pipeline\pipeline_grid.py          93     93     18      0     0%   25-387
+backend\utils\__init__.py                   3      0      0      0   100%
+backend\utils\config.py                    45      0      0      0   100%
+backend\utils\optional_import.py           33      8      4      0    73%   39-42, 55, 70-72
+-----------------------------------------------------------------------------------
+TOTAL                                    2772   2203    748      0    16%
+FAIL Required test coverage of 85.0% not reached. Total coverage: 16.22%
+=========================== short test summary info ===========================
+FAILED tests/test_models.py::TestAutoMLEngine::test_automl_engine_regression
+============================== 1 failed in 0.40s ==============================

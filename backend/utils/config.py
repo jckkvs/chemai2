@@ -34,7 +34,6 @@ TYPE_DETECTOR_OUTLIER_IQR_FACTOR: float = 1.5   # IQR外れ値判定係数
 # AutoML 設定
 # ============================================================
 AUTOML_CV_FOLDS: int = 5
-AUTOML_MAX_MODELS: int = 10
 AUTOML_TIMEOUT_SECONDS: int = 600               # 最大学習時間(秒)
 AUTOML_N_JOBS: int = -1                         # 並列数(-1=全コア)
 
@@ -93,7 +92,6 @@ class AppConfig:
     """
     random_state: int = RANDOM_STATE
     automl_cv_folds: int = AUTOML_CV_FOLDS
-    automl_max_models: int = AUTOML_MAX_MODELS
     automl_timeout: int = AUTOML_TIMEOUT_SECONDS
     n_jobs: int = AUTOML_N_JOBS
     shap_max_display: int = SHAP_MAX_DISPLAY

@@ -26,7 +26,8 @@ from backend.data.type_detector import TypeDetector, DetectionResult
 from backend.data.preprocessor import Preprocessor, PreprocessConfig, build_full_pipeline
 from backend.models.factory import get_model, get_default_automl_models
 from backend.models.cv_manager import CVConfig, run_cross_validation
-from backend.utils.config import RANDOM_STATE, AUTOML_CV_FOLDS, AUTOML_MAX_MODELS
+from backend.chem.rdkit_adapter import RDKitAdapter
+from backend.utils.config import RANDOM_STATE, AUTOML_CV_FOLDS
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class AutoMLEngine:
     Args:
         task: "auto" | "regression" | "classification"
         cv_folds: CV分割数
-        max_models: 試すモデルの最大数
+        model_keys: 試すモデルのキーリスト（None時はデフォルトを使用）
         timeout_seconds: 全体のタイムアウト（秒）
         progress_callback: 進捗コールバック (step, total, message) -> None
     """
@@ -64,15 +65,17 @@ class AutoMLEngine:
         self,
         task: str = "auto",
         cv_folds: int = AUTOML_CV_FOLDS,
-        max_models: int = AUTOML_MAX_MODELS,
+        model_keys: list[str] | None = None,
         timeout_seconds: int = 600,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        selected_descriptors: list[str] | None = None,
     ) -> None:
         self.task = task
         self.cv_folds = cv_folds
-        self.max_models = max_models
+        self.model_keys = model_keys
         self.timeout_seconds = timeout_seconds
         self.progress_callback = progress_callback or (lambda s, t, m: None)
+        self.selected_descriptors = selected_descriptors
 
     def run(
         self,
@@ -81,6 +84,7 @@ class AutoMLEngine:
         smiles_col: str | None = None,
         group_col: str | None = None,
         preprocess_config: PreprocessConfig | None = None,
+        cv_extra_params: dict[str, Any] | None = None,
     ) -> AutoMLResult:
         """
         AutoML全フローを実行する。
@@ -91,20 +95,25 @@ class AutoMLEngine:
             smiles_col: SMILES列名（化合物データの場合）
             group_col: グループ列名（GroupKFold等で使用）
             preprocess_config: 前処理設定（省略時はデフォルト）
+            cv_extra_params: CVスプリッタに渡す追加引数
 
         Returns:
             AutoMLResult インスタンス
-
-        Raises:
-            ValueError: データが少なすぎる・タスク判定失敗等
         """
         start = time.time()
         warnings: list[str] = []
         total_steps = 6
+        cv_extra_params = cv_extra_params or {}
 
         # Step 1: データ品質チェック
         self.progress_callback(1, total_steps, "データ品質チェック中...")
         self._check_data_quality(df, target_col, warnings)
+
+        # 目的変数の欠損行を除去
+        if df[target_col].isna().any():
+            initial_len = len(df)
+            df = df.dropna(subset=[target_col]).copy()
+            logger.info(f"目的変数の欠損により {initial_len - len(df)} 行を除去しました。")
 
         # Step 2: 変数型判定
         self.progress_callback(2, total_steps, "変数型を自動判定中...")
@@ -119,14 +128,69 @@ class AutoMLEngine:
         # Step 4: 目的変数・特徴量の準備
         y = df[target_col].values
         X = df.drop(columns=[target_col])
+
         if smiles_col and smiles_col in X.columns:
-            X = X.drop(columns=[smiles_col])  # SMILES列は別途処理
+            self.progress_callback(4, total_steps, "SMILES記述子を計算中...")
+            
+            from backend.chem import RDKitAdapter, XTBAdapter, CosmoAdapter, UniPkaAdapter, GroupContribAdapter, MordredAdapter
+            
+            adapters = [
+                RDKitAdapter(compute_fp=True),
+                MordredAdapter(selected_only=True),
+                XTBAdapter(),
+                CosmoAdapter(),
+                UniPkaAdapter(),
+                GroupContribAdapter()
+            ]
+            
+            smiles_list = X[smiles_col].tolist()
+            desc_dfs = []
+            
+            for adapter in adapters:
+                if adapter.is_available():
+                    try:
+                        desc_res = adapter.compute(smiles_list)
+                        desc_dfs.append(desc_res.descriptors)
+                    except Exception as e:
+                        logger.warning(f"{adapter.name} の計算中にエラーが発生しました: {e}")
+            
+            if desc_dfs:
+                X_chem = pd.concat(desc_dfs, axis=1)
+                
+                # 指定された記述子がある場合はフィルタリング
+                # Noneまたは空リストの場合は、全記述子（上位互換性のため）を使用
+                if self.selected_descriptors:
+                    valid_cols = [c for c in self.selected_descriptors if c in X_chem.columns]
+                    if valid_cols:
+                        X_chem = X_chem[valid_cols]
+                    else:
+                        warnings.append("選択された記述子が1つも計算できなかったため、フォールバックとしてRDKitのみを使用します。")
+                        X_chem = desc_dfs[0] # RDKit fallback
+                
+                # 元のSMILES列を削除し、計算された記述子を結合
+                X = X.drop(columns=[smiles_col])
+                X = pd.concat([X.reset_index(drop=True), X_chem.reset_index(drop=True)], axis=1)
+                logger.info(f"SMILES記述子を追加: {X_chem.shape[1]}次元")
+            else:
+                warnings.append("利用可能な化合物計算アダプタがなく、SMILES処理をスキップしました。")
+                X = X.drop(columns=[smiles_col])
+
+        # 特徴量が1つも残っていない場合のチェック
+        if X.shape[1] == 0:
+            raise ValueError("学習に使用できる特徴量がありません。SMILESの解析に失敗したか、有効な列が存在しません。")
 
         groups = df[group_col].values if group_col and group_col in df.columns else None
 
+        # Step 5: 変数型再判定（化学記述子を含めるため）
+        detector = TypeDetector()
+        detection_result = detector.detect(X)
+
         # Step 5: モデル学習
         self.progress_callback(4, total_steps, "複数モデルで学習中...")
-        model_keys = get_default_automl_models(task)[: self.max_models]
+        model_keys = self.model_keys if self.model_keys else get_default_automl_models(task)
+        if not model_keys:
+             raise ValueError("学習に使用するモデルが指定されておらず、デフォルトも取得できませんでした。")
+
         scoring = self._get_scoring(task)
         cv_key = "stratified_kfold" if task == "classification" else "kfold"
 
@@ -154,7 +218,11 @@ class AutoMLEngine:
                     target_col=target_col,
                     config=preprocess_cfg,
                 )
-                cv_config = CVConfig(cv_key=cv_key, n_splits=self.cv_folds)
+                cv_config = CVConfig(
+                    cv_key=cv_key, 
+                    n_splits=self.cv_folds,
+                    extra_params=cv_extra_params
+                )
                 result = run_cross_validation(
                     pipeline, X, y, cv_config,
                     scoring=scoring,
@@ -180,12 +248,16 @@ class AutoMLEngine:
                     best_key = mkey
                 logger.info(f"  {mkey}: {mean_s:.4f} ± {std_s:.4f}")
             except Exception as e:
-                msg = f"{mkey} の学習中にエラー: {e}"
+                msg = f"{mkey} の学習中にエラー: {str(e)}"
                 logger.warning(msg)
                 warnings.append(msg)
+                # デバッグ用にトレースバックも警告に追加（任意）
+                import traceback
+                logger.debug(traceback.format_exc())
 
         if not best_key:
-            raise RuntimeError("全モデルの学習に失敗しました。データを確認してください。")
+            err_details = "\n".join(warnings[-3:]) # 直近3つのエラー
+            raise RuntimeError(f"全モデルの学習に失敗しました。詳細:\n{err_details}")
 
         # Step 6: 最良モデルを全データで再学習
         self.progress_callback(5, total_steps, f"最良モデル({best_key})を全データで学習中...")

@@ -248,6 +248,67 @@ class TestLoader:
         assert isinstance(exts, list)
         assert ".csv" in exts
 
+    def test_load_csv_encodings(self, tmp_path) -> None:
+        """Shift-JIS等のCSV読み込みを検証。(T-003-14)"""
+        p = tmp_path / "sjis.csv"
+        # "名前,値\nテスト,100" を Shift-JIS で保存
+        text = "名前,値\nテスト,100"
+        p.write_bytes(text.encode("shift_jis"))
+        df = load_file(p)
+        assert df.iloc[0, 0] == "テスト"
+
+    def test_load_sdf(self, tmp_path: Path) -> None:
+        """SDFファイルを読み込めること。(T-002-12)"""
+        p = tmp_path / "test.sdf"
+        p.write_text("molecule1\n  -OEChem-01010101012D\n\n  1  0  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\nM  END\n$$$$\n")
+        df = load_file(p)
+        assert len(df) >= 1
+        assert "molecule" in str(df.columns).lower()
+
+    def test_load_mol(self, tmp_path: Path) -> None:
+        """MOLファイルを読み込めること。(T-002-13)"""
+        p = tmp_path / "test.mol"
+        p.write_text("molecule1\n  -OEChem-01010101012D\n\n  1  0  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\nM  END\n")
+        df = load_file(p)
+        assert len(df) == 1
+        assert "SMILES" in df.columns
+
+    def test_load_from_bytes_exhaustive(self) -> None:
+        """load_from_bytes の各種分岐をカバーする。(T-002-15)"""
+        # CSV
+        df = load_from_bytes(b"col1,col2\n1,2\n3,4\n", "data.csv")
+        assert df.shape == (2, 2)
+        # TSV
+        df = load_from_bytes(b"col1\tcol2\n1\t2", "data.tsv")
+        assert df.shape == (1, 2)
+        # JSON
+        df = load_from_bytes(b'[{"a":1}]', "data.json")
+        assert df.shape == (1, 1)
+        # Parquet
+        df_orig = pd.DataFrame({"a": [1]})
+        buf = io.BytesIO()
+        df_orig.to_parquet(buf)
+        df = load_from_bytes(buf.getvalue(), "data.parquet")
+        assert df.shape == (1, 1)
+
+    def test_load_csv_encodings(self, tmp_path: Path) -> None:
+        """Shift-JIS等のエンコーディング自動判定を検証する。(T-002-16)"""
+        p = tmp_path / "sjis.csv"
+        # "あ,い\n1,2" を Shift-JIS で保存
+        p.write_bytes("あ,い\n1,2".encode("shift-jis"))
+        df = load_file(p) # loader.py 内で UnicodeDecodeError 時に Shift-JIS でリトライするパス
+        assert "あ" in df.columns
+
+    def test_save_all_formats_detailed(self, tmp_path: Path) -> None:
+        """save_dataframe の全分岐を検証。(T-002-17)"""
+        df = pd.DataFrame({"a": [1]})
+        save_dataframe(df, tmp_path / "1.csv")
+        save_dataframe(df, tmp_path / "2.tsv")
+        save_dataframe(df, tmp_path / "3.json")
+        save_dataframe(df, tmp_path / "4.parquet")
+        pytest.importorskip("openpyxl")
+        save_dataframe(df, tmp_path / "5.xlsx")
+
 
 # ============================================================
 # T-003: Preprocessor テスト
@@ -332,3 +393,79 @@ class TestPreprocessor:
         pipeline.fit(X_fit, y)
         preds = pipeline.predict(X_fit)
         assert preds.shape == (len(y),)
+
+    def test_categorical_encoders_all(self, sample_df: pd.DataFrame) -> None:
+        """全てのカテゴリエンコーダー分岐を検証。(T-003-13)"""
+        from unittest.mock import patch, MagicMock
+        from sklearn.preprocessing import OneHotEncoder
+        dt = TypeDetector()
+        X = sample_df[["cat_low", "cat_high"]]
+        y = sample_df["numeric_normal"]
+        res = dt.detect(X)
+        
+        # category_encoders がある前提の分岐をモックで通す
+        mock_ce = MagicMock()
+        with patch.dict("sys.modules", {"category_encoders": mock_ce}), \
+             patch("backend.data.preprocessor._category_encoders", True):
+            # BinaryEncoder 等のクラスを MagicMock で返す
+            mock_ce.BinaryEncoder.return_value = OneHotEncoder(sparse_output=False)
+            mock_ce.HashingEncoder.return_value = OneHotEncoder(sparse_output=False)
+            mock_ce.LeaveOneOutEncoder.return_value = OneHotEncoder(sparse_output=False)
+            mock_ce.WOEEncoder.return_value = OneHotEncoder(sparse_output=False)
+            
+            for enc in ["binary", "hashing", "leaveoneout", "woe"]:
+                pp = Preprocessor(PreprocessConfig(cat_low_encoder=enc, cat_high_encoder=enc))
+                ct = pp.build(res)
+                Xt = ct.fit_transform(X, y)
+                assert Xt.shape[0] == len(X)
+
+    def test_categorical_encoders_fallback(self, sample_df: pd.DataFrame) -> None:
+        """category_encoders 未インストール時の代替パスを検証。(T-003-15)"""
+        from unittest.mock import patch
+        dt = TypeDetector()
+        X = sample_df[["cat_low", "cat_high"]]
+        y = sample_df["numeric_normal"]
+        res = dt.detect(X)
+        
+        with patch("backend.data.preprocessor._category_encoders", False):
+            # 未インストール時の代替ロジック（OneHot/Ordinal）を通す
+            for enc in ["binary", "hashing", "leaveoneout", "woe", "unknown_enc"]:
+                pp = Preprocessor(PreprocessConfig(cat_low_encoder=enc, cat_high_encoder=enc))
+                ct = pp.build(res)
+                Xt = ct.fit_transform(X, y)
+                assert Xt.shape[0] == len(X)
+
+    def test_custom_transformers_exhaustive(self) -> None:
+        """Log/SinCos Transformer の検証。(T-003-09)"""
+        from backend.data.preprocessor import LogTransformer, SinCosTransformer
+        X = np.array([[10, 20], [30, 40]])
+        lt = LogTransformer(offset=1.0)
+        Xt = lt.transform(X)
+        assert np.allclose(Xt[0, 0], np.log1p(10.0))
+        assert np.allclose(lt.inverse_transform(Xt), X)
+        
+        st = SinCosTransformer(period=24)
+        Xt = st.transform(np.array([[0], [6], [12]]))
+        assert Xt.shape == (3, 2)
+        assert np.allclose(Xt[0], [0, 1])
+
+    def test_all_imputers_and_scalers(self, sample_df: pd.DataFrame) -> None:
+        """各種 Imputer / Scaler 分岐を検証。(T-003-12)"""
+        dt = TypeDetector()
+        res = dt.detect(sample_df[["numeric_normal"]])
+        
+        for imp in ["mean", "knn"]:
+            for sc in ["standard", "robust"]:
+                pp = Preprocessor(PreprocessConfig(numeric_imputer=imp, numeric_scaler=sc))
+                ct = pp.build(res)
+                Xt = ct.fit_transform(sample_df[["numeric_normal"]])
+                assert Xt.shape[0] == len(sample_df)
+
+    def test_pipeline_with_missing_indicator(self, sample_df: pd.DataFrame) -> None:
+        """MissingIndicator 追加フラグの検証。(T-003-14)"""
+        dt = TypeDetector()
+        res = dt.detect(sample_df[["numeric_normal"]])
+        pp = Preprocessor(PreprocessConfig(add_missing_indicator=True))
+        ct = pp.build(res)
+        Xt = ct.fit_transform(sample_df[["numeric_normal"]])
+        assert Xt.shape[0] == len(sample_df)
