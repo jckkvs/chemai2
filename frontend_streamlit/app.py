@@ -247,7 +247,7 @@ if page == "home":
             unsafe_allow_html=True,
         )
         c1, c2, c3 = st.columns(3)
-        def _make_sample(name: str, df: pd.DataFrame) -> None:
+        def _make_sample(name: str, df: pd.DataFrame, set_smiles: bool = True) -> None:
             st.session_state["df"]          = df
             st.session_state["file_name"]   = name
             st.session_state["automl_result"]  = None
@@ -256,14 +256,14 @@ if page == "home":
             detector = TypeDetector()
             dr = detector.detect(df)
             st.session_state["detection_result"] = dr
-            if dr.smiles_columns:
+            if set_smiles and dr.smiles_columns:
                 st.session_state["smiles_col"] = dr.smiles_columns[0]
-            else:
+            elif set_smiles:
                 for col in df.columns:
                     if col.lower() == "smiles":
                         st.session_state["smiles_col"] = col
                         break
-            # デフォルト目的変数: 最終列
+            # デフォルト目的変数: 指定されていなければ最終列
             st.session_state["target_col"] = df.columns[-1]
 
         with c1:
@@ -301,6 +301,51 @@ if page == "home":
                     "solubility":  sols * 10,
                 }))
                 st.rerun()
+
+        # ── ベンチマークデータセット（折りたたみ） ────────────────
+        with st.expander("📚 オープンベンチマークデータをロード"):
+            st.markdown("ケモインフォマティクスの評価でよく使われる公開データセットです。")
+            
+            c_e, c_f, c_l = st.columns(3)
+            with c_e:
+                st.markdown("**ESOL** (水溶解度)")
+                st.caption("1,128化合物の実測logS。非常に一般的。")
+                if st.button("📥 ロード", key="load_esol", use_container_width=True):
+                    with st.spinner("ダウンロード中..."):
+                        try:
+                            from backend.data.benchmark_datasets import load_benchmark
+                            df_bench = load_benchmark("esol")
+                            _make_sample("benchmark_esol.csv", df_bench)
+                            st.session_state["target_col"] = "measured log solubility in mols per litre"
+                            st.rerun()
+                        except Exception as e:
+                            st.error(str(e))
+            with c_f:
+                st.markdown("**FreeSolv** (水和自由エネ)")
+                st.caption("642化合物の水和自由エネルギー。")
+                if st.button("📥 ロード", key="load_free", use_container_width=True):
+                    with st.spinner("ダウンロード中..."):
+                        try:
+                            from backend.data.benchmark_datasets import load_benchmark
+                            df_bench = load_benchmark("freesolv")
+                            _make_sample("benchmark_freesolv.csv", df_bench)
+                            st.session_state["target_col"] = "expt"
+                            st.rerun()
+                        except Exception as e:
+                            st.error(str(e))
+            with c_l:
+                st.markdown("**Lipophilicity** (脂溶性)")
+                st.caption("AstraZeneca提供のlogDデータ。4,200件。")
+                if st.button("📥 ロード", key="load_lipo", use_container_width=True):
+                    with st.spinner("ダウンロード中..."):
+                        try:
+                            from backend.data.benchmark_datasets import load_benchmark
+                            df_bench = load_benchmark("lipophilicity")
+                            _make_sample("benchmark_lipophilicity.csv", df_bench)
+                            st.session_state["target_col"] = "exp"
+                            st.rerun()
+                        except Exception as e:
+                            st.error(str(e))
 
     # ── ファイル読み込み処理 ─────────────────────────────────
     if uploaded is not None:

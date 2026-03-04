@@ -102,3 +102,36 @@ def test_stub_adapters() -> None:
         with pytest.raises(RuntimeError):
             adapter.compute(["CCO"])
 
+def test_psmiles_adapter():
+    """PSmilesAdapterのテスト。RDKit近似フォールバックが機能することを確認。"""
+    from backend.chem.psmiles_adapter import PSmilesAdapter
+    
+    adapter = PSmilesAdapter()
+    
+    # 利用可能であること（RDKitがあるため）
+    assert adapter.is_available()
+    
+    # PSMILES判定
+    assert PSmilesAdapter.is_psmiles("*CC*")
+    assert PSmilesAdapter.is_psmiles("[*]C(=O)O")
+    assert PSmilesAdapter.is_psmiles("CCO[*]")
+    assert not PSmilesAdapter.is_psmiles("CCO")
+    
+    # 計算実行
+    smiles_list = ["*CC*", "CCO"]
+    res = adapter.compute(smiles_list)
+    
+    assert res.adapter_name == "psmiles"
+    assert len(res.descriptors) == 2
+    assert "PSMILES_MonomerWt" in res.descriptors.columns
+    assert "PSMILES_NumHDonors" in res.descriptors.columns
+    
+    # エラーにならないこと
+    assert len(res.failed_indices) == 0
+    
+    # 値の確認（* を [CH3] にするため *CC* は butane 相当になる近似）
+    wt_psmiles = res.descriptors.loc[0, "PSMILES_MonomerWt"]
+    wt_normal = res.descriptors.loc[1, "PSMILES_MonomerWt"]
+    assert wt_psmiles > 0.0
+    assert wt_normal > 0.0
+

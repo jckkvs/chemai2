@@ -41,31 +41,53 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
 
     def _compute_descriptors(self, smiles_list: list[str]) -> pd.DataFrame:
         """SMILESリストから記述子DataFrameを計算する。"""
-        from backend.chem import (
-            RDKitAdapter, XTBAdapter, CosmoAdapter,
-            UniPkaAdapter, GroupContribAdapter, MordredAdapter
-        )
-        adapters = [
-            RDKitAdapter(compute_fp=True),
-            MordredAdapter(selected_only=True),
-            XTBAdapter(), CosmoAdapter(), UniPkaAdapter(), GroupContribAdapter()
-        ]
+        from backend.chem import RDKitAdapter, MordredAdapter
+        from backend.chem.psmiles_adapter import PSmilesAdapter
+        
+        # ポリマーSMILES (PSMILES) の検出
+        # リストの先頭50件を見て、1件でも '*' または '[*]' があればポリマーとみなす
+        has_psmiles = any(PSmilesAdapter.is_psmiles(smi) for smi in smiles_list[:50] if isinstance(smi, str))
+        
+        adapters = []
+        if has_psmiles:
+            logger.info("PSMILESを検出しました。ポリマー用記述子抽出モード(PSmilesAdapter)に切り替えます。")
+            adapters.append(PSmilesAdapter())
+            # Mordred等はモノマー近似したMolでも動く可能性があるが、安定性のため今回はPSmiles優先
+        else:
+            # 通常の低分子SMILES
+            adapters = [
+                RDKitAdapter(compute_fp=True),
+                MordredAdapter(selected_only=True),
+            ]
+            
         desc_dfs: list[pd.DataFrame] = []
         for adapter in adapters:
             if adapter.is_available():
                 try:
-                    res = adapter.compute(smiles_list)
-                    desc_dfs.append(res.descriptors)
+                    # アダプタのAPI差を吸収
+                    if isinstance(adapter, RDKitAdapter):
+                        # RDKitAdapter等 (新API)
+                        res_df = adapter.calculate(smiles_list, selected_descriptors=self.selected_descriptors)
+                    else:
+                        # PSmilesAdapter 等 古い/共通アダプタ (.compute() が ComputationResult/DescriptorResult を返す)
+                        res = getattr(adapter, "compute")(smiles_list)
+                        res_df = res.descriptors
+                        
+                    desc_dfs.append(res_df)
                 except Exception as e:
                     logger.warning(f"{adapter.name}: 計算エラー - {e}")
+                    
         if not desc_dfs:
             return pd.DataFrame()
+            
         X_chem = pd.concat(desc_dfs, axis=1)
-        # 選択されている場合はフィルタリング
-        if self.selected_descriptors:
+        
+        # 選択されている場合はフィルタリング (PSMILES時はスキップ)
+        if self.selected_descriptors and not has_psmiles:
             valid = [c for c in self.selected_descriptors if c in X_chem.columns]
             if valid:
                 X_chem = X_chem[valid]
+                
         return X_chem
 
     def fit(self, X: pd.DataFrame, y: Any = None) -> "SmilesDescriptorTransformer":
