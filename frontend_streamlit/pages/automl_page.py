@@ -120,8 +120,16 @@ def render(run_config: dict | None = None) -> None:
             st.markdown("**タスク & SMILES**")
             task_override   = st.selectbox("タスク",
                 ["auto", "regression", "classification"], key="pl_task")
+            
+            smiles_options = ["なし"] + df.columns.tolist()
+            smiles_default_idx = 0
+            for i, col in enumerate(df.columns):
+                if col.lower() == "smiles":
+                    smiles_default_idx = i + 1
+                    break
+                    
             smiles_col_raw  = st.selectbox("SMILES列",
-                ["なし"] + df.columns.tolist(), key="pl_smiles")
+                smiles_options, index=smiles_default_idx, key="pl_smiles")
             smiles_col = None if smiles_col_raw == "なし" else smiles_col_raw
 
         st.markdown("**実行フェーズ選択**")
@@ -325,6 +333,10 @@ def _run_full_pipeline(
                 result.warnings.extend(automl_res.warnings)
             _advance("Phase 3: AutoML")
 
+        X_base = df.drop(columns=[target_col])
+        if result.automl_result and getattr(result.automl_result, "processed_X", None) is not None:
+            X_base = result.automl_result.processed_X
+
         # ── Phase 4: 評価 ────────────────────────────────
         if do_eval and result.automl_result is not None:
             phase_status.markdown("**Phase 4/6 — モデル評価中…**")
@@ -332,17 +344,16 @@ def _run_full_pipeline(
                 ar = result.automl_result
                 # best_pipeline は AutoMLEngine.run() で既に fit済み
                 bp: Pipeline = ar.best_pipeline
-                X = df.drop(columns=[target_col])
                 y = df[target_col].values
 
-                y_pred = bp.predict(X)
+                y_pred = bp.predict(X_base)
                 task_str = result.task if result.task in ("regression", "classification") else "regression"
                 if task_str == "regression":
                     result.model_score = evaluate_regression(y, y_pred,
                                                              model_key=ar.best_model_key,
                                                              cv_mean=ar.best_score)
                 else:
-                    y_prob = bp.predict_proba(X) if hasattr(bp, "predict_proba") else None
+                    y_prob = bp.predict_proba(X_base) if hasattr(bp, "predict_proba") else None
                     result.model_score = evaluate_classification(y, y_pred, y_prob=y_prob,
                                                                  model_key=ar.best_model_key,
                                                                  cv_mean=ar.best_score)
@@ -355,8 +366,8 @@ def _run_full_pipeline(
         if do_pca:
             phase_status.markdown("**Phase 5/6 — PCA 次元削減中…**")
             try:
-                # run_pca が内部で数値列選択 + target_col除外する
-                if df.select_dtypes(include="number").shape[1] >= 3:  # target含む方向で >= 3
+                # 数値列が2列以上あれば実行可能（SMILES記述子も含める）
+                if X_base.select_dtypes(include="number").shape[1] >= 2:
                     from backend.data.dim_reduction import DimReductionConfig as _DimReductionConfig
                     from backend.data.dim_reduction import DimReducer as _DimReducer
                     
@@ -365,7 +376,7 @@ def _run_full_pipeline(
                         method_params=extra_params.get("pca", {})
                     )
                     reducer = _DimReducer(pca_cfg)
-                    emb_df = reducer.fit_transform(df.drop(columns=[target_col]))
+                    emb_df = reducer.fit_transform(X_base)
                     
                     result.pca_df  = pd.DataFrame(emb_df, columns=["PC1", "PC2"], index=df.index)
                     result.pca_evr = reducer.explained_variance_ratio_
@@ -386,14 +397,13 @@ def _run_full_pipeline(
                 # 変換後の特徴量名を取得
                 try:
                     preprocessor_step = bp[:-1]  # model以外
-                    X_raw = df.drop(columns=[target_col])
-                    X_transformed = preprocessor_step.transform(X_raw)
+                    X_transformed = preprocessor_step.transform(X_base)
                     try:
                         feat_names = bp[:-1].get_feature_names_out().tolist()
                     except Exception:
                         feat_names = [f"feature_{i}" for i in range(X_transformed.shape[1])]
                 except Exception:
-                    feat_names = df.drop(columns=[target_col]).select_dtypes(
+                    feat_names = X_base.select_dtypes(
                         include="number"
                     ).columns.tolist()
 
@@ -412,7 +422,7 @@ def _run_full_pipeline(
                 else:
                     # SHAP KernelExplainer（低速・フォールバック）
                     import shap
-                    X_s = df.drop(columns=[target_col]).select_dtypes(include="number").fillna(0)
+                    X_s = X_base.select_dtypes(include="number").fillna(0)
                     explainer = shap.KernelExplainer(
                         bp.predict, shap.sample(X_s, min(50, len(X_s)))
                     )

@@ -45,6 +45,7 @@ class AutoMLResult:
     detection_result: DetectionResult
     elapsed_seconds: float
     warnings: list[str] = field(default_factory=list)
+    processed_X: pd.DataFrame | None = None
 
 
 class AutoMLEngine:
@@ -287,6 +288,7 @@ class AutoMLEngine:
             detection_result=detection_result,
             elapsed_seconds=elapsed,
             warnings=warnings,
+            processed_X=X,
         )
 
     @staticmethod

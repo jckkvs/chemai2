@@ -396,8 +396,16 @@ if page == "home":
                 st.markdown("**前処理設定**")
                 scaler    = st.selectbox("数値スケーラー",
                     ["auto","standard","robust","minmax","none"], key="adv_sc")
+                
+                smiles_options = ["なし"] + df.columns.tolist()
+                smiles_default_idx = 0
+                for i, col in enumerate(df.columns):
+                    if col.lower() == "smiles":
+                        smiles_default_idx = i + 1
+                        break
+                        
                 smiles_raw = st.selectbox("SMILES列",
-                    ["なし"] + df.columns.tolist(), key="adv_sm")
+                    smiles_options, index=smiles_default_idx, key="adv_sm")
                 st.session_state["smiles_col"] = None if smiles_raw == "なし" else smiles_raw
             with cc:
                 st.markdown("**実行フェーズ**")
@@ -432,8 +440,8 @@ if page == "home":
                     all_available_descriptors.extend(names)
 
             # --- 現在の選択状態（セッション）を取得 ---
-            # Session Stateに初期値がない場合は全選択（または前回選択値）
-            default_desc = st.session_state.get("adv_desc", all_available_descriptors)
+            # Session Stateに初期値がない場合は空リスト（全選択しない）とする
+            default_desc = st.session_state.get("adv_desc", [])
             current_selected = set([d for d in default_desc if d in all_available_descriptors])
 
             # 状態更新用コールバック（変更があった場合のみrerunする）
