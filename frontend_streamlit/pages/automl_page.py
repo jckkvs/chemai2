@@ -421,15 +421,40 @@ def _run_full_pipeline(
                 else:
                     # SHAP KernelExplainer（低速・フォールバック）
                     import shap
-                    X_s = X_base.select_dtypes(include="number").fillna(0)
+                    if 'X_transformed' in locals() and X_transformed is not None:
+                        # 変換済みの特徴量と最終モデルを使う
+                        X_s = pd.DataFrame(X_transformed, columns=feat_names[:X_transformed.shape[1]]) if isinstance(X_transformed, np.ndarray) else X_transformed.copy()
+                        if not hasattr(X_s, "columns"):
+                            X_shape = X_s.shape[1] if hasattr(X_s, 'shape') else len(X_s[0])
+                            X_s = pd.DataFrame(X_s, columns=[f"f{i}" for i in range(X_shape)])
+                        
+                        predict_fn = final_estimator.predict
+                    else:
+                        X_s = X_base.select_dtypes(include="number").fillna(0)
+                        
+                        # Pipelineに渡す場合、SHAPが内部でNumPy化するため元に戻すラッパーを噛ませる
+                        def _wrapped_predict(X_arr):
+                            df_in = pd.DataFrame(X_arr, columns=X_s.columns)
+                            return bp.predict(df_in)
+                            
+                        predict_fn = _wrapped_predict
+
+                    X_s = X_s.fillna(0)
                     explainer = shap.KernelExplainer(
-                        bp.predict, shap.sample(X_s, min(50, len(X_s)))
+                        predict_fn, shap.sample(X_s, min(50, len(X_s)))
                     )
                     shap_vals = explainer.shap_values(X_s.head(50))
-                    mean_abs = np.abs(shap_vals).mean(axis=0)
+                    
+                    if isinstance(shap_vals, list):
+                        # 分類の場合、クラス1の重要度
+                        val_arr = shap_vals[1] if len(shap_vals) > 1 else shap_vals[0]
+                    else:
+                        val_arr = shap_vals
+                    mean_abs = np.abs(val_arr).mean(axis=0)
+                    
+                    cols = X_s.columns.tolist() if hasattr(X_s, "columns") else feat_names[:len(mean_abs)]
                     result.shap_importances = dict(
-                        sorted(zip(X_s.columns.tolist(), mean_abs),
-                               key=lambda x: x[1], reverse=True)
+                        sorted(zip(cols, mean_abs), key=lambda x: x[1], reverse=True)
                     )
             except Exception as e:
                 result.warnings.append(f"SHAP計算エラー: {e}")
