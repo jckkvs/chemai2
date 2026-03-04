@@ -67,19 +67,18 @@ def render() -> None:
 
     # ─── Tab2: 全モデル比較 ──────────────────────────────────────
     with tab2:
-        scores = result.all_scores if hasattr(result, "all_scores") else {}
+        scores = result.model_scores if hasattr(result, "model_scores") else {}
         if scores:
             import plotly.express as px
             rows = []
-            for key, cv_res in scores.items():
-                mean_v = cv_res.get("mean_test_score")
-                std_v = cv_res.get("std_test_score", 0)
-                fit_t = cv_res.get("fit_time", np.array([0])).mean()
+            details = result.model_details if hasattr(result, "model_details") else {}
+            for key, mean_v in scores.items():
+                d = details.get(key, {})
                 rows.append({
                     "モデル": key,
                     "CV平均スコア": mean_v or 0,
-                    "CV標準偏差": std_v or 0,
-                    "学習時間(s)": round(fit_t, 2),
+                    "CV標準偏差": d.get("std", 0),
+                    "学習時間(s)": round(d.get("fit_time", 0), 2),
                     "最良": "⭐" if key == result.best_model_key else "",
                 })
             cmp_df = pd.DataFrame(rows).sort_values("CV平均スコア", ascending=False)
