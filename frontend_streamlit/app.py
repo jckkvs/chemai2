@@ -441,8 +441,22 @@ if page == "home":
                     all_available_descriptors.extend(names)
 
             # --- 現在の選択状態（セッション）を取得 ---
-            # Session Stateに初期値がない場合は空リスト（全選択しない）とする
-            default_desc = st.session_state.get("adv_desc", [])
+            # デフォルトは汎用的に有効な12種の物理化学記述子（目的変数によらずほぼ必ず有効）
+            _DEFAULT_DESCRIPTORS = [
+                "MolWt",           # 分子量：分子の大きさの基本指標、ほぼ全物性に相関
+                "LogP",            # 脂溶性：溶解度、膜透過、耐湿性に広く寄与
+                "TPSA",            # 位相的極性表面積：極性、溶解度、透過性の指標
+                "HBA",             # 水素結合受容体数：沸点、溶解度、機械的強度に影響
+                "HBD",             # 水素結合供与体数：同上（HBAと組み合わせることで効果的）
+                "RotBonds",        # 回転可能結合数：分子の柔軟性（Tg、粘度に影響）
+                "RingCount",       # 環の総数：剛直性、耐熱性の指標
+                "AromaticRingCount", # 芳香環数：UV吸収、屈折率、耐熱性に強く影響
+                "FractionCSP3",    # sp3炭素比率：溶解度、Tg・弾性率との逆相関
+                "HeavyAtoms",      # 重原子数：分子の大きさを別角度で表す
+                "MolMR",           # モル屈折：屈折率・分極率の直接指標
+                "HallKierAlpha",   # Hall-Kier α：枝分かれ度・形状の立体指標
+            ]
+            default_desc = st.session_state.get("adv_desc", _DEFAULT_DESCRIPTORS)
             current_selected = set([d for d in default_desc if d in all_available_descriptors])
 
             # 状態更新用コールバック（変更があった場合のみrerunする）
