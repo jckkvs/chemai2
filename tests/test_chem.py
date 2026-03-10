@@ -58,6 +58,36 @@ def test_get_descriptor_names(rdkit_adapter: RDKitAdapter) -> None:
     assert "Morgan_r2_127" in names
     assert "RDKitFP_127" in names
 
+def test_descriptor_metadata_rdkit(rdkit_adapter: RDKitAdapter) -> None:
+    """RDKit の記述子メタデータが正しく構成されているか。"""
+    from backend.chem.base import DescriptorMetadata
+    mdata = rdkit_adapter.get_descriptors_metadata()
+    assert len(mdata) > 0
+    assert all(isinstance(m, DescriptorMetadata) for m in mdata)
+    
+    # 特定の数え上げ記述子のチェック
+    name_to_meta = {m.name: m for m in mdata}
+    assert "HBA" in name_to_meta
+    assert name_to_meta["HBA"].is_count is True
+    assert "MolWt" in name_to_meta
+    assert name_to_meta["MolWt"].is_count is False
+
+def test_descriptor_metadata_mordred() -> None:
+    """Mordred の記述子メタデータのチェック。"""
+    from backend.chem.mordred_adapter import MordredAdapter
+    adapter = MordredAdapter()
+    
+    if not adapter.is_available():
+        pytest.skip("Mordred is not available in this environment")
+        
+    mdata = adapter.get_descriptors_metadata()
+    name_to_meta = {m.name: m for m in mdata}
+    # nC, nAtom などが数え上げ系として認識されているか
+    if "nC" in name_to_meta:
+        assert name_to_meta["nC"].is_count is True
+    if "nRing" in name_to_meta:
+        assert name_to_meta["nRing"].is_count is True
+
 # --- 新規追加アダプタのテスト ---
 
 def test_mordred_adapter() -> None:
@@ -66,9 +96,10 @@ def test_mordred_adapter() -> None:
     assert adapter.name == "mordred"
     
     # 環境によってMordredが入っているかは異なるが、is_availableの型はbool
-    assert isinstance(adapter.is_available(), bool)
+    is_avail = adapter.is_available()
+    assert isinstance(is_avail, bool)
     
-    if adapter.is_available():
+    if is_avail:
         res = adapter.compute(["CCO", "c1ccccc1"])
         assert len(res.descriptors) == 2
         # デフォルトではselected_onlyなので限られた記述子が返る
@@ -76,7 +107,6 @@ def test_mordred_adapter() -> None:
         assert "SLogP" in res.descriptors.columns
     else:
         # インストールされていない場合、computeを呼ぶと例外が出る
-        import pytest
         with pytest.raises(RuntimeError):
             adapter.compute(["CCO"])
 

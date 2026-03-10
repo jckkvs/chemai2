@@ -29,6 +29,8 @@ from backend.pipeline import (
     generate_pipeline_grid,
     count_combinations,
 )
+import streamlit.components.v1 as components
+from sklearn.utils import estimator_html_repr
 
 
 # ============================================================
@@ -144,6 +146,11 @@ def render() -> None:
             st.success(
                 f"✅ {scoring}: **{r['mean']:.4f}** ± {r['std']:.4f}  |  ⏱️ {r['elapsed']:.1f}秒"
             )
+            
+            # パイプライン構造の可視化
+            if "pp_pipe_html" in st.session_state:
+                with st.expander("🔍 構築されたパイプライン構成（図解）", expanded=False):
+                    components.html(st.session_state["pp_pipe_html"], height=400, scrolling=True)
         else:
             st.error(f"❌ {r['status']}")
 
@@ -183,6 +190,8 @@ def _run_single(
 
     try:
         pipe = build_pipeline(cfg)
+        html_repr = estimator_html_repr(pipe)
+        st.session_state["pp_pipe_html"] = html_repr
     except Exception as e:
         st.session_state["pp_quick_result"] = {"status": f"Pipeline構築エラー: {e}", "mean": np.nan, "std": np.nan, "elapsed": 0.0}
         return
@@ -353,16 +362,45 @@ def _render_advanced_settings(
 
     st.divider()
 
-    # ── Step 5: 推定器パラメータ（フリー入力） ────────────────
-    st.markdown("#### 5️⃣ 推定器パラメータ（任意）")
-    st.caption("JSON 形式で追加パラメータを入力。例: `{\"n_estimators\": 200, \"max_depth\": 5}`")
-    params_str = st.text_area("estimator_params（JSON）", "{}", height=80, key="pp_est_params")
-    try:
-        import json
-        est_params = json.loads(params_str)
-    except Exception:
-        st.warning("⚠️ JSON 形式エラー。パラメータなしで実行します。")
-        est_params = {}
+    # ── Step 5: 推定器詳細パラメータ (Dynamic UI) ─────────────
+    st.markdown("#### 5️⃣ 推定器パラメータ")
+    from backend.models.factory import get_model_registry
+    import inspect
+    
+    # task を基にレジストリ取得
+    registry = get_model_registry(task)
+    entry = registry.get(est_key, {})
+    m_item = entry.get("class") or entry.get("factory")
+    
+    est_params = {}
+    if m_item:
+        with st.container(border=True):
+            st.markdown(f"**{entry.get('name', est_key)} の詳細設定**")
+            target_func = m_item.__init__ if inspect.isclass(m_item) else m_item
+            try:
+                msig = inspect.signature(target_func)
+                default_ps = entry.get("default_params", {})
+                m_cols = st.columns(3)
+                m_idx = 0
+                for pname, pinfo in msig.parameters.items():
+                    if pname in ("self", "kwargs", "args"): continue
+                    dval = default_ps.get(pname, pinfo.default if pinfo.default is not inspect.Parameter.empty else None)
+                    anno = pinfo.annotation
+                    with m_cols[m_idx % 3]:
+                        key_p = f"pipe_adv_{est_key}_{pname}"
+                        if isinstance(dval, bool) or anno is bool:
+                            est_params[pname] = st.checkbox(pname, value=bool(dval), key=key_p)
+                        elif isinstance(dval, int) or anno is int:
+                            est_params[pname] = st.number_input(pname, value=int(dval) if dval is not None and not isinstance(dval, str) else 0, key=key_p)
+                        elif isinstance(dval, float) or anno is float:
+                            est_params[pname] = st.number_input(pname, value=float(dval) if dval is not None else 0.0, format="%.4f", key=key_p)
+                        else:
+                            est_params[pname] = st.text_input(pname, value=str(dval) if dval is not None else "", key=key_p)
+                    m_idx += 1
+            except Exception as e:
+                st.warning(f"パラメータの取得に失敗しました: {e}")
+    else:
+        st.warning(f"モデル {est_key} の情報がレジストリに見つかりません。")
 
     apply_mono = st.checkbox(
         "単調性制約を自動反映（monotonic系パラメータを持つモデルのみ）",

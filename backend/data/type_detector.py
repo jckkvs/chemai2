@@ -77,6 +77,23 @@ class DetectionResult:
     datetime_columns: list[str]
     constant_columns: list[str]
     text_columns: list[str]
+    
+    @property
+    def numeric_columns(self) -> list[str]:
+        return self.get_numeric_columns()
+
+    @property
+    def categorical_columns(self) -> list[str]:
+        return self.get_categorical_columns()
+
+    @property
+    def binary_columns(self) -> list[str]:
+        return self.get_columns_by_type(ColumnType.BINARY)
+
+    @property
+    def ignored_columns(self) -> list[str]:
+        # 定数列と一意すぎるID列などを「除外対象」とする
+        return self.constant_columns + self.get_columns_by_type(ColumnType.CATEGORY_HIGH)
 
     def get_columns_by_type(self, col_type: ColumnType) -> list[str]:
         """指定した型の列名リストを返す。"""

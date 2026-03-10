@@ -563,7 +563,7 @@ def get_default_automl_models(task: str = "regression") -> list[str]:
     AutoMLモードで使用するデフォルトモデルキーのリストを返す。
     使用可能なモデルから代表的なものを選択する。
     """
-    regression_defaults = ["linear", "ridge", "lasso", "rf", "et", "gbm", "hgbm",
+    regression_defaults = ["linear", "ridge_cv", "lasso_cv", "rf", "et", "gbm", "hgbm",
                            "xgb", "lgbm", "svr_rbf"]
     classification_defaults = ["logistic", "rf_c", "et_c", "gbm_c", "hgbm_c",
                                 "xgb_c", "lgbm_c", "svc_rbf", "knn_c", "dt_c"]
@@ -581,3 +581,11 @@ def _get_registry(task: str) -> dict[str, dict[str, Any]]:
         return _CLASSIFICATION_REGISTRY
     else:
         raise ValueError(f"未知のタスク '{task}'。'regression' または 'classification' を指定してください。")
+
+
+def get_model_registry(task: str = "regression") -> dict[str, dict[str, Any]]:
+    """
+    モデルのレジストリ（メタデータ全体）を返す。
+    フロントエンドでの動的UI生成などに使用する。
+    """
+    return _get_registry(task)

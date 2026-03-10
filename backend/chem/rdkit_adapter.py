@@ -112,30 +112,50 @@ class RDKitAdapter(BaseChemAdapter):
 
                 # 物理化学記述子
                 for col, (fn_name, _) in _PHYSICOCHEMICAL_DESCRIPTORS.items():
-                    fn = getattr(Descriptors, fn_name, None)
-                    if fn is None:
-                        fn = getattr(rdMolDescriptors, fn_name, None)
-                    if fn is not None:
-                        row[col] = float(fn(mol))
+                    try:
+                        fn = getattr(Descriptors, fn_name, None)
+                        if fn is None:
+                            fn = getattr(rdMolDescriptors, fn_name, None)
+                        if fn is not None:
+                            val = fn(mol)
+                            # valが関数のまま返ってきていないか、数値化可能かチェック
+                            row[col] = float(val) if val is not None else np.nan
+                        else:
+                            row[col] = np.nan
+                    except Exception as e:
+                        logger.warning(f"記述子 {col} の計算失敗: {e}")
+                        row[col] = np.nan
 
                 # Morgan フィンガープリント (ECFP4)
                 if self.compute_fp:
-                    morgan_fp = AllChem.GetMorganFingerprintAsBitVect(
-                        mol, self.morgan_radius, nBits=self.morgan_bits
-                    )
-                    for j, bit in enumerate(morgan_fp):
-                        row[f"Morgan_r{self.morgan_radius}_{j}"] = float(bit)
+                    try:
+                        morgan_fp = AllChem.GetMorganFingerprintAsBitVect(
+                            mol, self.morgan_radius, nBits=self.morgan_bits
+                        )
+                        for j, bit in enumerate(morgan_fp):
+                            row[f"Morgan_r{self.morgan_radius}_{j}"] = float(bit)
+                    except Exception:
+                        for j in range(self.morgan_bits):
+                            row[f"Morgan_r{self.morgan_radius}_{j}"] = 0.0
 
                     # RDKit トポロジカルフィンガープリント
-                    rdkit_fp = Chem.RDKFingerprint(mol, fpSize=self.rdkit_fp_bits)
-                    for j, bit in enumerate(rdkit_fp):
-                        row[f"RDKitFP_{j}"] = float(bit)
+                    try:
+                        rdkit_fp = Chem.RDKFingerprint(mol, fpSize=self.rdkit_fp_bits)
+                        for j, bit in enumerate(rdkit_fp):
+                            row[f"RDKitFP_{j}"] = float(bit)
+                    except Exception:
+                        for j in range(self.rdkit_fp_bits):
+                            row[f"RDKitFP_{j}"] = 0.0
 
                     # MACCS Keys (166 bit)
                     if self.include_maccs:
-                        maccs = MACCSkeys.GenMACCSKeys(mol)
-                        for j, bit in enumerate(maccs):
-                            row[f"MACCS_{j}"] = float(bit)
+                        try:
+                            maccs = MACCSkeys.GenMACCSKeys(mol)
+                            for j, bit in enumerate(maccs):
+                                row[f"MACCS_{j}"] = float(bit)
+                        except Exception:
+                            for j in range(167):
+                                row[f"MACCS_{j}"] = 0.0
 
                 rows.append(row)
 
@@ -160,9 +180,41 @@ class RDKitAdapter(BaseChemAdapter):
             },
         )
 
+    def get_descriptors_metadata(self) -> list[DescriptorMetadata]:
+        """RDKit記述子の詳細メタデータを返す。"""
+        from backend.chem.base import DescriptorMetadata
+        
+        # 物理化学記述子
+        meta = [
+            DescriptorMetadata("MolWt", "分子量", is_count=False),
+            DescriptorMetadata("LogP", "LogP（脂溶性）", is_count=False),
+            DescriptorMetadata("HBA", "水素結合受容体数", is_count=True),
+            DescriptorMetadata("HBD", "水素結合供与体数", is_count=True),
+            DescriptorMetadata("TPSA", "位相的極性表面積", is_count=False),
+            DescriptorMetadata("RotBonds", "回転可能結合数", is_count=True),
+            DescriptorMetadata("RingCount", "環数", is_count=True),
+            DescriptorMetadata("AromaticRingCount", "芳香環数", is_count=True),
+            DescriptorMetadata("FractionCSP3", "sp3炭素割合", is_count=False),
+            DescriptorMetadata("HeavyAtoms", "重原子数", is_count=True),
+            DescriptorMetadata("MolMR", "モル屈折", is_count=False),
+            DescriptorMetadata("HallKierAlpha", "Hall-Kierアルファ", is_count=False),
+        ]
+        
+        # フィンガープリント系（バイナリとして定義）
+        if self.compute_fp:
+            # 代表として個別に定義せず、動的に生成されるためここでは主要なもののみ
+            # (実際にはデータフレームの列名と一致させる必要がある)
+            # app.pyでは names = adp.compute(...).descriptors.columns を使うこともあるが、
+            # 静的に定義できる範囲で対応
+            pass
+            
+        return meta
+
     def get_descriptor_names(self) -> list[str]:
-        """利用可能な記述子名のリストを返す。"""
-        names = list(_PHYSICOCHEMICAL_DESCRIPTORS.keys())
+        """
+        計算可能な記述子名のリストを返す。
+        """
+        names = [m.name for m in self.get_descriptors_metadata()]
         if self.compute_fp:
             names += [f"Morgan_r{self.morgan_radius}_{j}" for j in range(self.morgan_bits)]
             names += [f"RDKitFP_{j}" for j in range(self.rdkit_fp_bits)]

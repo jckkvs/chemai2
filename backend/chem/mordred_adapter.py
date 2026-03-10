@@ -209,16 +209,69 @@ class MordredAdapter(BaseChemAdapter):
             }
         )
 
+    def get_descriptors_metadata(self) -> list[DescriptorMetadata]:
+        """Mordred記述子の詳細メタデータを返す。"""
+        from backend.chem.base import DescriptorMetadata
+        
+        # 主要な記述子の定義（selected_onlyで使う範囲 + α）
+        # 名前, 意味, is_count
+        raw_meta = [
+            # サイズ・原子数
+            ("MW", "分子量", False),
+            ("nHeavyAtom", "重原子数", True),
+            ("nAtom", "全原子数", True),
+            ("nBonds", "全結合数", True),
+            ("nC", "炭素原子数", True),
+            ("nN", "窒素原子数", True),
+            ("nO", "酸素原子数", True),
+            ("nS", "硫黄原子数", True),
+            ("nF", "フッ素原子数", True),
+            ("nCl", "塩素原子数", True),
+            ("nBr", "臭素原子数", True),
+            ("nI", "ヨウ素原子数", True),
+            ("nHet", "ヘテロ原子数", True),
+            ("nHetero", "ヘテロ原子数(別定義)", True),
+            
+            # 環構造
+            ("nRing", "環の数", True),
+            ("nHRing", "ヘテロ環の数", True),
+            ("nARing", "芳香環の数", True),
+            ("nBRing", "ベンゼン環の数", True),
+            ("nSpiro", "スピロ環の数", True),
+            ("nBridgehead", "橋頭位原子の数", True),
+            
+            # 水素結合・官能基
+            ("nHBAcc", "水素結合受容体数", True),
+            ("nHBDon", "水素結合供与体数", True),
+            ("nRotB", "回転可能結合数", True),
+            ("RotRatio", "回転可能結合比率", False),
+            
+            # 物性プロキシ (非カウント)
+            ("TPSA", "位相的極性表面積", False),
+            ("LogP", "LogP(計算値)", False),
+            ("SLogP", "SLogP", False),
+            ("LabuteASA", "Labute近似表面積", False),
+        ]
+        
+        metadata_list = [DescriptorMetadata(n, m, c) for n, m, c in raw_meta]
+        
+        # SELECTED_DESCRIPTORSに含まれるが上記にないものを補完
+        defined_names = {m.name for m in metadata_list}
+        for name in self.SELECTED_DESCRIPTORS:
+            if name not in defined_names:
+                # デフォルト（名前自体を意味とし、nで始まればカウントとみなす暫定処理だが、
+                # ユーザーの指摘を受け、可能な限り明示的に定義を増やすべき）
+                is_count = name.startswith("n") and not name.startswith("nHB") # nHB...はカウント
+                if name.startswith("nHB"): is_count = True
+                metadata_list.append(DescriptorMetadata(name, name, is_count))
+                
+        return metadata_list
+
     def get_descriptor_names(self) -> list[str]:
-        """計算可能な記述子名のリストを返す。"""
+        """
+        計算可能な記述子名のリストを返す。
+        """
         if self.selected_only:
-            # インストールチェックしてから実際に存在するものだけ返す
-            if self.is_available():
-                try:
-                    all_names = self._get_all_mordred_names()
-                    return [n for n in self.SELECTED_DESCRIPTORS if n in all_names]
-                except Exception:
-                    pass
             return self.SELECTED_DESCRIPTORS
         else:
             if self.is_available():

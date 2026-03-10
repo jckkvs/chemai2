@@ -47,6 +47,18 @@ class DescriptorResult:
         return self.descriptors.shape[1]
 
 
+@dataclass
+class DescriptorMetadata:
+    """
+    記述子の詳細属性を保持するデータクラス。
+    """
+    name: str              # 記述子の内部名
+    meaning: str           # 物理的・化学的意味
+    is_count: bool         # 整数カウント（原子数、環数等）か
+    is_binary: bool = False # バイナリ（有無）か
+    description: str = ""  # 詳細説明
+
+
 class BaseChemAdapter(ABC):
     """
     化合物特徴量化アダプタの抽象基底クラス。
@@ -101,7 +113,17 @@ class BaseChemAdapter(ABC):
     def get_descriptor_names(self) -> list[str]:
         """
         計算可能な記述子名のリストを返す（GUI表示・ルールセット設定用）。
-        デフォルト実装は空リストを返す。サブクラスでオーバーライド推奨。
+        デフォルト実装はメタデータから名前を抽出して返す。
+        """
+        metadata = self.get_descriptors_metadata()
+        if metadata:
+            return [m.name for m in metadata]
+        return []
+
+    def get_descriptors_metadata(self) -> list[DescriptorMetadata]:
+        """
+        各記述子の詳細メタデータ（物理的意味、数え上げ属性等）を返す。
+        サブクラスでオーバーライドすること。
         """
         return []
 

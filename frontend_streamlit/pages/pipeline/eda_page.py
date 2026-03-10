@@ -20,6 +20,15 @@ def render() -> None:
         return
 
     target_col = st.session_state.get("target_col")
+    
+    # 事前計算された記述子があればマージする
+    precalc_df = st.session_state.get("precalc_smiles_df")
+    if precalc_df is not None and not precalc_df.empty:
+        # 重複する列名（元のdfとprecalc_dfで被るもの）を避ける
+        cols_to_use = precalc_df.columns.difference(df.columns)
+        if len(cols_to_use) > 0:
+            df = pd.concat([df, precalc_df[cols_to_use]], axis=1)
+            
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
 
     # ─── データ全体サマリーカード ───────────────────────────────────────

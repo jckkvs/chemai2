@@ -299,7 +299,12 @@ class Preprocessor:
             transformers.append(("passthrough", "passthrough", passthrough_active))
 
         if not transformers:
-            raise ValueError("前処理対象の列が1つもありません。設定を確認してください。")
+            logger.warning("前処理対象の列がすべて除外されました（定数列のみなど）。学習を継続するため、安全なフォールバックとして最初の列をパススルーします。")
+            first_col = list(col_info.keys())[0] if col_info else None
+            if first_col:
+                transformers.append(("fallback_passthrough", "passthrough", [first_col]))
+            else:
+                raise ValueError("入力データに列が1つも存在しないため、前処理パイプラインを構築できません。")
 
         ct = ColumnTransformer(
             transformers=transformers,

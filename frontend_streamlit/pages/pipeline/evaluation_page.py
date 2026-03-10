@@ -46,24 +46,59 @@ def render() -> None:
         if df is not None and target_col:
             X = df.drop(columns=[target_col])
             y_true = df[target_col].values
-            try:
-                y_pred = result.best_pipeline.predict(X)
-                if result.task == "regression":
-                    _show_regression_metrics(y_true, y_pred)
-                else:
-                    _show_classification_metrics(y_true, y_pred, result.best_pipeline, X)
-            except Exception as e:
-                err_msg = str(e)
-                if "columns are missing" in err_msg:
-                    st.warning(
-                        "⚠️ コラム不一致エラーが発生しました。"
-                        "旐しいバージョンのAutoMLで学習したモデルとセッションデータの不一致です。\n"
-                        "「🔄 AutoMLを再実行」ボタンから再学習してください。"
+
+            # --- SMILES列がある場合は事前展開してから予測する ---
+            smiles_col = st.session_state.get("smiles_col")
+            if smiles_col and smiles_col in X.columns:
+                try:
+                    from backend.chem.smiles_transformer import SmilesDescriptorTransformer
+                    selected_descs = st.session_state.get("_adv", {}).get("selected_descriptors")
+                    _t = SmilesDescriptorTransformer(
+                        smiles_col=smiles_col,
+                        selected_descriptors=selected_descs if selected_descs else None
                     )
-                else:
-                    st.error(f"予測中にエラー: {e}")
+                    X = _t.fit_transform(X)
+                except Exception as _ex:
+                    st.caption(f"ℹ️ SMILES展開スキップ: {_ex}")
+
+            # --- 全データ予測（訓練データへの過適合を含む参考値）---
+            y_pred_full = None
+            try:
+                y_pred_full = result.best_pipeline.predict(X)
+            except Exception as e:
+                st.warning(f"⚠️ 全データ予測エラー: {e}")
+
+            # --- OOF (Cross-Validation) 予測 ---
+            y_oof = getattr(result, "oof_predictions", None)
+            y_oof_true = getattr(result, "oof_true", None)
+
+            # --- Holdout 予測 ---
+            y_holdout = getattr(result, "holdout_predictions", None)
+            y_holdout_true = getattr(result, "holdout_true", None)
+
+            if result.task == "regression":
+                _show_regression_multi(
+                    y_true=y_true,
+                    y_pred_full=y_pred_full,
+                    y_oof=y_oof,
+                    y_oof_true=y_oof_true,
+                    y_holdout=y_holdout,
+                    y_holdout_true=y_holdout_true,
+                    df=df,
+                    target_col=target_col,
+                )
+            else:
+                _show_classification_metrics(
+                    y_true,
+                    y_pred_full if y_pred_full is not None else np.zeros_like(y_true),
+                    result.best_pipeline, X,
+                )
+                if y_oof is not None:
+                    st.markdown("#### CV (OOF) での分類結果")
+                    _show_classification_metrics(y_oof_true, y_oof, None, None)
         else:
             st.info("データまたは目的変数が設定されていません。")
+
 
     # ─── Tab2: 全モデル比較 ──────────────────────────────────────
     with tab2:
@@ -72,32 +107,34 @@ def render() -> None:
             import plotly.express as px
             rows = []
             details = result.model_details if hasattr(result, "model_details") else {}
+            score_col_name = f"CV平均スコア ({result.scoring})"
+            
             for key, mean_v in scores.items():
                 d = details.get(key, {})
                 rows.append({
                     "モデル": key,
-                    "CV平均スコア": mean_v or 0,
+                    score_col_name: mean_v or 0,
                     "CV標準偏差": d.get("std", 0),
                     "学習時間(s)": round(d.get("fit_time", 0), 2),
                     "最良": "⭐" if key == result.best_model_key else "",
                 })
-            cmp_df = pd.DataFrame(rows).sort_values("CV平均スコア", ascending=False)
+            cmp_df = pd.DataFrame(rows).sort_values(score_col_name, ascending=False)
             st.dataframe(
                 cmp_df.style.background_gradient(
-                    subset=["CV平均スコア"], cmap="RdYlGn"
+                    subset=[score_col_name], cmap="RdYlGn"
                 ),
                 use_container_width=True,
             )
 
             # バーチャート
             fig = px.bar(
-                cmp_df, x="モデル", y="CV平均スコア",
+                cmp_df, x="モデル", y=score_col_name,
                 error_y="CV標準偏差",
-                color="CV平均スコア",
+                color=score_col_name,
                 color_continuous_scale="RdYlGn",
                 template="plotly_dark",
                 title=f"全モデルCV比較 ({result.scoring})",
-                text=cmp_df["CV平均スコア"].map("{:.3f}".format),
+                text=cmp_df[score_col_name].map("{:.3f}".format),
             )
             fig.update_layout(
                 plot_bgcolor="rgba(0,0,0,0)",
@@ -192,46 +229,116 @@ def render() -> None:
 # 内部ヘルパー
 # ============================================================
 
-def _show_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> None:
+def _show_regression_multi(
+    y_true: np.ndarray,
+    y_pred_full: "np.ndarray | None" = None,
+    y_oof: "np.ndarray | None" = None,
+    y_oof_true: "np.ndarray | None" = None,
+    y_holdout: "np.ndarray | None" = None,
+    y_holdout_true: "np.ndarray | None" = None,
+    df: "pd.DataFrame | None" = None,
+    target_col: "str | None" = None,
+) -> None:
+    """全データ / CV-OOF / Holdout の3モードを統合した予測vs実測プロット。"""
+    import streamlit as st
     from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
     import plotly.graph_objects as go
 
-    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
-    mae = mean_absolute_error(y_true, y_pred)
-    r2 = r2_score(y_true, y_pred)
-    mape = float(np.mean(np.abs((y_true - y_pred) / (np.abs(y_true) + 1e-8))) * 100)
+    # ホバー時に表示する識別子列を決める
+    # 優先順: SMILES列 > index/id/name/cas/compound と名前にある列 > 行番号
+    def _make_hover_ids(n: int, df: "pd.DataFrame | None" = None) -> list[str]:
+        if df is not None:
+            id_candidates = [c for c in df.columns
+                             if any(k in c.lower() for k in ["smiles","id","name","cas","compound","mol"])]
+            if id_candidates:
+                col = id_candidates[0]
+                return [f"{col}: {v}" for v in df[col].values[:n]]
+        # フォールバック: 連番インデックス
+        base_idx = list(df.index[:n]) if df is not None else list(range(n))
+        return [f"行 #{i}" for i in base_idx]
 
-    cols = st.columns(4)
-    for col, val, label in [
-        (cols[0], f"{rmse:.4f}", "RMSE"),
-        (cols[1], f"{mae:.4f}", "MAE"),
-        (cols[2], f"{r2:.4f}", "R²"),
-        (cols[3], f"{mape:.2f}%", "MAPE"),
-    ]:
-        with col:
+
+    def _metrics(yt, yp):
+        rmse = float(np.sqrt(mean_squared_error(yt, yp)))
+        r2   = float(r2_score(yt, yp))
+        mae  = float(mean_absolute_error(yt, yp))
+        return rmse, r2, mae
+
+    modes = [
+        ("🔵 全データ学習（参考）",    y_pred_full, y_true,      "rgba(0,180,255,0.5)"),
+        ("🟢 CV Out-of-Fold（推奨）",  y_oof,       y_oof_true,  "rgba(80,220,120,0.6)"),
+        ("🟠 Holdout テスト",          y_holdout,   y_holdout_true, "rgba(255,160,60,0.6)"),
+    ]
+    avail = [(lbl, yp, yt, col) for lbl, yp, yt, col in modes
+             if yp is not None and yt is not None]
+
+    if not avail:
+        st.warning("予測値が取得できませんでした。")
+        return
+
+    # ── メトリクス行 ──
+    metric_cols = st.columns(len(avail))
+    for mc, (lbl, yp, yt, _) in zip(metric_cols, avail):
+        rmse, r2, mae = _metrics(yt, yp)
+        with mc:
             st.markdown(
-                f'<div class="metric-card"><div class="metric-value">{val}</div>'
-                f'<div class="metric-label">{label}</div></div>',
-                unsafe_allow_html=True
+                f'<div class="metric-card">'
+                f'<div style="font-size:0.75rem;color:#8888aa;margin-bottom:3px;">{lbl}</div>'
+                f'<div class="metric-value" style="font-size:1.05rem;">R²&nbsp;{r2:.4f}</div>'
+                f'<div class="metric-label">RMSE {rmse:.4f} | MAE {mae:.4f}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
             )
 
     st.markdown("---")
+
+    # ── 統合散布図 ──
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=y_true, y=y_pred, mode="markers",
-        marker=dict(color="#00d4ff", opacity=0.6, size=6), name="予測"
-    ))
-    rng = [float(min(y_true.min(), y_pred.min())), float(max(y_true.max(), y_pred.max()))]
+    all_vals: list[float] = []
+    for lbl, yp, yt, col in avail:
+        n = len(yp)
+        hover_ids = _make_hover_ids(n, df)
+        customdata = list(zip(
+            hover_ids,
+            [f"{v:.4f}" for v in yt],
+            [f"{v:.4f}" for v in yp],
+        ))
+        fig.add_trace(go.Scatter(
+            x=yt, y=yp, mode="markers",
+            name=lbl, marker=dict(color=col, size=6),
+            customdata=customdata,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "実測値: %{customdata[1]}<br>"
+                "予測値: %{customdata[2]}<br>"
+                "<extra>" + lbl + "</extra>"
+            ),
+        ))
+        all_vals += [float(yt.min()), float(yt.max()), float(yp.min()), float(yp.max())]
+
+    rng = [min(all_vals), max(all_vals)]
     fig.add_trace(go.Scatter(
         x=rng, y=rng, mode="lines",
-        line=dict(color="#fbbf24", dash="dash"), name="完全一致"
+        line=dict(color="#fbbf24", dash="dash"), name="完全一致",
     ))
     fig.update_layout(
-        title="実測 vs 予測", xaxis_title="実測値", yaxis_title="予測値",
+        title="実測 vs 予測（評価モード比較）",
+        xaxis_title="実測値", yaxis_title="予測値",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#e0e0f0"), template="plotly_dark",
+        legend=dict(bgcolor="rgba(0,0,0,0)"),
     )
     st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        "🔵 全データ学習: 訓練に使ったデータのため過楽観な数値。"
+        "　🟢 CV OOF: 最もリアルな汎化精度。"
+        "　🟠 Holdout: 事前分割したテストデータ（設定時のみ）。"
+    )
+
+
+def _show_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> None:
+    """後方互換性ラッパー。"""
+    _show_regression_multi(y_true=y_true, y_pred_full=y_pred)
 
 
 def _show_classification_metrics(

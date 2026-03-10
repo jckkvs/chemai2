@@ -6,18 +6,27 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
+import numpy as np
 
 
 def render() -> None:
     st.markdown("## 📐 次元削減")
 
-    df = st.session_state.get("df")
-    if df is None:
+    df_raw = st.session_state.get("df")
+    if df_raw is None:
         st.warning("⚠️ まずデータを読み込んでください。")
         if st.button("📂 データ読み込みへ"):
             st.session_state["page"] = "data_load"
             st.rerun()
         return
+
+    # SMILES記述子が事前計算されている場合は結合する
+    df = df_raw.copy()
+    precalc_df = st.session_state.get("precalc_smiles_df")
+    if precalc_df is not None and not precalc_df.empty:
+        # 重複列名（元のdfにある列名）は除外して結合
+        cols_to_add = precalc_df.columns.difference(df.columns)
+        df = pd.concat([df, precalc_df[cols_to_add]], axis=1)
 
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     if len(numeric_cols) < 2:
@@ -35,8 +44,7 @@ def render() -> None:
             color_by = st.selectbox(
                 "色付け列",
                 ["なし"] + df.columns.tolist(),
-                index=0 if not target_col else df.columns.tolist().index(target_col) + 1
-                if target_col in df.columns else 0,
+                index=0 if not target_col else (df.columns.tolist().index(target_col) + 1 if target_col in df.columns else 0),
                 key="dr_color",
             )
         with col2:

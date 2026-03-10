@@ -108,6 +108,8 @@ def _store_df(df: pd.DataFrame, name: str) -> None:
 
     if result.smiles_columns:
         st.session_state["smiles_col"] = result.smiles_columns[0]
+        st.session_state["precalc_smiles_df"] = None
+        st.session_state["precalc_done"] = False  # 新しいデータセットのため再計算させる
 
 
 def _show_data_overview() -> None:

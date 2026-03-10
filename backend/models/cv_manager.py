@@ -115,6 +115,47 @@ class WalkForwardSplit:
 # CV手法を文字列キーで取得するためのレジストリ
 # (key, 日本語名, クラス, 必要引数フラグ)
 _CV_REGISTRY: dict[str, dict[str, Any]] = {
+    "groupfold": {
+        "name": "Group K-Fold",
+        "description": "グループを考慮したK-Fold",
+        "class": GroupKFold,
+        "default_params": {"n_splits": 5},
+        "requires_groups": True,
+        "requires_classification": False,
+    },
+    "stratifiedfold": {
+        "name": "Stratified K-Fold",
+        "description": "クラス比率を保持するK-Fold（分類向け）",
+        "class": StratifiedKFold,
+        "default_params": {"n_splits": 5, "shuffle": True, "random_state": RANDOM_STATE},
+        "requires_groups": False,
+        "requires_classification": True,
+    },
+    "loo": {
+        "name": "Leave-One-Out (LOO)",
+        "description": "1サンプルずつ除外",
+        "class": LeaveOneOut,
+        "default_params": {},
+        "requires_groups": False,
+        "requires_classification": False,
+    },
+    "logo": {
+        "name": "Leave-One-Group-Out",
+        "description": "グループ単位でLeave-One-Out",
+        "class": LeaveOneGroupOut,
+        "default_params": {},
+        "requires_groups": True,
+        "requires_classification": False,
+    },
+    "walkthrough": {
+        "name": "Walk-Forward Validation (Walkthrough)",
+        "description": "時系列ウォークフォワード検証（拡張窓方式）",
+        "class": WalkForwardSplit,
+        "default_params": {"n_splits": 5, "gap": 0},
+        "requires_groups": False,
+        "requires_classification": False,
+    },
+    # 既存のレガシーキーも保持
     "kfold": {
         "name": "K-Fold",
         "description": "標準的なK分割交差検証",
@@ -147,28 +188,12 @@ _CV_REGISTRY: dict[str, dict[str, Any]] = {
         "requires_groups": True,
         "requires_classification": True,
     },
-    "loo": {
-        "name": "Leave-One-Out (LOO)",
-        "description": "1サンプルずつ除外（計算コスト大）",
-        "class": LeaveOneOut,
-        "default_params": {},
-        "requires_groups": False,
-        "requires_classification": False,
-    },
     "lpo": {
         "name": "Leave-P-Out",
         "description": "Pサンプルずつ除外",
         "class": LeavePOut,
         "default_params": {"p": 2},
         "requires_groups": False,
-        "requires_classification": False,
-    },
-    "logo": {
-        "name": "Leave-One-Group-Out",
-        "description": "グループ単位でLeave-One-Out",
-        "class": LeaveOneGroupOut,
-        "default_params": {},
-        "requires_groups": True,
         "requires_classification": False,
     },
     "lpgo": {
@@ -255,6 +280,9 @@ def _get_cv_class(class_name: str) -> Type[Any]:
     """sklearn.model_selection から CV クラスを動的に取得する。"""
     # 既知のエイリアス解決
     alias_map = {
+        "groupfold": "GroupKFold",
+        "stratifiedfold": "StratifiedKFold",
+        "walkthrough": "WalkForwardSplit",
         "kfold": "KFold",
         "stratified_kfold": "StratifiedKFold",
         "group_kfold": "GroupKFold",
@@ -331,17 +359,58 @@ def get_cv(config: CVConfig) -> Any:
     if cv_class.__name__ == "PredefinedSplit" and "test_fold" not in params:
         raise ValueError("PredefinedSplit には 'test_fold' 配列が必要です。")
 
-    # 引数バリデーション
+    # 引数バリデーション & 型変換
     sig = inspect.signature(cv_class.__init__)
     valid_params = {}
     invalid_params = []
     
     for k, v in params.items():
-        if k in sig.parameters or sig.parameters.get("kwargs"):
-            valid_params[k] = v
-        else:
+        if k not in sig.parameters and not sig.parameters.get("kwargs"):
             invalid_params.append(k)
+            continue
             
+        # 型推論 & 変換
+        param_info = sig.parameters.get(k)
+        anno = param_info.annotation if param_info else None
+        
+        if v is not None:
+            try:
+                # 1. アノテーションが明確な場合
+                if anno is int:
+                    valid_params[k] = int(v)
+                elif anno is float:
+                    valid_params[k] = float(v)
+                elif anno is bool:
+                    if isinstance(v, str):
+                        valid_params[k] = v.lower() in ("true", "1", "yes")
+                    else:
+                        valid_params[k] = bool(v)
+                
+                # 2. アノテーションがないか Any / Parameter.empty の場合、値から推論
+                elif isinstance(v, str):
+                    low_v = v.lower()
+                    if low_v in ("true", "false", "yes", "no"):
+                        valid_params[k] = low_v in ("true", "yes")
+                    elif v.isdigit():
+                        valid_params[k] = int(v)
+                    else:
+                        try:
+                            valid_params[k] = float(v)
+                        except ValueError:
+                            valid_params[k] = v
+                else:
+                    valid_params[k] = v
+            except (ValueError, TypeError):
+                valid_params[k] = v
+        else:
+            valid_params[k] = v
+            
+    # 特殊な依存関係の調整 (KFold等: random_state を指定したら shuffle=True が必須)
+    if valid_params.get("random_state") is not None and "shuffle" in sig.parameters:
+        if not valid_params.get("shuffle"):
+            logger.info(f"CVクラス {cv_class.__name__}: random_state が指定されたため shuffle=True に自動設定します。")
+            valid_params["shuffle"] = True
+
     if invalid_params:
         logger.warning(f"CVクラス {cv_class.__name__} に無効な引数が指定されました（無視します）: {invalid_params}")
 

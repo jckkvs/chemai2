@@ -140,10 +140,20 @@ class DimReducer(BaseEstimator, TransformerMixin):
 
     def _prepare(self, X: np.ndarray | pd.DataFrame, fit: bool = True) -> np.ndarray:
         if isinstance(X, pd.DataFrame):
-            self._feature_names_in = X.columns.tolist()
-            X_arr = X.values.astype(float)
+            # 汎用対応: 文字列列(SMILESなど)が混入した場合にPCAエラーになるのを防ぐため、数値列のみに絞る
+            numeric_df = X.select_dtypes(include="number")
+            self._feature_names_in = numeric_df.columns.tolist()
+            X_arr = numeric_df.values.astype(float)
         else:
-            X_arr = np.asarray(X, dtype=float)
+            X_arr = np.asarray(X)
+            # numpy arrayの場合は数値型に変換できない要素があればエラーになるのを避けるため
+            # もし object 型の場合は数値化を試みる (無理なら元のままにして後続でエラーを出す)
+            if X_arr.dtype == object:
+                try:
+                    X_arr = X_arr.astype(float)
+                except ValueError:
+                    # そのまま通して後続の適切なエラー表示に任せる
+                    pass
 
         if self.config.scale:
             if fit:
