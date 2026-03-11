@@ -6,6 +6,7 @@ from backend.chem.cosmo_adapter import CosmoAdapter
 from backend.chem.unipka_adapter import UniPkaAdapter
 from backend.chem.group_contrib_adapter import GroupContribAdapter
 from backend.chem.mordred_adapter import MordredAdapter
+from backend.chem.molai_adapter import MolAIAdapter
 
 __all__ = [
     "BaseChemAdapter",
@@ -16,4 +17,5 @@ __all__ = [
     "UniPkaAdapter",
     "GroupContribAdapter",
     "MordredAdapter",
+    "MolAIAdapter",
 ]

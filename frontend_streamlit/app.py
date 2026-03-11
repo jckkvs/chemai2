@@ -697,6 +697,27 @@ else:
                 with st.expander("🧪 SMILES記述子設定（任意）", expanded=True):
                     st.markdown("SMILES列から**化学記述子**を計算・選択します。選択した記述子が解析の特徴量として使用されます。")
 
+                    # MolAI PCA 次元数設定
+                    with st.expander("🤖 MolAI 設定（CNN+GRU オートエンコーダー記述子）", expanded=False):
+                        st.caption(
+                            "MolAI は SMILES を CNN Encoder で高次元潜在ベクトルに変換し、"
+                            "PCA で低次元化した記述子を生成します。\n\n"
+                            "📄 *Mahdizadeh & Eriksson, J. Chem. Inf. Model. 2025, "
+                            "DOI: 10.1021/acs.jcim.5c00491*"
+                        )
+                        _molai_n = st.slider(
+                            "PCA 出力次元数 (n_components)",
+                            min_value=4, max_value=128,
+                            value=st.session_state.get("molai_n_components", 32),
+                            step=4,
+                            key="slider_molai_n",
+                            help="MolAI の潜在ベクトルを何次元に圧縮するか。大きいほど情報量が増えるが過学習リスクも高まる。"
+                        )
+                        if _molai_n != st.session_state.get("molai_n_components", 32):
+                            st.session_state["molai_n_components"] = _molai_n
+                            st.session_state["precalc_done"] = False  # 再計算トリガー
+                            st.rerun()
+
                     # --- データフレームのプレビューと型判定 ---
                     st.markdown("### 📊 データプレビュー")
                     import pandas as pd
@@ -718,7 +739,7 @@ else:
                     detector = TypeDetector()
                     st.session_state["detection_result"] = detector.detect(detector_df)
     
-                    from backend.chem import RDKitAdapter, XTBAdapter, CosmoAdapter, UniPkaAdapter, GroupContribAdapter, MordredAdapter
+                    from backend.chem import RDKitAdapter, XTBAdapter, CosmoAdapter, UniPkaAdapter, GroupContribAdapter, MordredAdapter, MolAIAdapter
                     from backend.chem.recommender import (
                         get_target_recommendation_by_name,
                         get_target_categories,
@@ -728,7 +749,8 @@ else:
                         get_all_target_recommendations
                     )
     
-                    all_adapters = [RDKitAdapter(compute_fp=True), MordredAdapter(selected_only=True), XTBAdapter(), CosmoAdapter(), UniPkaAdapter(), GroupContribAdapter()]
+                    _molai_n_comp = st.session_state.get("molai_n_components", 32)
+                    all_adapters = [RDKitAdapter(compute_fp=True), MordredAdapter(selected_only=True), XTBAdapter(), CosmoAdapter(), UniPkaAdapter(), GroupContribAdapter(), MolAIAdapter(n_components=_molai_n_comp)]
                     
                     # 辞書化してライブラリごとの記述子を持っておく（タブ3用）
                     lib_descriptors = {}
