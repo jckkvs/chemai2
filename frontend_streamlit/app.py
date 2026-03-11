@@ -632,26 +632,27 @@ else:
                                 except Exception:
                                     st.warning(f"引数を取得できません。")
     
-                st.markdown("---")
-                
+                selected_desc = st.session_state.get("adv_desc", [])
+
+            # ── SMILES 記述子設定（SMILES列指定時のみ表示） ─────────────────
+            if st.session_state.get("smiles_col"):
                 # --- 記述子事前計算 (相関分析用) ---
-                if st.session_state.get("smiles_col") and not st.session_state.get("precalc_done", False):
+                if not st.session_state.get("precalc_done", False):
                     from backend.chem.rdkit_adapter import RDKitAdapter
                     from backend.chem.recommender import get_target_recommendation_by_name
-                    
+
                     smiles_series = df[st.session_state["smiles_col"]]
                     valid_mask = smiles_series.notna()
                     smiles_list = smiles_series[valid_mask].tolist()
                     valid_idx = smiles_series[valid_mask].index
                     n = len(smiles_list)
-                    
+
                     st.info(f"⚙️ **{n} 件のSMILES記述子を計算中...** しばらくお待ちください。")
-                    
+
                     target_name = st.session_state.get("target_col", "")
                     rdkit = RDKitAdapter(compute_fp=False)
                     df_result = pd.DataFrame(index=range(n))
-                    
-                    # フェーズ1: 目的変数系の推奨記述子
+
                     with st.spinner("1/3 目的変数「{}」の推奨記述子を計算中...".format(target_name or "?")):
                         rec = get_target_recommendation_by_name(target_name)
                         rec_names = [d.name for d in rec.descriptors] if rec else []
@@ -661,8 +662,7 @@ else:
                                 df_result = pd.concat([df_result, df_tmp], axis=1)
                             except Exception:
                                 pass
-                    
-                    # フェーズ2: 数え上げ系記述子
+
                     with st.spinner("2/3 数え上げ系記述子（原子数、環数等）を計算中..."):
                         try:
                             mdata = rdkit.get_descriptors_metadata()
@@ -672,8 +672,7 @@ else:
                                 df_result = pd.concat([df_result, df_tmp], axis=1)
                         except Exception:
                             pass
-                    
-                    # フェーズ3: 主要物理化学記述子
+
                     CURATED = ["MolWt","LogP","TPSA","HBA","HBD","RotBonds",
                                "RingCount","AromaticRingCount","FractionCSP3",
                                "HeavyAtoms","MolMR","HallKierAlpha"]
@@ -685,24 +684,19 @@ else:
                                 df_result = pd.concat([df_result, df_tmp], axis=1)
                             except Exception:
                                 pass
-                    
-                    # 重複除去・型変換・インデックス同期してから保存
+
                     df_result = df_result.loc[:, ~df_result.columns.duplicated()]
                     df_result.index = valid_idx
                     df_result = df_result.apply(pd.to_numeric, errors="coerce").convert_dtypes()
-                    
                     n_descs = len(df_result.columns)
                     st.success(f"✅ 計算完了！ {n_descs} 個の記述子を抽出しました（{n}件）")
-                    
                     st.session_state["precalc_smiles_df"] = df_result
                     st.session_state["precalc_done"] = True
                     st.rerun()
     
-                # --- 記述子計算設定 ---
-                if st.session_state.get("smiles_col"):
-                    st.markdown("---")
-                    st.markdown("**🧪 記述子計算設定（任意）**")
-    
+                with st.expander("🧪 SMILES記述子設定（任意）", expanded=True):
+                    st.markdown("SMILES列から**化学記述子**を計算・選択します。選択した記述子が解析の特徴量として使用されます。")
+
                     # --- データフレームのプレビューと型判定 ---
                     st.markdown("### 📊 データプレビュー")
                     import pandas as pd
