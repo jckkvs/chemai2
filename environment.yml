@@ -43,3 +43,6 @@ dependencies:
     - pytest-cov>=4.1
     - black>=23.0
     - ruff>=0.1
+    - torch>=2.3.0                # CPU build: pip install torch --index-url https://download.pytorch.org/whl/cpu
+    - unipka>=0.0.6               # Uni-pKa unofficial Python wrapper (pip install unipka)
+    - opencosmorspy               # openCOSMO-RS: pip install git+https://github.com/TUHH-TVT/openCOSMO-RS_py.git

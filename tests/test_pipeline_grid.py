@@ -387,3 +387,120 @@ class TestClassificationGrid:
             combo.pipeline.fit(df, y)
             preds = combo.pipeline.predict(df)
             assert preds.shape == (len(y),)
+
+
+# ==============================================================
+# T-G011: cat_imputers 複数選択
+# ==============================================================
+
+class TestCatImputersGrid:
+
+    def test_tg011_cat_imputers_count(self):
+        """T-G011a: cat_imputers 2択 → 組合せ数が2倍になる。"""
+        gc1 = PipelineGridConfig(
+            cat_imputers=["most_frequent"],
+            estimator_keys=["ridge"],
+        )
+        gc2 = PipelineGridConfig(
+            cat_imputers=["most_frequent", "constant"],
+            estimator_keys=["ridge"],
+        )
+        assert count_combinations(gc2) == count_combinations(gc1) * 2
+
+    def test_tg011_cat_imputers_config_applied(self, reg_df):
+        """T-G011b: cat_imputers の値が ColPreprocessConfig に反映される。"""
+        df, y = reg_df
+        gc = PipelineGridConfig(
+            cat_imputers=["most_frequent", "constant"],
+            estimator_keys=["ridge"],
+        )
+        combos = generate_pipeline_grid(gc)
+        assert len(combos) == 2
+        ci_values = {c.config.preprocessor_config.categorical_imputer for c in combos}
+        assert ci_values == {"most_frequent", "constant"}
+
+    def test_tg011_fit_predict(self, reg_df):
+        """T-G011c: cat_imputers 複数でも fit/predict が正常終了。"""
+        df, y = reg_df
+        gc = PipelineGridConfig(
+            cat_imputers=["most_frequent", "constant"],
+            estimator_keys=["ridge"],
+        )
+        combos = generate_pipeline_grid(gc)
+        for combo in combos:
+            combo.pipeline.fit(df, y)
+            preds = combo.pipeline.predict(df)
+            assert preds.shape[0] == len(y)
+
+
+# ==============================================================
+# T-G012: binary_imputers 複数選択
+# ==============================================================
+
+class TestBinaryImputersGrid:
+
+    def test_tg012_binary_imputers_count(self):
+        """T-G012a: binary_imputers 2択 → 組合せ数が2倍になる。"""
+        gc1 = PipelineGridConfig(
+            binary_imputers=["most_frequent"],
+            estimator_keys=["ridge"],
+        )
+        gc2 = PipelineGridConfig(
+            binary_imputers=["most_frequent", "constant"],
+            estimator_keys=["ridge"],
+        )
+        assert count_combinations(gc2) == count_combinations(gc1) * 2
+
+    def test_tg012_binary_imputers_config_applied(self):
+        """T-G012b: binary_imputers が ColPreprocessConfig.binary_imputer に反映される。"""
+        gc = PipelineGridConfig(
+            binary_imputers=["most_frequent", "constant"],
+            estimator_keys=["ridge"],
+        )
+        combos = generate_pipeline_grid(gc)
+        bi_values = {c.config.preprocessor_config.binary_imputer for c in combos}
+        assert bi_values == {"most_frequent", "constant"}
+
+
+# ==============================================================
+# T-G013: exclude_columns
+# ==============================================================
+
+class TestExcludeColumns:
+
+    def test_tg013_exclude_columns_mode(self):
+        """T-G013a: exclude_columns 指定時に col_select_mode='exclude' になる。"""
+        gc = PipelineGridConfig(
+            exclude_columns=["col_a", "col_b"],
+            estimator_keys=["ridge"],
+        )
+        combos = generate_pipeline_grid(gc)
+        assert len(combos) == 1
+        cfg = combos[0].config
+        assert cfg.col_select_mode == "exclude"
+        assert "col_a" in cfg.col_select_columns
+        assert "col_b" in cfg.col_select_columns
+
+    def test_tg013_no_exclude(self):
+        """T-G013b: exclude_columns 未指定時は元の col_select_mode を維持。"""
+        gc = PipelineGridConfig(
+            col_select_mode="all",
+            exclude_columns=[],
+            estimator_keys=["ridge"],
+        )
+        combos = generate_pipeline_grid(gc)
+        assert combos[0].config.col_select_mode == "all"
+
+    def test_tg013_full_grid_with_exclude(self):
+        """T-G013c: exclude_columns + 複数 imputer/estimator の組み合わせ。"""
+        gc = PipelineGridConfig(
+            exclude_columns=["feat_to_drop"],
+            numeric_imputers=["mean", "median"],
+            estimator_keys=["ridge", "rf"],
+        )
+        combos = generate_pipeline_grid(gc)
+        assert len(combos) == 4  # 2×2
+        for c in combos:
+            assert c.config.col_select_mode == "exclude"
+            assert "feat_to_drop" in c.config.col_select_columns
+

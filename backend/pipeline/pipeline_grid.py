@@ -119,8 +119,13 @@ class PipelineGridConfig:
     # Step 2: 前処理グリッド
     numeric_imputers: list[str] = field(default_factory=lambda: ["mean"])
     numeric_scalers: list[str] = field(default_factory=lambda: ["standard"])
+    cat_imputers: list[str] = field(default_factory=lambda: ["most_frequent"])
     cat_low_encoders: list[str] = field(default_factory=lambda: ["onehot"])
     cat_high_encoders: list[str] = field(default_factory=lambda: ["ordinal"])
+    binary_imputers: list[str] = field(default_factory=lambda: ["most_frequent"])
+
+    # 除外列 (未使用変数、excluderに相当)
+    exclude_columns: list[str] = field(default_factory=list)
 
     # Step 3: 特徴量生成グリッド
     feature_gen_methods: list[str] = field(default_factory=lambda: ["none"])
@@ -191,8 +196,10 @@ def generate_pipeline_grid(
     product_axes = [
         _ensure_nonempty(gc.numeric_imputers, "mean"),
         _ensure_nonempty(gc.numeric_scalers, "standard"),
+        _ensure_nonempty(gc.cat_imputers, "most_frequent"),
         _ensure_nonempty(gc.cat_low_encoders, "onehot"),
         _ensure_nonempty(gc.cat_high_encoders, "ordinal"),
+        _ensure_nonempty(gc.binary_imputers, "most_frequent"),
         gen_combinations,
         _ensure_nonempty(gc.feature_sel_methods, "none"),
         estimator_pairs,
@@ -214,8 +221,10 @@ def generate_pipeline_grid(
         (
             imputer,
             scaler,
+            cat_imp,
             cat_low_enc,
             cat_high_enc,
+            bin_imp,
             (gen_method, gen_degree),
             sel_method,
             (est_key, est_params),
@@ -223,8 +232,8 @@ def generate_pipeline_grid(
 
         # ラベル生成
         name = _make_label(
-            imputer, scaler, cat_low_enc, cat_high_enc,
-            gen_method, gen_degree, sel_method, est_key,
+            imputer, scaler, cat_imp, cat_low_enc, cat_high_enc,
+            bin_imp, gen_method, gen_degree, sel_method, est_key,
         )
 
         # PipelineConfig 構築
@@ -232,8 +241,10 @@ def generate_pipeline_grid(
             gc=gc,
             imputer=imputer,
             scaler=scaler,
+            cat_imp=cat_imp,
             cat_low_enc=cat_low_enc,
             cat_high_enc=cat_high_enc,
+            bin_imp=bin_imp,
             gen_method=gen_method,
             gen_degree=gen_degree,
             sel_method=sel_method,
@@ -271,8 +282,10 @@ def count_combinations(grid_config: PipelineGridConfig) -> int:
     return (
         len(_ensure_nonempty(gc.numeric_imputers, "mean"))
         * len(_ensure_nonempty(gc.numeric_scalers, "standard"))
+        * len(_ensure_nonempty(gc.cat_imputers, "most_frequent"))
         * len(_ensure_nonempty(gc.cat_low_encoders, "onehot"))
         * len(_ensure_nonempty(gc.cat_high_encoders, "ordinal"))
+        * len(_ensure_nonempty(gc.binary_imputers, "most_frequent"))
         * gen_combos
         * len(_ensure_nonempty(gc.feature_sel_methods, "none"))
         * len(_ensure_nonempty(gc.estimator_keys, "rf"))
@@ -311,8 +324,10 @@ def _ensure_nonempty(lst: list, default: str) -> list:
 def _make_label(
     imputer: str,
     scaler: str,
+    cat_imp: str,
     cat_low_enc: str,
     cat_high_enc: str,
+    bin_imp: str,
     gen_method: str,
     gen_degree: int,
     sel_method: str,
@@ -323,7 +338,9 @@ def _make_label(
     return (
         f"imp={imputer}"
         f"|scl={scaler}"
+        f"|ci={cat_imp}"
         f"|enc={cat_low_enc}"
+        f"|bi={bin_imp}"
         f"|gen={gen_str}"
         f"|sel={sel_method}"
         f"|est={est_key}"
@@ -334,8 +351,10 @@ def _build_pipeline_config(
     gc: PipelineGridConfig,
     imputer: str,
     scaler: str,
+    cat_imp: str,
     cat_low_enc: str,
     cat_high_enc: str,
+    bin_imp: str,
     gen_method: str,
     gen_degree: int,
     sel_method: str,
@@ -349,10 +368,11 @@ def _build_pipeline_config(
         override_types=base_pre.override_types if base_pre else {},
         numeric_imputer=imputer,
         numeric_scaler=scaler,
+        categorical_imputer=cat_imp,
         cat_low_encoder=cat_low_enc,
         cat_high_encoder=cat_high_enc,
+        binary_imputer=bin_imp,
         binary_encoder=base_pre.binary_encoder if base_pre else "ordinal",
-        categorical_imputer=base_pre.categorical_imputer if base_pre else "most_frequent",
         add_missing_indicator=base_pre.add_missing_indicator if base_pre else False,
         cardinality_threshold=base_pre.cardinality_threshold if base_pre else 20,
         onehot_drop=base_pre.onehot_drop if base_pre else "first",
@@ -384,10 +404,17 @@ def _build_pipeline_config(
         estimator_key=base_sel.estimator_key if base_sel else None,
     )
 
+    # exclude_columns: col_select_mode="exclude" で対応
+    col_select_mode = gc.col_select_mode
+    col_select_columns = gc.col_select_columns
+    if gc.exclude_columns:
+        col_select_mode = "exclude"
+        col_select_columns = list(gc.exclude_columns)
+
     return PipelineConfig(
         task=gc.task,
-        col_select_mode=gc.col_select_mode,
-        col_select_columns=gc.col_select_columns,
+        col_select_mode=col_select_mode,
+        col_select_columns=col_select_columns,
         col_select_range=gc.col_select_range,
         column_meta=gc.column_meta,
         preprocessor_config=pre_config,

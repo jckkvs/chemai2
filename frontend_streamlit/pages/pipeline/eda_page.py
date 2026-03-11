@@ -217,6 +217,15 @@ def _plot_scatter(df: pd.DataFrame, numeric_cols: list[str], target_col: str | N
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#e0e0f0"),
     )
+    # SMILES列があれば2D構造ホバーを追加
+    try:
+        smiles_col = st.session_state.get("smiles_col")
+        if smiles_col and smiles_col in df.columns:
+            from frontend_streamlit.components.smiles_hover import add_smiles_hover_to_plotly
+            smiles_list = df[smiles_col].fillna("").tolist()
+            add_smiles_hover_to_plotly(fig, smiles_list)
+    except Exception:
+        pass
     st.plotly_chart(fig, use_container_width=True)
 
 

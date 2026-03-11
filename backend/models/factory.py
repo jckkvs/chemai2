@@ -40,10 +40,30 @@ from backend.utils.optional_import import safe_import, is_available
 logger = logging.getLogger(__name__)
 
 # オプショナルライブラリ
-_xgb = safe_import("xgboost", "xgboost")
-_lgb = safe_import("lightgbm", "lightgbm")
-_cat = safe_import("catboost", "catboost")
-_linear_tree = safe_import("linear_tree", "linear-tree")
+_xgb         = safe_import("xgboost", "xgboost")
+_lgb         = safe_import("lightgbm", "lightgbm")
+_cat         = safe_import("catboost", "catboost")
+_imodels     = safe_import("imodels", "imodels")
+
+# フルスクラッチモデル（常時利用可能）
+try:
+    from backend.models.linear_tree import (
+        LinearTreeRegressor, LinearTreeClassifier,
+        LinearForestRegressor, LinearForestClassifier,
+        LinearBoostRegressor, LinearBoostClassifier,
+        RidgeTreeRegressor, RidgeTreeClassifier,
+    )
+    _linear_tree_available = True
+except ImportError as e:
+    _linear_tree_available = False
+    logger.warning(f"linear_tree モジュールロード失敗: {e}")
+
+try:
+    from backend.models.rgf import RGFRegressor, RGFClassifier
+    _rgf_available = True
+except ImportError as e:
+    _rgf_available = False
+    logger.warning(f"rgf モジュールロード失敗: {e}")
 
 
 def _xgb_regressor(**kw: Any) -> Any:
@@ -66,20 +86,6 @@ def _xgbrf_classifier(**kw: Any) -> Any:
     return XGBRFClassifier(random_state=RANDOM_STATE, eval_metric="logloss", **kw)
 
 
-def _lineartree_regressor(**kw: Any) -> Any:
-    from linear_tree import LinearTreeRegressor  # type: ignore
-    from sklearn.linear_model import Ridge
-    base = kw.pop("base_estimator", Ridge())
-    return LinearTreeRegressor(base_estimator=base, **kw)
-
-
-def _lineartree_classifier(**kw: Any) -> Any:
-    from linear_tree import LinearTreeClassifier  # type: ignore
-    from sklearn.linear_model import LogisticRegression
-    base = kw.pop("base_estimator", LogisticRegression(max_iter=500))
-    return LinearTreeClassifier(base_estimator=base, **kw)
-
-
 def _lgb_regressor(**kw: Any) -> Any:
     from lightgbm import LGBMRegressor  # type: ignore
     return LGBMRegressor(random_state=RANDOM_STATE, verbose=-1, **kw)
@@ -98,6 +104,89 @@ def _cat_regressor(**kw: Any) -> Any:
 def _cat_classifier(**kw: Any) -> Any:
     from catboost import CatBoostClassifier  # type: ignore
     return CatBoostClassifier(random_state=RANDOM_STATE, verbose=0, **kw)
+
+
+# imodels ファクトリー関数
+def _figs_regressor(**kw: Any) -> Any:
+    from imodels import FIGSRegressor  # type: ignore
+    return FIGSRegressor(**kw)
+
+
+def _figs_classifier(**kw: Any) -> Any:
+    from imodels import FIGSClassifier  # type: ignore
+    return FIGSClassifier(**kw)
+
+
+def _hsr_regressor(**kw: Any) -> Any:
+    from imodels import HSTreeRegressorCV  # type: ignore
+    return HSTreeRegressorCV(**kw)
+
+
+def _hsr_classifier(**kw: Any) -> Any:
+    from imodels import HSTreeClassifierCV  # type: ignore
+    return HSTreeClassifierCV(**kw)
+
+
+def _rulefit_regressor(**kw: Any) -> Any:
+    from imodels import RuleFitRegressor  # type: ignore
+    return RuleFitRegressor(**kw)
+
+
+def _rulefit_classifier(**kw: Any) -> Any:
+    from imodels import RuleFitClassifier  # type: ignore
+    return RuleFitClassifier(**kw)
+
+
+def _skoperules_classifier(**kw: Any) -> Any:
+    from imodels import SkopeRulesClassifier  # type: ignore
+    return SkopeRulesClassifier(**kw)
+
+
+def _greedytree_regressor(**kw: Any) -> Any:
+    from imodels import GreedyTreeRegressor  # type: ignore
+    return GreedyTreeRegressor(**kw)
+
+
+def _greedytree_classifier(**kw: Any) -> Any:
+    from imodels import GreedyTreeClassifier  # type: ignore
+    return GreedyTreeClassifier(**kw)
+
+
+# LinearTree ファクトリー関数 (機能別に base_estimator をエクスポーズ)
+def _linear_tree_regressor(**kw: Any) -> Any:
+    from sklearn.linear_model import Ridge
+    base = kw.pop("base_estimator", Ridge(alpha=kw.pop("alpha", 1.0)))
+    return LinearTreeRegressor(base_estimator=base, **kw)
+
+
+def _linear_tree_classifier(**kw: Any) -> Any:
+    from sklearn.linear_model import LogisticRegression
+    base = kw.pop("base_estimator", LogisticRegression(max_iter=500))
+    return LinearTreeClassifier(base_estimator=base, **kw)
+
+
+def _linear_forest_regressor(**kw: Any) -> Any:
+    from sklearn.linear_model import Ridge
+    base = kw.pop("base_estimator", Ridge(alpha=kw.pop("alpha", 1.0)))
+    return LinearForestRegressor(base_estimator=base, **kw)
+
+
+def _linear_forest_classifier(**kw: Any) -> Any:
+    from sklearn.linear_model import LogisticRegression
+    base = kw.pop("base_estimator", LogisticRegression(max_iter=500))
+    return LinearForestClassifier(base_estimator=base, **kw)
+
+
+def _linear_boost_regressor(**kw: Any) -> Any:
+    from sklearn.linear_model import Ridge
+    base = kw.pop("base_estimator", Ridge(alpha=kw.pop("alpha", 1.0)))
+    return LinearBoostRegressor(base_estimator=base, **kw)
+
+
+def _linear_boost_classifier(**kw: Any) -> Any:
+    from sklearn.linear_model import LogisticRegression
+    base = kw.pop("base_estimator", LogisticRegression(max_iter=500))
+    return LinearBoostClassifier(base_estimator=base, **kw)
 
 
 # ============================================================
@@ -263,14 +352,14 @@ _REGRESSION_REGISTRY: dict[str, dict[str, Any]] = {
         "factory": _xgb_regressor,
         "default_params": {"n_estimators": 100},
         "available": bool(_xgb),
-        "tags": ["ensemble", "boosting"],
+        "tags": ["ensemble", "boosting", "native_monotonic"],
     },
     "lgbm": {
         "name": "LightGBM",
         "factory": _lgb_regressor,
         "default_params": {"n_estimators": 100},
         "available": bool(_lgb),
-        "tags": ["ensemble", "boosting"],
+        "tags": ["ensemble", "boosting", "native_monotonic"],
     },
     "catboost": {
         "name": "CatBoost",
@@ -309,14 +398,73 @@ _REGRESSION_REGISTRY: dict[str, dict[str, Any]] = {
         "factory": _xgbrf_regressor,
         "default_params": {"n_estimators": 100},
         "available": bool(_xgb),
-        "tags": ["ensemble", "tree", "rf"],
+        "tags": ["ensemble", "tree", "rf", "native_monotonic"],
     },
+    # ─── Linear Tree / Forest / Boost (フルスクラッチ) ───
     "lineartree": {
-        "name": "Linear Tree Regressor",
-        "factory": _lineartree_regressor,
+        "name": "Linear Tree Regressor (scratch)",
+        "factory": _linear_tree_regressor,
         "default_params": {"max_depth": 5},
-        "available": bool(_linear_tree),
+        "available": _linear_tree_available,
         "tags": ["tree", "linear", "interpretable"],
+    },
+    "linearforest": {
+        "name": "Linear Forest Regressor (scratch)",
+        "factory": _linear_forest_regressor,
+        "default_params": {"n_estimators": 100, "max_depth": 5},
+        "available": _linear_tree_available,
+        "tags": ["ensemble", "tree", "linear"],
+    },
+    "linearboost": {
+        "name": "Linear Boost Regressor (scratch)",
+        "factory": _linear_boost_regressor,
+        "default_params": {"n_estimators": 100, "learning_rate": 0.1, "max_depth": 3},
+        "available": _linear_tree_available,
+        "tags": ["ensemble", "boosting", "linear"],
+    },
+    "ridgetree": {
+        "name": "Ridge Tree Regressor",
+        "factory": _linear_tree_regressor,
+        "default_params": {"max_depth": 5, "alpha": 1.0},
+        "available": _linear_tree_available,
+        "tags": ["tree", "linear", "interpretable"],
+    },
+    # ─── RGF (フルスクラッチ) ───
+    "rgf": {
+        "name": "RGF Regressor (Regularized Greedy Forest, scratch)",
+        "class": RGFRegressor,
+        "default_params": {"n_estimators": 100, "max_leaf_nodes": 32, "lambda_l2": 1.0},
+        "available": _rgf_available,
+        "tags": ["ensemble", "tree", "regularized"],
+    },
+    # ─── imodels ───
+    "figs": {
+        "name": "FIGS Regressor (imodels)",
+        "factory": _figs_regressor,
+        "default_params": {"max_rules": 12},
+        "available": bool(_imodels),
+        "tags": ["tree", "interpretable", "sparse"],
+    },
+    "hstree": {
+        "name": "Hierarchical Shrinkage Tree CV (imodels)",
+        "factory": _hsr_regressor,
+        "default_params": {},
+        "available": bool(_imodels),
+        "tags": ["tree", "interpretable", "regularized"],
+    },
+    "rulefit": {
+        "name": "RuleFit Regressor (imodels)",
+        "factory": _rulefit_regressor,
+        "default_params": {},
+        "available": bool(_imodels),
+        "tags": ["rule", "interpretable", "linear"],
+    },
+    "greedytree": {
+        "name": "Greedy Tree Regressor (imodels)",
+        "factory": _greedytree_regressor,
+        "default_params": {"max_depth": 5},
+        "available": bool(_imodels),
+        "tags": ["tree", "interpretable"],
     },
 }
 
@@ -467,14 +615,80 @@ _CLASSIFICATION_REGISTRY: dict[str, dict[str, Any]] = {
         "factory": _xgbrf_classifier,
         "default_params": {"n_estimators": 100},
         "available": bool(_xgb),
-        "tags": ["ensemble", "tree", "rf"],
+        "tags": ["ensemble", "tree", "rf", "native_monotonic"],
     },
+    # ─── Linear Tree / Forest / Boost (フルスクラッチ) ───
     "lineartree_c": {
-        "name": "Linear Tree Classifier",
-        "factory": _lineartree_classifier,
+        "name": "Linear Tree Classifier (scratch)",
+        "factory": _linear_tree_classifier,
         "default_params": {"max_depth": 5},
-        "available": bool(_linear_tree),
+        "available": _linear_tree_available,
         "tags": ["tree", "linear", "interpretable"],
+    },
+    "linearforest_c": {
+        "name": "Linear Forest Classifier (scratch)",
+        "factory": _linear_forest_classifier,
+        "default_params": {"n_estimators": 100, "max_depth": 5},
+        "available": _linear_tree_available,
+        "tags": ["ensemble", "tree", "linear"],
+    },
+    "linearboost_c": {
+        "name": "Linear Boost Classifier (scratch)",
+        "factory": _linear_boost_classifier,
+        "default_params": {"n_estimators": 100, "learning_rate": 0.1, "max_depth": 3},
+        "available": _linear_tree_available,
+        "tags": ["ensemble", "boosting", "linear"],
+    },
+    "ridgetree_c": {
+        "name": "Ridge Tree Classifier",
+        "factory": lambda **kw: _linear_tree_classifier(**kw),
+        "default_params": {"max_depth": 5},
+        "available": _linear_tree_available,
+        "tags": ["tree", "linear", "interpretable"],
+    },
+    # ─── RGF (フルスクラッチ) ───
+    "rgf_c": {
+        "name": "RGF Classifier (Regularized Greedy Forest, scratch)",
+        "class": RGFClassifier,
+        "default_params": {"n_estimators": 100, "max_leaf_nodes": 32, "lambda_l2": 1.0},
+        "available": _rgf_available,
+        "tags": ["ensemble", "tree", "regularized"],
+    },
+    # ─── imodels ───
+    "figs_c": {
+        "name": "FIGS Classifier (imodels)",
+        "factory": _figs_classifier,
+        "default_params": {"max_rules": 12},
+        "available": bool(_imodels),
+        "tags": ["tree", "interpretable", "sparse"],
+    },
+    "hstree_c": {
+        "name": "Hierarchical Shrinkage Tree CV (imodels)",
+        "factory": _hsr_classifier,
+        "default_params": {},
+        "available": bool(_imodels),
+        "tags": ["tree", "interpretable", "regularized"],
+    },
+    "rulefit_c": {
+        "name": "RuleFit Classifier (imodels)",
+        "factory": _rulefit_classifier,
+        "default_params": {},
+        "available": bool(_imodels),
+        "tags": ["rule", "interpretable", "linear"],
+    },
+    "skoperules_c": {
+        "name": "SkopeRules Classifier (imodels)",
+        "factory": _skoperules_classifier,
+        "default_params": {},
+        "available": bool(_imodels),
+        "tags": ["rule", "interpretable", "sparse"],
+    },
+    "greedytree_c": {
+        "name": "Greedy Tree Classifier (imodels)",
+        "factory": _greedytree_classifier,
+        "default_params": {"max_depth": 5},
+        "available": bool(_imodels),
+        "tags": ["tree", "interpretable"],
     },
 }
 

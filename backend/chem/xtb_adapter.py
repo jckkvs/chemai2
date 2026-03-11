@@ -149,15 +149,41 @@ class XTBAdapter(BaseChemAdapter):
 
     def is_available(self) -> bool:
         """
-        xtb バイナリが PATH に存在し、かつ RDKit が利用可能かを確認する。
+        xtb バイナリが PATH に存在するか、または tools/ 配下に同梱バイナリがあるかを確認する。
+        同梱バイナリが見つかった場合は自動的に PATH へ追加する。
         """
-        if shutil.which("xtb") is None:
-            return False
-        try:
-            from rdkit import Chem  # noqa: F401
-            return True
-        except ImportError:
-            return False
+        import pathlib
+
+        # まず PATH を検索
+        if shutil.which("xtb") is not None:
+            try:
+                from rdkit import Chem  # noqa: F401
+                return True
+            except ImportError:
+                return False
+
+        # PATH にない場合は tools/ 配下の同梱バイナリを探す
+        # このファイル: backend/chem/xtb_adapter.py → プロジェクトルート: ../../
+        here = pathlib.Path(__file__).resolve().parent  # backend/chem/
+        project_root = here.parent.parent               # chemai2/
+        candidates = [
+            project_root / "tools" / "xtb-6.7.1" / "bin",
+            project_root / "tools" / "xtb" / "bin",
+        ]
+        for bin_dir in candidates:
+            xtb_exe = bin_dir / ("xtb.exe" if os.name == "nt" else "xtb")
+            if xtb_exe.exists():
+                # PATH へ自動追加（このプロセス内）
+                os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+                logger.info("XTB バイナリを自動検出して PATH に追加しました: %s", bin_dir)
+                try:
+                    from rdkit import Chem  # noqa: F401
+                    return True
+                except ImportError:
+                    return False
+
+        return False
+
 
     def compute(
         self,

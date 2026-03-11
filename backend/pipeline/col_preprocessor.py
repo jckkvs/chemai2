@@ -98,6 +98,7 @@ class ColPreprocessConfig:
 
     # バイナリ列
     binary_encoder: str = "ordinal"
+    binary_imputer: str = "most_frequent"  # バイナリ列の欠損補間: "most_frequent" | "constant" | "knn"
 
     # カテゴリ欠損処理
     categorical_imputer: str = "most_frequent"
@@ -474,8 +475,17 @@ class ColPreprocessor(BaseEstimator, TransformerMixin):
                 unknown_value=-1,
             )
 
+        # binary_imputer を cfg から取得
+        bi_strategy = cfg.binary_imputer
+        if bi_strategy == "knn":
+            binary_imputer_obj: Any = KNNImputer(n_neighbors=5)
+        elif bi_strategy == "constant":
+            binary_imputer_obj = SimpleImputer(strategy="constant", fill_value=cfg.constant_fill_value)
+        else:
+            binary_imputer_obj = SimpleImputer(strategy="most_frequent")
+
         steps: list[tuple] = [
-            ("impute", SimpleImputer(strategy="most_frequent")),
+            ("impute", binary_imputer_obj),
         ]
         if encoder != "passthrough":
             steps.append(("encode", encoder))

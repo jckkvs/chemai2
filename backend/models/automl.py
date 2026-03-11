@@ -83,6 +83,7 @@ class AutoMLEngine:
         timeout_seconds: int = 600,
         progress_callback: Callable[[int, int, str], None] | None = None,
         selected_descriptors: list[str] | None = None,
+        monotonic_constraints_dict: dict[str, int] | None = None,
     ) -> None:
         self.task = task
         self.cv_folds = cv_folds
@@ -94,6 +95,7 @@ class AutoMLEngine:
         self.timeout_seconds = timeout_seconds
         self.progress_callback = progress_callback or (lambda s, t, m: None)
         self.selected_descriptors = selected_descriptors
+        self.monotonic_constraints_dict = monotonic_constraints_dict or {}
 
     def run(
         self,
@@ -189,6 +191,22 @@ class AutoMLEngine:
             )
             try:
                 model_inst = get_model(mkey, task=task, **self.model_params.get(mkey, {}))
+                # 単調性制約を適用（ネイティブ対応 or ソフト制約ラッパー）
+                if self.monotonic_constraints_dict:
+                    try:
+                        from backend.pipeline.column_selector import ColumnMeta
+                        from backend.pipeline.pipeline_builder import apply_monotonic_constraints
+                        # feature_namesのマッピング（X列名 → monotonic値 → ColumnMeta）
+                        _col_meta = {
+                            col: ColumnMeta(monotonic=self.monotonic_constraints_dict.get(col, 0))
+                            for col in X_train.columns
+                        }
+                        model_inst = apply_monotonic_constraints(
+                            model_inst, _col_meta,
+                            feature_names=list(X_train.columns)
+                        )
+                    except Exception as _e:
+                        logger.warning(f"単調性制約適用をスキップ ({mkey}): {_e}")
                 pipeline_base = build_full_pipeline(
                     detection_result, model_inst,
                     target_col=target_col,

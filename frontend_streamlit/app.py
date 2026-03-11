@@ -295,353 +295,359 @@ else:
     with tab1:
         # セッションが解析済みなら再解析ボタンも表示
         if has_result:
-            st.info("🔄 設定を変えて再解析したい場合は、目的変数や詳細設定を変更してから「② 解析実行」タブへ進んでください。")
+            st.info("🔄 設定を変えて再解析したい場合は、各タブで設定を変更してから「② 解析実行」タブへ進んでください。")
 
-        # ── ファイルアップロードゾーン ────────────────────────────
         from backend.data.loader import load_from_bytes, get_supported_extensions
         from backend.data.type_detector import TypeDetector
 
-        ext_list = get_supported_extensions()
-        uploaded = st.file_uploader(
-            "📂 分析したいデータファイルをドロップ",
-            type=[e.lstrip(".") for e in ext_list],
-            help=f"対応形式: {', '.join(ext_list)}",
-            label_visibility="visible",
-        )
-    
-        # サンプルデータボタン（ファイルがない場合のみ表示）
-        if uploaded is None and st.session_state["df"] is None:
-            st.markdown(
-                '<div style="text-align:center; color:#555; margin:0.5rem 0;">または</div>',
-                unsafe_allow_html=True,
-            )
-            def _make_sample(name: str, df: pd.DataFrame, set_smiles: bool = True) -> None:
-                st.session_state["df"]               = df
-                st.session_state["file_name"]        = name
-                st.session_state["automl_result"]    = None
-                st.session_state["pipeline_result"]  = None
-                st.session_state["precalc_done"]     = False
-                st.session_state["smiles_col"]       = None
-                detector = TypeDetector()
-                dr = detector.detect(df)
-                st.session_state["detection_result"] = dr
-                if set_smiles and dr.smiles_columns:
-                    st.session_state["smiles_col"] = dr.smiles_columns[0]
-                elif set_smiles:
-                    for col in df.columns:
-                        if col.lower() == "smiles":
-                            st.session_state["smiles_col"] = col
-                            break
-                st.session_state["target_col"] = df.columns[-1]
-    
-            with st.expander("🔧 デバッグ用サンプルデータ", expanded=False):
-                st.caption("開発・テスト用。通常はファイルをアップロードしてください。")
-                use_smiles = st.checkbox("SMILES（化合物構造）列を含める", value=False, key="demo_smiles")
-                c_r, c_c = st.columns(2)
-                
-                # ダミーSMILESリスト
-                _DUMMY_SMILES = ["C", "CC", "CCC", "CCO", "CCN", "c1ccccc1", "c1ccccc1O", "CC(=O)O", "CC(C)C", "C1CCCCC1", "c1ccncc1", "c1ncncn1", "C1COCCO1"]
-                
-                with c_r:
-                    if st.button("🧪 回帰サンプル", use_container_width=True, key="demo_reg"):
-                        np.random.seed(42); n = 200
-                        if use_smiles:
-                            base_df = pd.DataFrame({
-                                "SMILES": np.random.choice(_DUMMY_SMILES, n),
-                                "solubility_logS": np.random.randn(n) * 2 - 2,
-                            })
-                        else:
-                            base_df = pd.DataFrame({
-                                "temperature": np.random.uniform(20, 80, n),
-                                "pressure":    np.random.exponential(5, n),
-                                "catalyst":    np.random.choice(["A型","B型","C型"], n),
-                                "time_h":      np.random.uniform(1, 24, n),
-                                "is_active":   np.random.randint(0, 2, n),
-                                "yield":       np.random.randn(n) * 10 + 75,
-                            })
-                        _make_sample("sample_regression.csv", base_df, set_smiles=use_smiles)
-                        st.session_state["task"] = "regression"
-                        st.session_state["adv_models"] = ["lr", "rf"]  # デバッグ用デフォルトモデル固定
-                        st.rerun()
-                with c_c:
-                    if st.button("🏷️ 分類サンプル", use_container_width=True, key="demo_cls"):
-                        np.random.seed(42); n = 200
-                        if use_smiles:
-                            base_df = pd.DataFrame({
-                                "SMILES": np.random.choice(_DUMMY_SMILES, n),
-                                "is_toxic": np.random.randint(0, 2, n),
-                            })
-                        else:
-                            base_df = pd.DataFrame({
-                                "feature_1": np.random.randn(n),
-                                "feature_2": np.random.randn(n),
-                                "category":  np.random.choice(["低","中","高"], n),
-                                "numeric":   np.random.randint(1, 100, n),
-                                "label":     np.random.randint(0, 2, n),
-                            })
-                        _make_sample("sample_classification.csv", base_df, set_smiles=use_smiles)
-                        st.session_state["task"] = "classification"
-                        st.session_state["adv_models"] = ["logreg", "rf"]  # デバッグ用デフォルトモデル固定
-                        st.rerun()
-    
-            with st.expander("📚 オープンベンチマークデータをロード"):
-                st.markdown("ケモインフォマティクスの評価でよく使われる公開データセットです。")
-                
-                c_e, c_f, c_l = st.columns(3)
-                with c_e:
-                    st.markdown("**ESOL** (水溶解度)")
-                    st.caption("1,128化合物の実測logS。非常に一般的。")
-                    if st.button("📥 ロード", key="load_esol", use_container_width=True):
-                        with st.spinner("ダウンロード中..."):
-                            try:
-                                from backend.data.benchmark_datasets import load_benchmark
-                                df_bench = load_benchmark("esol")
-                                _make_sample("benchmark_esol.csv", df_bench)
-                                st.session_state["target_col"] = "measured log solubility in mols per litre"
-                                st.rerun()
-                            except Exception as e:
-                                st.error(str(e))
-                with c_f:
-                    st.markdown("**FreeSolv** (水和自由エネ)")
-                    st.caption("642化合物の水和自由エネルギー。")
-                    if st.button("📥 ロード", key="load_free", use_container_width=True):
-                        with st.spinner("ダウンロード中..."):
-                            try:
-                                from backend.data.benchmark_datasets import load_benchmark
-                                df_bench = load_benchmark("freesolv")
-                                _make_sample("benchmark_freesolv.csv", df_bench)
-                                st.session_state["target_col"] = "expt"
-                                st.rerun()
-                            except Exception as e:
-                                st.error(str(e))
-                with c_l:
-                    st.markdown("**Lipophilicity** (脂溶性)")
-                    st.caption("AstraZeneca提供のlogDデータ。4,200件。")
-                    if st.button("📥 ロード", key="load_lipo", use_container_width=True):
-                        with st.spinner("ダウンロード中..."):
-                            try:
-                                from backend.data.benchmark_datasets import load_benchmark
-                                df_bench = load_benchmark("lipophilicity")
-                                _make_sample("benchmark_lipophilicity.csv", df_bench)
-                                st.session_state["target_col"] = "exp"
-                                st.rerun()
-                            except Exception as e:
-                                st.error(str(e))
-    
-        # ── ファイル読み込み処理 ─────────────────────────────────
-        if uploaded is not None:
-            try:
-                with st.spinner("読み込み中..."):
-                    raw = uploaded.read()
-                    df_new = load_from_bytes(raw, uploaded.name)
-                st.success(f"✅ `{uploaded.name}` 読み込み完了")
-                # セッション更新
-                st.session_state["df"]             = df_new
-                st.session_state["file_name"]      = uploaded.name
-                st.session_state["automl_result"]  = None
-                st.session_state["pipeline_result"] = None
-                st.session_state["smiles_col"]     = None  # 必ずリセット
-                detector = TypeDetector()
-                dr = detector.detect(df_new)
-                st.session_state["detection_result"] = dr
-                # SMILES列を自動検出（TypeDetectorが検出した場合）
-                if dr.smiles_columns:
-                    st.session_state["smiles_col"] = dr.smiles_columns[0]
-                # TypeDetectorが検出できなくても列名が'smiles'なら設定
-                else:
-                    for col in df_new.columns:
-                        if col.lower() == "smiles":
-                            st.session_state["smiles_col"] = col
-                            break
-                st.session_state["target_col"] = df_new.columns[-1]  # 初期値
-            except Exception as e:
-                st.error(f"❌ 読み込みエラー: {e}")
-    
-        # ── データがある場合: 設定 + 実行エリア ──────────────────
-        df = st.session_state.get("df")
-        if df is not None:
-            st.markdown("---")
-    
-            # データ概要 (コンパクト)
-            c1, c2, c3, c4 = st.columns(4)
-            for col, val, lbl in [
-                (c1, f"{df.shape[0]:,}", "行数"),
-                (c2, str(df.shape[1]), "列数"),
-                (c3, f"{df.isna().mean().mean():.1%}", "欠損率"),
-                (c4, str(df.select_dtypes(include='number').shape[1]), "数値列数"),
-            ]:
-                with col:
-                    st.markdown(
-                        f'<div class="metric-card">'
-                        f'<div class="metric-value" style="font-size:1.4rem;">{val}</div>'
-                        f'<div class="metric-label">{lbl}</div></div>',
-                        unsafe_allow_html=True,
-                    )
-    
-            st.markdown("")
-    
-            # ── 目的変数（必須・常に表示） ──────────────────────
-            col_target, col_task = st.columns([3, 2])
-            with col_target:
-                cur_target = st.session_state.get("target_col") or df.columns[-1]
-                cur_idx = df.columns.tolist().index(cur_target) if cur_target in df.columns else -1
-                target = st.selectbox(
-                    "🎯 目的変数（予測したい列）",
-                    options=df.columns.tolist(),
-                    index=cur_idx,
-                    key="home_target",
-                )
-                # 目的変数が変更されたら記述子の事前計算（相関用）をリセットする
-                if st.session_state.get("target_col_prev") != target:
-                    st.session_state["precalc_done"] = False
-                    st.session_state["target_col_prev"] = target
-                st.session_state["target_col"] = target
-                
-                # 目的変数に基づく推奨説明変数のヒント表示
-                rec = get_target_recommendation_by_name(target)
-                if rec:
-                    st.info(f"💡 **推奨される説明変数**: {rec.summary} \n\n" + 
-                            ", ".join([f"`{d.name}` ({d.library})" for d in rec.descriptors]))
-            with col_task:
-                task_opt = st.selectbox(
-                    "📋 タスク種別",
-                    ["auto（自動）", "regression（回帰）", "classification（分類）"],
-                    key="home_task",
-                )
-                st.session_state["task"] = task_opt.split("（")[0]
-    
-            # ── 詳細設定（折り畳み：初心者には見えない） ────────
-            with st.expander("⚙️ 詳細設定（任意）", expanded=False):
-                c_top1, c_top2 = st.columns(2)
-                with c_top1:
-                    st.markdown("**ML構成設定**")
-                    cv_folds   = st.slider("CV分割数", 2, 10, 5, key="adv_cv")
-                    timeout    = st.slider("タイムアウト(秒)", 30, 3600, 300, key="adv_to")
-                    
-                with c_top2:
-                    st.markdown("**前処理・フェーズ設定**")
-                    c_sc, c_sm = st.columns(2)
-                    with c_sc:
-                        scaler = st.selectbox("スケーラー", ["auto","standard","robust","minmax","none"], key="adv_sc")
-                    with c_sm:
-                        smiles_options = ["なし"] + df.columns.tolist()
-                        smiles_default_idx = 0
-                        for i, col in enumerate(df.columns):
-                            if col.lower() == "smiles":
-                                smiles_default_idx = i + 1
-                                break
-                        smiles_raw = st.selectbox("SMILES列", smiles_options, index=smiles_default_idx, key="adv_sm")
-                        new_smiles_col = None if smiles_raw == "なし" else smiles_raw
-                        # SMILES列が変わったら事前計算をリセット
-                        if st.session_state.get("smiles_col") != new_smiles_col:
-                            st.session_state["precalc_done"] = False
-                            st.session_state["precalc_smiles_df"] = None
-                        st.session_state["smiles_col"] = new_smiles_col
-                    
-                    c_p1, c_p2, c_p3, c_p4 = st.columns(4)
-                    with c_p1: do_eda  = st.checkbox("EDA", value=True, key="adv_eda")
-                    with c_p2: do_prep = st.checkbox("前処理", value=True, key="adv_prep")
-                    with c_p3: do_eval = st.checkbox("評価", value=True, key="adv_eval")
-                    with c_p4: do_pca  = st.checkbox("PCA", value=True, key="adv_pca")
-                    do_shap = st.checkbox("SHAP解析", value=True, key="adv_shap")
-    
-                st.markdown("---")
-                st.markdown("**🤖 使用するモデル（クリックで個別選択）**")
-                
-                from backend.models.factory import list_models, get_default_automl_models, get_model_registry
-                import inspect
-                _tmp_task = st.session_state.get("task", "auto")
-                if _tmp_task == "auto":
-                    _tmp_task = "regression" if pd.api.types.is_float_dtype(df[st.session_state.get("target_col")]) else "classification"
-                
-                available_models = list_models(task=_tmp_task, available_only=True)
-                default_models = get_default_automl_models(task=_tmp_task)
-    
-                def _get_category(mkey, mname):
-                    k = mkey.lower() + mname.lower()
-                    if any(x in k for x in ["linear", "ridge", "lasso", "elastic", "logistic", "ard", "huber", "theilsen", "ransac", "pls", "sgd"]): return "線形系"
-                    if any(x in k for x in ["svr", "svc", "support", "rbf", "kernel", "gaussian"]): return "カーネル系"
-                    if any(x in k for x in ["tree", "forest", "boost", "gbm", "gradient"]): return "決定木系"
-                    return "その他"
-    
-                categories = {"線形系": [], "カーネル系": [], "決定木系": [], "その他": []}
-                for m in available_models:
-                    cat = _get_category(m["key"], m["name"])
-                    categories[cat].append(m)
-    
-                selected_models = st.session_state.get("adv_models", default_models)
-                new_selection = []
-                
-                sel_tabs = st.tabs(list(categories.keys()))
-                for cat_name, t_body in zip(categories.keys(), sel_tabs):
-                    with t_body:
-                        cat_cols = st.columns(4)
-                        for idx, m in enumerate(categories[cat_name]):
-                            with cat_cols[idx % 4]:
-                                is_checked = m["key"] in selected_models
-                                if not m["available"]:
-                                    st.checkbox(f"{m['name']} (未実装)", value=False, disabled=True, key=f"c_{m['key']}")
-                                else:
-                                    if st.checkbox(m["name"], value=is_checked, key=f"c_{m['key']}"):
-                                        new_selection.append(m["key"])
-                
-                st.session_state["adv_models"] = new_selection
-                selected_models = new_selection
-    
-                st.markdown("---")
-                st.markdown("**⚙️ モデル詳細設定（パラメータチューニング）**")
-                _registry = get_model_registry(_tmp_task)
-                st.session_state["model_params"] = {}
-                
-                if selected_models:
-                    model_tabs = st.tabs([_registry.get(k, {}).get("name", k) for k in selected_models])
-                    for mkey, m_tab in zip(selected_models, model_tabs):
-                        _entry = _registry.get(mkey, {})
-                        _mclass = _entry.get("class") or _entry.get("factory")
-                        if _mclass:
-                            with m_tab:
-                                _target = _mclass.__init__ if inspect.isclass(_mclass) else _mclass
-                                try:
-                                    _sig = inspect.signature(_target)
-                                    _dp = _entry.get("default_params", {})
-                                    _m_p_vals = {}
-                                    _m_cols = st.columns(3)
-                                    _m_idx = 0
-                                    for pname, pinfo in _sig.parameters.items():
-                                        if pname in ("self", "kwargs", "args"): continue
-                                        dval = _dp.get(pname, pinfo.default if pinfo.default is not inspect.Parameter.empty else None)
-                                        anno = pinfo.annotation
-                                        k_p = f"app_mp_{mkey}_{pname}"
-                                        
-                                        with _m_cols[_m_idx % 3]:
-                                            if isinstance(dval, bool) or anno is bool:
-                                                _m_p_vals[pname] = st.checkbox(pname, value=bool(dval) if dval is not None else False, key=k_p)
-                                            elif isinstance(dval, int) or anno is int:
-                                                iv = int(dval) if dval is not None and not isinstance(dval, str) else 0
-                                                _m_p_vals[pname] = st.number_input(pname, value=iv, key=k_p)
-                                            elif isinstance(dval, float) or anno is float:
-                                                fv = float(dval) if dval is not None else 0.0
-                                                _m_p_vals[pname] = st.number_input(pname, value=fv, format="%.4f", key=k_p)
-                                            elif dval is None:
-                                                raw = st.text_input(pname, value="", key=k_p, help="空白=None")
-                                                _m_p_vals[pname] = None if raw.strip() == "" else raw.strip()
-                                            else:
-                                                _m_p_vals[pname] = st.text_input(pname, value=str(dval), key=k_p)
-                                        _m_idx += 1
-                                    st.session_state["model_params"][mkey] = _m_p_vals
-                                except Exception:
-                                    st.warning(f"引数を取得できません。")
-    
-                selected_desc = st.session_state.get("adv_desc", [])
+        # ── データ設定 5サブタブ ──────────────────────────────────────
+        ds_tab1, ds_tab2, ds_tab3, ds_tab4, ds_tab5 = st.tabs([
+            "📂 データ読込",
+            "🏷️ 列の役割設定",
+            "⚗️ SMILES特徴量設計",
+            "📊 特徴量EDA",
+            "⚙️ パイプライン設計",
+        ])
 
-            # ── SMILES 記述子設定（SMILES列指定時のみ表示） ─────────────────
-            if st.session_state.get("smiles_col"):
-                # --- 記述子事前計算 (相関分析用) ---
+        # ══════════════════════════════════════════════════════════════
+        # サブタブ1: データ読込
+        # ══════════════════════════════════════════════════════════════
+        with ds_tab1:
+            ext_list = get_supported_extensions()
+            uploaded = st.file_uploader(
+                "📂 分析したいデータファイルをドロップ",
+                type=[e.lstrip(".") for e in ext_list],
+                help=f"対応形式: {', '.join(ext_list)}",
+                label_visibility="visible",
+            )
+
+            if uploaded is None and st.session_state["df"] is None:
+                st.markdown(
+                    '<div style="text-align:center; color:#555; margin:0.5rem 0;">または</div>',
+                    unsafe_allow_html=True,
+                )
+                def _make_sample(name: str, df: pd.DataFrame, set_smiles: bool = True) -> None:
+                    st.session_state["df"]               = df
+                    st.session_state["file_name"]        = name
+                    st.session_state["automl_result"]    = None
+                    st.session_state["pipeline_result"]  = None
+                    st.session_state["precalc_done"]     = False
+                    st.session_state["smiles_col"]       = None
+                    detector = TypeDetector()
+                    dr = detector.detect(df)
+                    st.session_state["detection_result"] = dr
+                    if set_smiles and dr.smiles_columns:
+                        st.session_state["smiles_col"] = dr.smiles_columns[0]
+                    elif set_smiles:
+                        for col in df.columns:
+                            if col.lower() == "smiles":
+                                st.session_state["smiles_col"] = col
+                                break
+                    st.session_state["target_col"] = df.columns[-1]
+
+                with st.expander("🔧 デバッグ用サンプルデータ", expanded=False):
+                    st.caption("開発・テスト用。通常はファイルをアップロードしてください。")
+                    use_smiles = st.checkbox("SMILES（化合物構造）列を含める", value=False, key="demo_smiles")
+                    c_r, c_c = st.columns(2)
+                    _DUMMY_SMILES = ["C", "CC", "CCC", "CCO", "CCN", "c1ccccc1", "c1ccccc1O", "CC(=O)O", "CC(C)C", "C1CCCCC1", "c1ccncc1", "c1ncncn1", "C1COCCO1"]
+                    with c_r:
+                        if st.button("🧪 回帰サンプル", use_container_width=True, key="demo_reg"):
+                            np.random.seed(42); n = 200
+                            if use_smiles:
+                                base_df = pd.DataFrame({"SMILES": np.random.choice(_DUMMY_SMILES, n), "solubility_logS": np.random.randn(n) * 2 - 2})
+                            else:
+                                base_df = pd.DataFrame({
+                                    "temperature": np.random.uniform(20, 80, n),
+                                    "pressure":    np.random.exponential(5, n),
+                                    "catalyst":    np.random.choice(["A型","B型","C型"], n),
+                                    "time_h":      np.random.uniform(1, 24, n),
+                                    "is_active":   np.random.randint(0, 2, n),
+                                    "yield":       np.random.randn(n) * 10 + 75,
+                                })
+                            _make_sample("sample_regression.csv", base_df, set_smiles=use_smiles)
+                            st.session_state["task"] = "regression"
+                            st.session_state["adv_models"] = ["lr", "rf"]
+                            st.rerun()
+                    with c_c:
+                        if st.button("🏷️ 分類サンプル", use_container_width=True, key="demo_cls"):
+                            np.random.seed(42); n = 200
+                            if use_smiles:
+                                base_df = pd.DataFrame({"SMILES": np.random.choice(_DUMMY_SMILES, n), "is_toxic": np.random.randint(0, 2, n)})
+                            else:
+                                base_df = pd.DataFrame({
+                                    "feature_1": np.random.randn(n),
+                                    "feature_2": np.random.randn(n),
+                                    "category":  np.random.choice(["低","中","高"], n),
+                                    "numeric":   np.random.randint(1, 100, n),
+                                    "label":     np.random.randint(0, 2, n),
+                                })
+                            _make_sample("sample_classification.csv", base_df, set_smiles=use_smiles)
+                            st.session_state["task"] = "classification"
+                            st.session_state["adv_models"] = ["logreg", "rf"]
+                            st.rerun()
+
+                with st.expander("📚 オープンベンチマークデータをロード"):
+                    st.markdown("ケモインフォマティクスの評価でよく使われる公開データセットです。")
+                    c_e, c_f, c_l = st.columns(3)
+                    with c_e:
+                        st.markdown("**ESOL** (水溶解度)")
+                        st.caption("1,128化合物の実測logS。")
+                        if st.button("📥 ロード", key="load_esol", use_container_width=True):
+                            with st.spinner("ダウンロード中..."):
+                                try:
+                                    from backend.data.benchmark_datasets import load_benchmark
+                                    df_bench = load_benchmark("esol")
+                                    _make_sample("benchmark_esol.csv", df_bench)
+                                    st.session_state["target_col"] = "measured log solubility in mols per litre"
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(str(e))
+                    with c_f:
+                        st.markdown("**FreeSolv** (水和自由エネ)")
+                        st.caption("642化合物の水和自由エネルギー。")
+                        if st.button("📥 ロード", key="load_free", use_container_width=True):
+                            with st.spinner("ダウンロード中..."):
+                                try:
+                                    from backend.data.benchmark_datasets import load_benchmark
+                                    df_bench = load_benchmark("freesolv")
+                                    _make_sample("benchmark_freesolv.csv", df_bench)
+                                    st.session_state["target_col"] = "expt"
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(str(e))
+                    with c_l:
+                        st.markdown("**Lipophilicity** (脂溶性)")
+                        st.caption("AstraZeneca提供のlogDデータ。4,200件。")
+                        if st.button("📥 ロード", key="load_lipo", use_container_width=True):
+                            with st.spinner("ダウンロード中..."):
+                                try:
+                                    from backend.data.benchmark_datasets import load_benchmark
+                                    df_bench = load_benchmark("lipophilicity")
+                                    _make_sample("benchmark_lipophilicity.csv", df_bench)
+                                    st.session_state["target_col"] = "exp"
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(str(e))
+
+            # ── ファイル読み込み処理 ──────────────────────────────────
+            if uploaded is not None:
+                try:
+                    with st.spinner("読み込み中..."):
+                        raw = uploaded.read()
+                        df_new = load_from_bytes(raw, uploaded.name)
+                    st.success(f"✅ `{uploaded.name}` 読み込み完了")
+                    st.session_state["df"]             = df_new
+                    st.session_state["file_name"]      = uploaded.name
+                    st.session_state["automl_result"]  = None
+                    st.session_state["pipeline_result"] = None
+                    st.session_state["smiles_col"]     = None
+                    detector = TypeDetector()
+                    dr = detector.detect(df_new)
+                    st.session_state["detection_result"] = dr
+                    if dr.smiles_columns:
+                        st.session_state["smiles_col"] = dr.smiles_columns[0]
+                    else:
+                        for col in df_new.columns:
+                            if col.lower() == "smiles":
+                                st.session_state["smiles_col"] = col
+                                break
+                    st.session_state["target_col"] = df_new.columns[-1]
+                except Exception as e:
+                    st.error(f"❌ 読み込みエラー: {e}")
+
+            # 読み込み完了後のメッセージ
+            df = st.session_state.get("df")
+            if df is not None:
+                st.markdown("---")
+                fn = st.session_state.get("file_name", "")
+                c1, c2, c3, c4 = st.columns(4)
+                for col_w, val, lbl in [
+                    (c1, f"{df.shape[0]:,}", "行数"),
+                    (c2, str(df.shape[1]), "列数"),
+                    (c3, f"{df.isna().mean().mean():.1%}", "欠損率"),
+                    (c4, str(df.select_dtypes(include='number').shape[1]), "数値列数"),
+                ]:
+                    with col_w:
+                        st.markdown(
+                            f'<div class="metric-card">'
+                            f'<div class="metric-value" style="font-size:1.4rem;">{val}</div>'
+                            f'<div class="metric-label">{lbl}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                st.success(f"✅ `{fn}` が読み込まれています。次は「🏷️ 列の役割設定」タブへ進んでください。")
+
+        # ══════════════════════════════════════════════════════════════
+        # サブタブ2: 列の役割設定
+        # ══════════════════════════════════════════════════════════════
+        with ds_tab2:
+            df = st.session_state.get("df")
+            if df is None:
+                st.warning("⚠️ まず「📂 データ読込」タブでデータを読み込んでください。")
+            else:
+                all_cols = df.columns.tolist()
+                none_opt = ["（なし）"]
+
+                st.markdown("### 🏷️ 各列の役割を設定してください")
+                st.caption("🎯 目的変数と説明変数は必須です。それ以外は任意です。")
+
+                col_a, col_b = st.columns(2)
+
+                with col_a:
+                    # 目的変数（必須）
+                    cur_target = st.session_state.get("target_col") or all_cols[-1]
+                    cur_idx = all_cols.index(cur_target) if cur_target in all_cols else len(all_cols) - 1
+                    target = st.selectbox(
+                        "🎯 目的変数（必須・予測したい列）",
+                        options=all_cols,
+                        index=cur_idx,
+                        key="home_target",
+                        help="機械学習で予測する列を選んでください",
+                    )
+                    if st.session_state.get("target_col_prev") != target:
+                        st.session_state["precalc_done"] = False
+                        st.session_state["target_col_prev"] = target
+                    st.session_state["target_col"] = target
+
+                    # 目的変数の推奨ヒント
+                    from backend.chem.recommender import get_target_recommendation_by_name
+                    rec = get_target_recommendation_by_name(target)
+                    if rec:
+                        st.info(f"💡 **推奨される記述子**: {rec.summary}")
+
+                    # タスク種別
+                    task_opt = st.selectbox(
+                        "📋 タスク種別",
+                        ["auto（自動）", "regression（回帰）", "classification（分類）"],
+                        key="home_task",
+                    )
+                    st.session_state["task"] = task_opt.split("（")[0]
+
+                    # SMILES列（任意）
+                    smiles_options = none_opt + all_cols
+                    cur_smiles = st.session_state.get("smiles_col")
+                    smiles_idx = (smiles_options.index(cur_smiles) if cur_smiles in smiles_options else
+                                  next((i+1 for i, c in enumerate(all_cols) if c.lower()=="smiles"), 0))
+                    smiles_raw = st.selectbox(
+                        "🧬 SMILES列（任意・化合物構造列）",
+                        smiles_options,
+                        index=smiles_idx,
+                        key="adv_sm",
+                        help="SMILES形式の化合物構造が含まれる列。指定すると化学記述子を自動計算します。",
+                    )
+                    new_smiles_col = None if smiles_raw == "（なし）" else smiles_raw
+                    if st.session_state.get("smiles_col") != new_smiles_col:
+                        st.session_state["precalc_done"] = False
+                        st.session_state["precalc_smiles_df"] = None
+                    st.session_state["smiles_col"] = new_smiles_col
+
+                with col_b:
+                    excl_opts = [c for c in all_cols if c != target and c != new_smiles_col]
+
+                    # 除外する列（任意）
+                    cur_excl = [c for c in st.session_state.get("col_role_exclude", []) if c in excl_opts]
+                    col_role_exclude = st.multiselect(
+                        "🚫 解析から除外する列（任意）",
+                        options=excl_opts,
+                        default=cur_excl,
+                        key="col_role_exclude",
+                        help="目的変数・SMILES以外で解析に使わない列（ID列・メモ列等）",
+                    )
+
+                    # グループ列（GroupKFold用）
+                    group_opts = none_opt + [c for c in excl_opts if c not in col_role_exclude]
+                    cur_group = st.session_state.get("col_role_group", "（なし）")
+                    if cur_group not in group_opts:
+                        cur_group = "（なし）"
+                    col_role_group = st.selectbox(
+                        "👥 グループ列（任意・GroupKFold用）",
+                        options=group_opts,
+                        index=group_opts.index(cur_group),
+                        key="col_role_group_sel",
+                        help="GroupKFold等でリーク防止に使うグループID列（例:バッチID・実験ロット）",
+                    )
+                    st.session_state["col_role_group"] = None if col_role_group == "（なし）" else col_role_group
+
+                    # 時系列列（任意）
+                    time_opts = none_opt + [c for c in excl_opts if c not in col_role_exclude]
+                    cur_time = st.session_state.get("col_role_time", "（なし）")
+                    if cur_time not in time_opts:
+                        cur_time = "（なし）"
+                    col_role_time = st.selectbox(
+                        "📅 時系列列（任意・時間的順序）",
+                        options=time_opts,
+                        index=time_opts.index(cur_time),
+                        key="col_role_time_sel",
+                        help="時間的順序を持つ列（例: 日付・ステップ番号）。TimeSeriesSplit等に使用します。",
+                    )
+                    st.session_state["col_role_time"] = None if col_role_time == "（なし）" else col_role_time
+
+                    # sample_weight列（任意）
+                    weight_opts = none_opt + [c for c in all_cols if c not in [target, new_smiles_col] + col_role_exclude]
+                    cur_weight = st.session_state.get("col_role_weight", "（なし）")
+                    if cur_weight not in weight_opts:
+                        cur_weight = "（なし）"
+                    col_role_weight = st.selectbox(
+                        "⚖️ Sample weight列（任意・サンプル重み）",
+                        options=weight_opts,
+                        index=weight_opts.index(cur_weight),
+                        key="col_role_weight_sel",
+                        help="各サンプルの重みを示す列。信頼度の高いサンプルを重視する場合に指定します。",
+                    )
+                    st.session_state["col_role_weight"] = None if col_role_weight == "（なし）" else col_role_weight
+
+                    # Info列（解析には使わないがレポートに残す）
+                    info_opts = [c for c in all_cols if c not in [target, new_smiles_col] + col_role_exclude]
+                    cur_info = [c for c in st.session_state.get("col_role_info", []) if c in info_opts]
+                    col_role_info = st.multiselect(
+                        "ℹ️ 情報管理列（任意・Info列）",
+                        options=info_opts,
+                        default=cur_info,
+                        key="col_role_info",
+                        help="解析には使わないが結果レポートに残す列（例: 化合物名・実験者名）",
+                    )
+
+                # 列役割サマリー
+                st.markdown("---")
+                st.markdown("#### 📋 現在の列役割サマリー")
+                role_rows = []
+                for c in all_cols:
+                    if c == target:
+                        role = "🎯 目的変数"
+                    elif c == new_smiles_col:
+                        role = "🧬 SMILES"
+                    elif c in col_role_exclude:
+                        role = "🚫 除外"
+                    elif c == st.session_state.get("col_role_group"):
+                        role = "👥 グループ"
+                    elif c == st.session_state.get("col_role_time"):
+                        role = "📅 時系列"
+                    elif c == st.session_state.get("col_role_weight"):
+                        role = "⚖️ weight"
+                    elif c in col_role_info:
+                        role = "ℹ️ Info"
+                    else:
+                        role = "✅ 説明変数"
+                    role_rows.append({"列名": c, "役割": role})
+                st.dataframe(pd.DataFrame(role_rows), use_container_width=True, hide_index=True, height=min(400, 40 + len(role_rows) * 35))
+
+        # ══════════════════════════════════════════════════════════════
+        # サブタブ4: 特徴量EDA
+        # ══════════════════════════════════════════════════════════════
+        with ds_tab3:
+            df = st.session_state.get("df")
+            if df is None:
+                st.warning("⚠️ まず「📂 データ読込」タブでデータを読み込んでください。")
+            elif not st.session_state.get("smiles_col"):
+                st.info("🧬 SMILES列が設定されていません。「🏷️ 列の役割設定」タブでSMILES列を指定してください。")
+            else:
+                smiles_col_sf = st.session_state["smiles_col"]
+
+                # 記述子事前計算
                 if not st.session_state.get("precalc_done", False):
                     from backend.chem.rdkit_adapter import RDKitAdapter
-                    from backend.chem.recommender import get_target_recommendation_by_name
+                    from backend.chem.recommender import get_target_recommendation_by_name as _get_rec
 
-                    smiles_series = df[st.session_state["smiles_col"]]
+                    smiles_series = df[smiles_col_sf]
                     valid_mask = smiles_series.notna()
                     smiles_list = smiles_series[valid_mask].tolist()
                     valid_idx = smiles_series[valid_mask].index
@@ -653,8 +659,8 @@ else:
                     rdkit = RDKitAdapter(compute_fp=False)
                     df_result = pd.DataFrame(index=range(n))
 
-                    with st.spinner("1/3 目的変数「{}」の推奨記述子を計算中...".format(target_name or "?")):
-                        rec = get_target_recommendation_by_name(target_name)
+                    with st.spinner("1/3 推奨記述子を計算中..."):
+                        rec = _get_rec(target_name)
                         rec_names = [d.name for d in rec.descriptors] if rec else []
                         if rec_names and rdkit.is_available():
                             try:
@@ -663,7 +669,7 @@ else:
                             except Exception:
                                 pass
 
-                    with st.spinner("2/3 数え上げ系記述子（原子数、環数等）を計算中..."):
+                    with st.spinner("2/3 数え上げ系記述子を計算中..."):
                         try:
                             mdata = rdkit.get_descriptors_metadata()
                             count_names = [m.name for m in mdata if m.is_count and m.name not in df_result.columns]
@@ -676,7 +682,7 @@ else:
                     CURATED = ["MolWt","LogP","TPSA","HBA","HBD","RotBonds",
                                "RingCount","AromaticRingCount","FractionCSP3",
                                "HeavyAtoms","MolMR","HallKierAlpha"]
-                    with st.spinner("3/3 主要物理化学記述子（分子量・LogP・TPSA等）を計算中..."):
+                    with st.spinner("3/3 主要物理化学記述子を計算中..."):
                         curated = [c for c in CURATED if c not in df_result.columns]
                         if curated and rdkit.is_available():
                             try:
@@ -689,477 +695,314 @@ else:
                     df_result.index = valid_idx
                     df_result = df_result.apply(pd.to_numeric, errors="coerce").convert_dtypes()
                     n_descs = len(df_result.columns)
+
+                    if st.session_state.get("use_molai", False):
+                        with st.spinner("🤖 MolAI CNN Encoder + PCA 計算中..."):
+                            try:
+                                from backend.chem.molai_adapter import MolAIAdapter as _MolAIAdapterPre
+                                _molai_n_pre = st.session_state.get("molai_n_components", 32)
+                                _molai_adp = _MolAIAdapterPre(n_components=_molai_n_pre)
+                                if _molai_adp.is_available():
+                                    _molai_result = _molai_adp.compute(smiles_list)
+                                    if _molai_adp._pca is not None:
+                                        _evr = _molai_adp._pca.explained_variance_ratio_
+                                        st.session_state["molai_explained_variance"] = {
+                                            "ratio": _evr.tolist(), "cumulative": _evr.cumsum().tolist(), "n_components": _molai_n_pre,
+                                        }
+                                    else:
+                                        st.session_state["molai_explained_variance"] = None
+                            except Exception as _e_molai:
+                                st.session_state["molai_explained_variance"] = None
+
                     st.success(f"✅ 計算完了！ {n_descs} 個の記述子を抽出しました（{n}件）")
                     st.session_state["precalc_smiles_df"] = df_result
                     st.session_state["precalc_done"] = True
                     st.rerun()
-    
-                with st.expander("🧪 SMILES記述子設定（任意）", expanded=True):
-                    st.markdown("SMILES列から**化学記述子**を計算・選択します。選択した記述子が解析の特徴量として使用されます。")
 
-                    # MolAI PCA 次元数設定
-                    with st.expander("🤖 MolAI 設定（CNN+GRU オートエンコーダー記述子）", expanded=False):
-                        st.caption(
-                            "MolAI は SMILES を CNN Encoder で高次元潜在ベクトルに変換し、"
-                            "PCA で低次元化した記述子を生成します。\n\n"
-                            "📄 *Mahdizadeh & Eriksson, J. Chem. Inf. Model. 2025, "
-                            "DOI: 10.1021/acs.jcim.5c00491*"
+                # ── 計算エンジン選択（計算コスト明示） ──────────────────────────
+                st.markdown("### 🔧 使用する計算エンジン")
+                st.caption(
+                    "インストール済みのエンジンは自動的にONです。"
+                    "計算コストが高いエンジン（XTB等）は分子数が多い場合に時間がかかるため、明示的にONにする設計です。"
+                )
+
+                from backend.chem import RDKitAdapter as _RDKitAdp, XTBAdapter as _XTBAdp
+                from backend.chem import CosmoAdapter as _CosmoAdp, UniPkaAdapter as _UniPkaAdp
+                from backend.chem import GroupContribAdapter as _GCAAdp, MordredAdapter as _MordAdp
+                from backend.chem import MolAIAdapter as _MolAIAdp
+
+                # コスト凡例: 🟢=高速, 🟡=中程度, 🔴=重い（分子ごとに計算）
+                _lib_info = [
+                    {"key": "use_rdkit",   "name": "RDKit",        "icon": "🧪", "cost": "🟢", "cost_label": "高速",
+                     "dims": "~200種", "desc": "物理化学的記述子の標準。常にON推奨。",
+                     "adapter": _RDKitAdp(), "auto_on": True},
+                    {"key": "use_mordred",  "name": "Mordred",      "icon": "📐", "cost": "🟡", "cost_label": "中",
+                     "dims": "~1,800種", "desc": "網羅的記述子。次元数が多いため特徴選択と一緒に使う。",
+                     "adapter": _MordAdp(selected_only=True), "auto_on": False},
+                    {"key": "use_molai",    "name": "MolAI (CNN+PCA)", "icon": "🤖", "cost": "🟡", "cost_label": "中",
+                     "dims": "n_components", "desc": "CNNで分子構造を圧縮した潜在ベクトル。",
+                     "adapter": _MolAIAdp(n_components=st.session_state.get("molai_n_components", 32)),
+                     "auto_on": False, "has_params": True},
+                    {"key": "use_xtb",      "name": "XTB",          "icon": "⚛️", "cost": "🔴", "cost_label": "重い",
+                     "dims": "~20種", "desc": "HOMO-LUMO・双極子モーメント等。1分子あたり数秒〜分かかる。",
+                     "adapter": _XTBAdp(), "auto_on": False},
+                    {"key": "use_cosmo",    "name": "COSMO-RS",     "icon": "💧", "cost": "🔴", "cost_label": "重い",
+                     "dims": "~10種", "desc": "溶媒和記述子。COSMOthermが必要。",
+                     "adapter": _CosmoAdp(), "auto_on": False},
+                    {"key": "use_unipka",   "name": "UniPKa",       "icon": "⚗️", "cost": "🟡", "cost_label": "中",
+                     "dims": "~5種", "desc": "酸・塩基のpKa予測。",
+                     "adapter": _UniPkaAdp(), "auto_on": False},
+                    {"key": "use_contrib",  "name": "GroupContrib", "icon": "🔩", "cost": "🟢", "cost_label": "高速",
+                     "dims": "~15種", "desc": "基団寄与法による熱物性。",
+                     "adapter": _GCAAdp(), "auto_on": False},
+                ]
+
+                _lib_cols = st.columns(3)
+                for _li, _linfo in enumerate(_lib_info):
+                    with _lib_cols[_li % 3]:
+                        _avail = _linfo["adapter"].is_available()
+                        _use_key = _linfo["key"]
+                        # auto_on=Trueかつavailableなら初期値ON
+                        _default_val = _linfo["auto_on"] and _avail
+                        _curr_val = st.session_state.get(_use_key, _default_val)
+                        _border_color = "#4c9be8" if (_curr_val and _avail) else ("#555" if _avail else "#222")
+                        _bg_color = "#0d1f2d" if (_curr_val and _avail) else "#0e1117"
+                        _avail_color = "#4ade80" if _avail else "#f87171"
+                        st.markdown(
+                            f'<div style="border:1px solid {_border_color}; border-radius:8px; '
+                            f'padding:8px 12px; margin-bottom:4px; background:{_bg_color}">'
+                            f'{_linfo["icon"]} <b>{_linfo["name"]}</b> '
+                            f'<span style="color:{_avail_color}; font-size:0.75em">{"✅" if _avail else "🚫 未インストール"}</span><br>'
+                            f'<span style="font-size:0.75em; color:#888">{_linfo["cost"]} {_linfo["cost_label"]} | {_linfo["dims"]} | {_linfo["desc"]}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
                         )
-                        _molai_n = st.slider(
-                            "PCA 出力次元数 (n_components)",
-                            min_value=4, max_value=128,
-                            value=st.session_state.get("molai_n_components", 32),
-                            step=4,
-                            key="slider_molai_n",
-                            help="MolAI の潜在ベクトルを何次元に圧縮するか。大きいほど情報量が増えるが過学習リスクも高まる。"
+                        _new_val = st.checkbox(
+                            "使用する" if not _curr_val else "使用中 ✓",
+                            value=_curr_val,
+                            disabled=not _avail,
+                            key=f"chk_lib_{_use_key}",
                         )
-                        if _molai_n != st.session_state.get("molai_n_components", 32):
-                            st.session_state["molai_n_components"] = _molai_n
-                            st.session_state["precalc_done"] = False  # 再計算トリガー
+                        if _new_val != _curr_val:
+                            st.session_state[_use_key] = _new_val
+                            if _use_key == "use_molai":
+                                st.session_state["precalc_done"] = False
+                                st.session_state["molai_explained_variance"] = None
                             st.rerun()
 
-                    # --- データフレームのプレビューと型判定 ---
-                    st.markdown("### 📊 データプレビュー")
-                    import pandas as pd
-                    if st.session_state.get("precalc_smiles_df") is not None:
-                        # precalc_smiles_df を結合して表示
-                        df_preview = pd.concat([df.head(100), st.session_state["precalc_smiles_df"].head(100).fillna(0.0)], axis=1)
-                        # 型判定用に数値化を徹底
-                        df_preview = df_preview.convert_dtypes()
-                    else:
-                        df_preview = df.head(100)
-    
-                    st.dataframe(df_preview, use_container_width=True)
-                    
-                    # --- 自動型判定 ---
-                    st.markdown("### 🔍 変数型の自動判定結果 (TypeDetector)")
-                    from backend.data.type_detector import TypeDetector
-                    # TypeDetector用に推論精度を高めるため、一時的に数値化
-                    detector_df = df_preview.apply(pd.to_numeric, errors='ignore').convert_dtypes()
-                    detector = TypeDetector()
-                    st.session_state["detection_result"] = detector.detect(detector_df)
-    
-                    from backend.chem import RDKitAdapter, XTBAdapter, CosmoAdapter, UniPkaAdapter, GroupContribAdapter, MordredAdapter, MolAIAdapter
-                    from backend.chem.recommender import (
-                        get_target_recommendation_by_name,
-                        get_target_categories,
-                        get_targets_by_category,
-                        get_all_descriptor_categories,
-                        get_descriptors_by_category,
-                        get_all_target_recommendations
-                    )
-    
-                    _molai_n_comp = st.session_state.get("molai_n_components", 32)
-                    all_adapters = [RDKitAdapter(compute_fp=True), MordredAdapter(selected_only=True), XTBAdapter(), CosmoAdapter(), UniPkaAdapter(), GroupContribAdapter(), MolAIAdapter(n_components=_molai_n_comp)]
-                    
-                    # 辞書化してライブラリごとの記述子を持っておく（タブ3用）
-                    lib_descriptors = {}
-                    all_available_descriptors = []
-                    descriptor_metadata_map = {} # 名前 -> DescriptorMetadata のマッピング
-                    for adp in all_adapters:
-                        if adp.is_available():
-                            lib_name = adp.__class__.__name__.replace("Adapter", "")
-                            names = adp.get_descriptor_names()
-                            lib_descriptors[lib_name] = names
-                            all_available_descriptors.extend(names)
-                            
-                            # メタデータを蓄積
-                            # hasattrガードに加え、BaseChemAdapterで定義したデフォルト(空)も考慮
-                            try:
-                                mdata = adp.get_descriptors_metadata()
-                                for meta in mdata:
-                                    descriptor_metadata_map[meta.name] = meta
-                            except (AttributeError, NotImplementedError):
-                                # 未実装のアダプタはスキップ
-                                pass
-    
-                    # --- 現在の選択状態（セッション）を取得 ---
-                    # デフォルトは汎用的に有効な12種の物理化学記述子（目的変数によらずほぼ必ず有効）
-                    _DEFAULT_DESCRIPTORS = [
-                        "MolWt",           # 分子量：分子の大きさの基本指標、ほぼ全物性に相関
-                        "LogP",            # 脂溶性：溶解度、膜透過、耐湿性に広く寄与
-                        "TPSA",            # 位相的極性表面積：極性、溶解度、透過性の指標
-                        "HBA",             # 水素結合受容体数：沸点、溶解度、機械的強度に影響
-                        "HBD",             # 水素結合供与体数：同上（HBAと組み合わせることで効果的）
-                        "RotBonds",        # 回転可能結合数：分子の柔軟性（Tg、粘度に影響）
-                        "RingCount",       # 環の総数：剛直性、耐熱性の指標
-                        "AromaticRingCount", # 芳香環数：UV吸収、屈折率、耐熱性に強く影響
-                        "FractionCSP3",    # sp3炭素比率：溶解度、Tg・弾性率との逆相関
-                        "HeavyAtoms",      # 重原子数：分子の大きさを別角度で表す
-                        "MolMR",           # モル屈折：屈折率・分極率の直接指標
-                        "HallKierAlpha",   # Hall-Kier α：枝分かれ度・形状の立体指標
-                    ]
-                    default_desc = st.session_state.get("adv_desc", _DEFAULT_DESCRIPTORS)
-                    current_selected = set([d for d in default_desc if d in all_available_descriptors])
-    
-                    # 状態更新用コールバック（変更があった場合のみrerunする）
-                    def update_desc_state(new_selection: set):
-                        st.session_state["adv_desc"] = list(new_selection)
+                        if _linfo.get("has_params") and _new_val and _avail:
+                            _molai_n = st.slider(
+                                "PCA次元数", min_value=1, max_value=256,
+                                value=st.session_state.get("molai_n_components", 32),
+                                step=1, key="slider_molai_n",
+                            )
+                            if _molai_n != st.session_state.get("molai_n_components", 32):
+                                st.session_state["molai_n_components"] = _molai_n
+                                st.session_state["precalc_done"] = False
+                                st.session_state["molai_explained_variance"] = None
+                                st.rerun()
+
+                # 再計算ボタン
+                if st.session_state.get("precalc_done"):
+                    if st.button("🔄 記述子を再計算", key="recalc_smiles"):
+                        st.session_state["precalc_done"] = False
+                        st.session_state["precalc_smiles_df"] = None
                         st.rerun()
-    
-                    # --- 事前計算済みデータからの相関算出 ---
-                    precalc_df = st.session_state.get("precalc_smiles_df")
-                    target_col_val = st.session_state.get("target_col", "")
-                    target_series = df[target_col_val] if target_col_val in df.columns and pd.api.types.is_numeric_dtype(df[target_col_val]) else None
-                    
-                    corr_dict = {}
-                    if precalc_df is not None and target_series is not None:
+
+                # MolAI寄与率グラフ
+                _molai_is_on = st.session_state.get("use_molai", False)
+                _mev = st.session_state.get("molai_explained_variance")
+                if _molai_is_on and _mev and _mev.get("ratio"):
+                    import plotly.graph_objects as _go_ev
+                    _evr = _mev["ratio"]; _evc = _mev["cumulative"]; _nc = _mev["n_components"]
+                    _pcs = [f"PC{i+1}" for i in range(len(_evr))]
+                    with st.expander(f"📊 MolAI PCA 寄与率（n={_nc}）", expanded=False):
+                        _fig_ev = _go_ev.Figure()
+                        _fig_ev.add_bar(x=_pcs, y=[v*100 for v in _evr], name="寄与率 (%)", marker_color="#4c9be8")
+                        _fig_ev.add_scatter(x=_pcs, y=[v*100 for v in _evc], name="累積寄与率 (%)",
+                                            mode="lines+markers", yaxis="y2",
+                                            line=dict(color="#f4a261", width=2), marker=dict(size=5))
+                        _fig_ev.update_layout(
+                            yaxis=dict(title="寄与率 (%)", range=[0, max(v*100 for v in _evr)*1.15]),
+                            yaxis2=dict(title="累積寄与率 (%)", overlaying="y", side="right", range=[0,105], showgrid=False),
+                            legend=dict(orientation="h", y=1.15), height=300, margin=dict(l=10, r=10, t=40, b=40),
+                        )
+                        st.plotly_chart(_fig_ev, use_container_width=True)
+
+                # ── 記述子の選択（計算完了後） ────────────────────────────────
+                if st.session_state.get("precalc_smiles_df") is not None:
+                    st.markdown("---")
+                    st.markdown("### 🔬 記述子の選択")
+                    st.caption("計算済みの記述子の中から解析に使う記述子を絞り込めます。")
+
+                    from backend.chem import RDKitAdapter as _RDKitAdp2, XTBAdapter as _XTBAdp2
+                    from backend.chem import CosmoAdapter as _CosmoAdp2, UniPkaAdapter as _UniPkaAdp2
+                    from backend.chem import GroupContribAdapter as _GCAAdp2, MordredAdapter as _MordAdp2
+                    from backend.chem import MolAIAdapter as _MolAIAdp2
+
+                    _molai_n_comp2 = st.session_state.get("molai_n_components", 32)
+                    _all_adps2 = [
+                        _RDKitAdp2(compute_fp=True), _MordAdp2(selected_only=True),
+                        _XTBAdp2(), _CosmoAdp2(), _UniPkaAdp2(), _GCAAdp2(),
+                        _MolAIAdp2(n_components=_molai_n_comp2)
+                    ]
+                    lib_descriptors2 = {}
+                    all_avail_descs2 = []
+                    for _adp2 in _all_adps2:
+                        if _adp2.is_available():
+                            _lib_nm2 = _adp2.__class__.__name__.replace("Adapter", "")
+                            _names2 = _adp2.get_descriptor_names()
+                            lib_descriptors2[_lib_nm2] = _names2
+                            all_avail_descs2.extend(_names2)
+
+                    _DEFAULT_DESCRIPTORS = [
+                        "MolWt", "LogP", "TPSA", "HBA", "HBD", "RotBonds",
+                        "RingCount", "AromaticRingCount", "FractionCSP3",
+                        "HeavyAtoms", "MolMR", "HallKierAlpha",
+                    ]
+                    _default_desc2 = st.session_state.get("adv_desc", _DEFAULT_DESCRIPTORS)
+                    _cur_sel2 = set([d for d in _default_desc2 if d in all_avail_descs2])
+
+                    def _upd_desc2(new_sel: set):
+                        st.session_state["adv_desc"] = list(new_sel)
+                        st.rerun()
+
+                    _precalc_df2 = st.session_state.get("precalc_smiles_df")
+                    _target_col2 = st.session_state.get("target_col")
+                    _target_series2 = df[_target_col2] if _target_col2 in df.columns and pd.api.types.is_numeric_dtype(df[_target_col2]) else None
+
+                    _corr_dict2 = {}
+                    if _precalc_df2 is not None and _target_series2 is not None:
                         try:
-                            aligned_target = target_series.loc[precalc_df.index]
-                            corr_s = precalc_df.corrwith(aligned_target, method="pearson").abs()
-                            corr_dict = corr_s.to_dict()
+                            _al_tgt = _target_series2.loc[_precalc_df2.index]
+                            _corr_s2 = _precalc_df2.corrwith(_al_tgt, method="pearson").abs()
+                            _corr_dict2 = _corr_s2.to_dict()
                         except Exception:
                             pass
-                            
-                    def sort_descriptors(desc_names):
-                        """相関降順で記述子名のリストをソートする"""
-                        if not corr_dict:
-                            return desc_names
-                        return sorted(desc_names, key=lambda d: corr_dict.get(d, 0.0) if pd.notna(corr_dict.get(d, 0.0)) else 0.0, reverse=True)
-    
-                    tab_corr, tab1, tab_count, tab2, tab3 = st.tabs(["相関係数から選ぶ", "目的変数の系統から選ぶ", "数え上げ系の変数から選ぶ", "記述子の意味から選ぶ", "計算ライブラリから選ぶ"])
-    
-                    with tab_corr:
-                        st.markdown("事前に計算された記述子と目的変数との**相関係数（絶対値）**が高い順に、効果的と思われる記述子を選択できます。")
-                        if not corr_dict:
-                            st.warning("事前計算が完了していないか、目的変数が数値ではないため利用できません。（SMILES展開が完了するまでお待ちください）")
+
+                    def _sort_descs2(names):
+                        return sorted(names, key=lambda d: _corr_dict2.get(d, 0.0) if pd.notna(_corr_dict2.get(d, 0.0)) else 0.0, reverse=True)
+
+                    tab_corr2, tab_lib2 = st.tabs(["相関係数から選ぶ", "ライブラリから選ぶ"])
+
+                    with tab_corr2:
+                        if not _corr_dict2:
+                            st.warning("相関係数を計算するには数値型の目的変数が必要です。")
                         else:
-                            c1, c2, c3 = st.columns([1, 1, 2])
-                            sorted_corr_descs = sort_descriptors(list(corr_dict.keys()))
-                            # 相関が算出できたものだけに絞る
-                            sorted_corr_descs = [d for d in sorted_corr_descs if pd.notna(corr_dict.get(d))]
-                            
-                            if c1.button("上位10件を全選択", key="sel_top_10"):
-                                update_desc_state(current_selected.union(sorted_corr_descs[:10]))
-                            if c2.button("上位30件を全選択", key="sel_top_30"):
-                                update_desc_state(current_selected.union(sorted_corr_descs[:30]))
-                            
-                            def format_corr_opt(d_name: str) -> str:
-                                cval = corr_dict.get(d_name)
-                                return f"{d_name} (相関: {cval:.3f})" if cval is not None else d_name
-    
-                            corr_selected = [d for d in sorted_corr_descs if d in current_selected]
-                            
-                            new_corr_selected = st.multiselect(
-                                "相関順リストから記述子を選択",
-                                options=sorted_corr_descs,
-                                default=corr_selected,
-                                format_func=format_corr_opt,
-                                key="mlsel_corr"
+                            _s_descs2 = _sort_descs2([d for d in _corr_dict2.keys() if pd.notna(_corr_dict2.get(d))])
+                            c1, c2 = st.columns(2)
+                            if c1.button("上位10件を選択", key="sel_top_10"):
+                                _upd_desc2(_cur_sel2.union(_s_descs2[:10]))
+                            if c2.button("上位30件を選択", key="sel_top_30"):
+                                _upd_desc2(_cur_sel2.union(_s_descs2[:30]))
+                            _new_corr2 = st.multiselect(
+                                "記述子を選択（目的変数との相関降順）",
+                                options=_s_descs2,
+                                default=[d for d in _s_descs2 if d in _cur_sel2],
+                                format_func=lambda d: f"{d} (|r|={_corr_dict2.get(d, 0):.3f})",
+                                key="desc_corr_sel",
                             )
-                            
-                            # 差分更新
-                            if set(new_corr_selected) != set(corr_selected):
-                                current_selected.difference_update(sorted_corr_descs)
-                                current_selected.update(new_corr_selected)
-                                update_desc_state(current_selected)
-    
-                    with tab1:
-                        st.markdown("予測したい目的変数の系統（光、強度など）に合わせて、推奨される記述子のセットを一括で追加・削除できます。")
-                        rec = get_target_recommendation_by_name(target_col_val)
-                        if rec:
-                            st.info(f"💡 現在選択中の目的変数「**{target_col_val}**」は「**{rec.category}**」に属します。\n\n{rec.summary}")
-                        
-                        categories = get_target_categories()
-                        for cat in categories:
-                            with st.expander(f"📁 {cat}"):
-                                targets = get_targets_by_category(cat)
-                                for t in targets:
-                                    desc_names = [d.name for d in t.descriptors if d.name in all_available_descriptors]
-                                    if not desc_names:
-                                        continue
-                                        
-                                    col_t_left, col_t_right = st.columns([3, 1])
-                                    with col_t_left:
-                                        st.markdown(f"**{t.target_name}**")
-                                        st.caption(t.summary)
-                                    with col_t_right:
-                                        # このターゲットの全記述子が既に選択されているかチェック
-                                        is_all_selected = all(d in current_selected for d in desc_names)
-                                        if st.button("一括追加" if not is_all_selected else "一括解除", key=f"btn_tgt_{t.target_name}"):
-                                            if not is_all_selected:
-                                                update_desc_state(current_selected.union(desc_names))
-                                            else:
-                                                update_desc_state(current_selected.difference(desc_names))
-    
-                    with tab_count:
-                        st.markdown("原子数、環の数、水素結合数などの**「数え上げ（カウント）」**系記述子を選択できます。化学的な根拠に基づき厳密に定義されたリストのみが表示されます。")
-                        
-                        # メタデータに基づいて「数え上げ系」を抽出（曖昧なキーワード検索を廃止）
-                        count_descs = [
-                            dname for dname in all_available_descriptors 
-                            if descriptor_metadata_map.get(dname) and descriptor_metadata_map[dname].is_count
-                        ]
-                        
-                        if not count_descs:
-                            st.info("利用可能な数え上げ系記述子が見つかりませんでした。")
-                        else:
-                            c1, c2, _ = st.columns([1, 1, 2])
-                            if c1.button("数え上げ系を全選択", key="sel_all_count"):
-                                update_desc_state(current_selected.union(count_descs))
-                            if c2.button("数え上げ系を全解除", key="desel_all_count"):
-                                update_desc_state(current_selected.difference(count_descs))
-                            
-                            sorted_count_descs = sort_descriptors(count_descs)
-                            
-                            def format_desc_with_meaning(d_name: str) -> str:
-                                m = descriptor_metadata_map.get(d_name)
-                                meaning_str = f" ({m.meaning})" if m and m.meaning != d_name else ""
-                                cval = corr_dict.get(d_name)
-                                corr_str = f" [相関: {cval:.3f}]" if cval is not None else ""
-                                return f"{d_name}{meaning_str}{corr_str}"
-    
-                            cnt_selected = [d for d in sorted_count_descs if d in current_selected]
-                            new_cnt_selected = st.multiselect(
-                                "リストから抽出（相関順）",
-                                options=sorted_count_descs,
-                                default=cnt_selected,
-                                format_func=format_desc_with_meaning,
-                                key="mlsel_count"
-                            )
-                            if set(new_cnt_selected) != set(cnt_selected):
-                                current_selected.difference_update(count_descs)
-                                current_selected.update(new_cnt_selected)
-                                update_desc_state(current_selected)
-    
-                    with tab2:
-                        from backend.chem.recommender import (
-                            get_all_descriptor_categories,
-                            get_descriptors_by_category,
-                        )
-                        st.markdown("物理的・化学的意味のカテゴリごとに記述子を選択できます。")
-                        desc_cats = get_all_descriptor_categories()
-                        for dcat in desc_cats:
-                            descs = get_descriptors_by_category(dcat)
-                            valid_descs = [d for d in descs if d.name in all_available_descriptors]
-                            if not valid_descs:
-                                continue
-                                
-                            with st.expander(f"🧩 {dcat} ({len(valid_descs)}件)"):
-                                # 全選択/全解除ボタン
-                                c1, c2, _ = st.columns([1, 1, 3])
-                                all_desc_names_in_cat = [d.name for d in valid_descs]
-                                if c1.button("全選択", key=f"sel_all_{dcat}"):
-                                    update_desc_state(current_selected.union(all_desc_names_in_cat))
-                                if c2.button("全解除", key=f"desel_all_{dcat}"):
-                                    update_desc_state(current_selected.difference(all_desc_names_in_cat))
-                                    
-                                # 相関が高い順にソートして表示
-                                if corr_dict:
-                                    valid_descs = sorted(valid_descs, key=lambda d: corr_dict.get(d.name, 0.0) if pd.notna(corr_dict.get(d.name, 0.0)) else 0.0, reverse=True)
+                            if set(_new_corr2) != _cur_sel2:
+                                _upd_desc2(set(_new_corr2))
 
-                                for d in valid_descs:
-                                    is_checked = d.name in current_selected
-                                    
-                                    corr_val = corr_dict.get(d.name)
-                                    corr_str = f" | 相関: {corr_val:.2f}" if corr_val is not None and pd.notna(corr_val) else ""
-                                    
-                                    changed = st.checkbox(f"**{d.name}** ({d.library}): {d.meaning}{corr_str}", value=is_checked, key=f"chk_mean_{dcat}_{d.name}")
-                                    if changed != is_checked:
-                                        if changed:
-                                            current_selected.add(d.name)
-                                        else:
-                                            current_selected.remove(d.name)
-                                        st.session_state["adv_desc"] = list(current_selected)
-
-                    with tab3:
-                        st.markdown("計算エンジン（ライブラリ）ごとにすべての記述子を個別に選択できます。")
-                        for lib, d_names in lib_descriptors.items():
-                            if not d_names:
-                                continue
-                            with st.expander(f"⚙️ {lib} ({len(d_names)}件)"):
-                                c1, c2, _ = st.columns([1, 1, 3])
-                                if c1.button("全選択", key=f"sel_all_lib_{lib}"):
-                                    update_desc_state(current_selected.union(d_names))
-                                if c2.button("全解除", key=f"desel_all_lib_{lib}"):
-                                    update_desc_state(current_selected.difference(d_names))
-                                    
-                                # マルチセレクトでまとめて編集させる
-                                lib_selected = [d for d in d_names if d in current_selected]
-                                
-                                # 相関順にソートしたオプションリスト
-                                sorted_opts = sort_descriptors(d_names)
-                                
-                                def format_lib_opt(d_name: str) -> str:
-                                    base = d_name
-                                    cval = corr_dict.get(d_name)
-                                    if cval is not None and pd.notna(cval):
-                                        base += f" (相関: {cval:.2f})"
-                                    return base
-
-                                new_lib_selected = st.multiselect(
-                                    "個別記述子を選択",
-                                    options=sorted_opts,
-                                    default=lib_selected,
-                                    format_func=format_lib_opt,
-                                    key=f"mlsel_lib_{lib}"
+                    with tab_lib2:
+                        for _ln2, _ld2 in lib_descriptors2.items():
+                            with st.expander(f"📚 {_ln2} ({len(_ld2)}種)", expanded=False):
+                                _lib_sel2 = [d for d in _ld2 if d in _cur_sel2]
+                                _new_lib2 = st.multiselect(
+                                    f"{_ln2} の記述子",
+                                    options=_ld2, default=_lib_sel2,
+                                    key=f"desc_lib2_{_ln2}",
                                 )
-                                if set(new_lib_selected) != set(lib_selected):
-                                    current_selected.difference_update(d_names)
-                                    current_selected.update(new_lib_selected)
-                                    update_desc_state(current_selected)
+                                if set(_new_lib2) != set(_lib_sel2):
+                                    _upd_desc2((_cur_sel2 - set(_ld2)) | set(_new_lib2))
 
-                selected_desc = list(current_selected)
-                st.caption(f"✅ 現在 {len(selected_desc)} 件の記述子が選択されています。")
-                
-                if len(selected_desc) > 0:
-                    # --- 相関ヒートマップの統合強化版 ---
-                    with st.expander("📊 選択変数と目的変数の相関ヒートマップ", expanded=True):
-                        try:
-                            # 1. SMILES記述子側のデータ取得
-                            _p_df = st.session_state.get("precalc_smiles_df")
-                            target_col_val = st.session_state.get("target_col", "")
-                            
-                            # 2. 元のDFから数値列（既存の説明変数）を抽出
-                            # 目的変数以外の、数値型を持つカラム
-                            original_numeric_cols = [
-                                c for c in df.columns 
-                                if c != target_col_val and pd.api.types.is_numeric_dtype(df[c])
-                            ]
-                            
-                            # ヒートマップ用データの準備
-                            heatmap_df_parts = []
-                            
-                            # (A) SMILES側の選択済み記述子
-                            if _p_df is not None:
-                                available_smiles_descs = [d for d in selected_desc if d in _p_df.columns]
-                                if available_smiles_descs:
-                                    smiles_part = _p_df[available_smiles_descs].copy()
-                                    heatmap_df_parts.append(smiles_part)
-                            
-                            # (B) 元データの数値列
-                            if original_numeric_cols:
-                                # SMILES側のindexと合わせる（欠損行があれば除外される）
-                                idx = _p_df.index if _p_df is not None else df.index
-                                original_part = df.loc[idx, original_numeric_cols].copy()
-                                heatmap_df_parts.append(original_part)
-                                
-                            # (C) 目的変数（必須）
-                            if target_col_val in df.columns and pd.api.types.is_numeric_dtype(df[target_col_val]):
-                                idx = _p_df.index if _p_df is not None else df.index
-                                target_part = df.loc[idx, [target_col_val]].copy()
-                                heatmap_df_parts.append(target_part)
+                    st.session_state.setdefault("adv_desc", list(_cur_sel2))
 
-                            if heatmap_df_parts:
-                                heatmap_df = pd.concat(heatmap_df_parts, axis=1)
-                                
-                                # 相関行列計算 (Pearson)
-                                corr_matrix = heatmap_df.corr(method="pearson")
-                                
-                                import plotly.express as px
-                                fig = px.imshow(
-                                    corr_matrix,
-                                    text_auto=".2f",
-                                    aspect="auto",
-                                    color_continuous_scale="RdBu_r",
-                                    zmin=-1, zmax=1,
-                                    title=f"目的変数「{target_col_val}」と各変数の相互相関"
-                                )
-                                # 動的に高さを調整（変数が多すぎると潰れるのを防ぐ）
-                                calc_height = max(500, len(corr_matrix.columns) * 35)
-                                fig.update_layout(margin=dict(l=20, r=20, t=60, b=20), height=calc_height)
-                                st.plotly_chart(fig, use_container_width=True)
-                            else:
-                                st.info("相関を計算できる数値変数がありません。")
-                        except Exception as e:
-                            st.warning(f"ヒートマップの描画中にエラーが発生しました: {e}")
-                    # ------------------------------------
+        # ══════════════════════════════════════════════════════════════
+        # サブタブ3: SMILES特徴量設計
+        # ══════════════════════════════════════════════════════════════
+        with ds_tab4:
+            df = st.session_state.get("df")
+            if df is None:
+                st.warning("⚠️ まず「📂 データ読込」タブでデータを読み込んでください。")
+            else:
+                # データプレビュー
+                smiles_col_eda = st.session_state.get("smiles_col")
+                target_col_eda = st.session_state.get("target_col")
 
-                    with st.expander("選択中の記述子詳細を確認", expanded=(len(selected_desc) <= 10)):
-                        recs = get_all_target_recommendations()
-                        desc_details = {}
-                        for rec in recs:
-                            for d in rec.descriptors:
-                                if d.name not in desc_details:
-                                    desc_details[d.name] = {"meaning": d.meaning, "targets": set(), "library": d.library}
-                                desc_details[d.name]["targets"].add(rec.target_name)
-
-                        if len(selected_desc) <= 30:
-                            display_descs = selected_desc
-                            hidden_count = 0
-                        else:
-                            display_descs = selected_desc[:30]
-                            hidden_count = len(selected_desc) - 30
-
-                        for d_name in display_descs:
-                            info = desc_details.get(d_name)
-                            if info:
-                                tgts = "、".join(list(info["targets"]))
-                                st.markdown(f"- **{d_name}** ({info['library']}): {info['meaning']}<br>&nbsp;&nbsp;<span style='color:#888;font-size:0.85em;'>適した目的変数: {tgts}</span>", unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"- **{d_name}** <span style='color:#888;font-size:0.85em;'>(全般的な記述子)</span>", unsafe_allow_html=True)
-                        
-                        if hidden_count > 0:
-                            st.markdown(f"- ...他 **{hidden_count}** 件（省略）")
-                else:
-                    selected_desc = st.session_state.get("adv_desc", [])
-
-            # 詳細設定の値をセッションに保存
-            st.session_state["_adv"] = dict(
-                cv_folds=cv_folds, models=selected_models, timeout=timeout,
-                scaler=scaler,
-                do_eda=do_eda, do_prep=do_prep, do_eval=do_eval,
-                do_pca=do_pca, do_shap=do_shap,
-                selected_descriptors=selected_desc,
-            )
-
-        # ── 実行前のデータプレビュー＆型判定結果の確認 ────
-        existing_result = st.session_state.get("pipeline_result")
-        
-        if existing_result is None:
-            st.markdown("### 📄 解析対象データのプレビューと変数型")
-            st.caption("以下のデータ設定で解析を実行します。もしSMILES列が含まれている場合、解析に使用可能な複数の数値記述子へ自動展開された後の姿が表示されます。")
-            with st.expander("プレビューと変数型の自動判定結果", expanded=True):
-                # ユーザーの全体データ感触を掴むため、まずは上位100行程度まで展開可能にする
                 df_preview = df.head(100).copy()
                 added_smiles_cols = []
-                
-                smiles_col_preview = st.session_state.get("smiles_col")
-                if smiles_col_preview and smiles_col_preview in df_preview.columns:
+
+                if smiles_col_eda and smiles_col_eda in df_preview.columns:
                     try:
                         from backend.chem.smiles_transformer import SmilesDescriptorTransformer
                         selected_desc_preview = st.session_state.get("adv_desc", [])
                         transformer = SmilesDescriptorTransformer(
-                            smiles_col=smiles_col_preview, 
+                            smiles_col=smiles_col_eda,
                             selected_descriptors=selected_desc_preview if selected_desc_preview else None
                         )
                         df_preview = transformer.fit_transform(df_preview)
-                        # SMILES変換で新しく生じた列群を特定
                         added_smiles_cols = [c for c in df_preview.columns if c not in df.columns]
                     except Exception as e:
-                        st.error(f"SMILES展開のプレビュー表示に失敗しました: {e}")
-                
-                # 型推論を明示的に行い、TypeDetectorがfloat64等の判定を行えるようにする
-                # ここで以前のバグ（不明判定）を防ぐために数値キャストを挟む
+                        st.warning(f"SMILES展開プレビュー失敗: {e}")
+
                 df_preview = df_preview.apply(pd.to_numeric, errors='ignore').convert_dtypes()
 
-                # まずはデータフレーム全体をドカンと表示する
-                if added_smiles_cols:
-                    st.markdown("### 📊 データプレビュー (SMILES展開後の状態)")
+                st.markdown("### 📊 データプレビュー")
+                from frontend_streamlit.components.smiles_hover import render_smiles_table
+                _smiles_col_prev = smiles_col_eda if smiles_col_eda and smiles_col_eda in df_preview.columns else None
+                if _smiles_col_prev:
+                    render_smiles_table(df_preview, smiles_col=_smiles_col_prev, max_rows=100, height=420)
                 else:
-                    st.markdown("### 📊 データプレビュー")
-                
-                # aggridは使えない環境もあるため、Streamlitネイティブの高性能なdataframe表示を活用
-                st.dataframe(df_preview, use_container_width=True, height=400)
-                
+                    st.dataframe(df_preview, use_container_width=True, height=400)
+
+                # 統計量サマリー
+                st.markdown("### 📈 統計量サマリー")
+                try:
+                    _stat_rows = []
+                    for _col in df_preview.columns:
+                        _s = df_preview[_col]
+                        _n_missing = int(_s.isna().sum())
+                        _n_total   = len(_s)
+                        _missing_rate = _n_missing / _n_total * 100 if _n_total > 0 else 0.0
+                        _cardinality  = int(_s.nunique(dropna=True))
+                        _row = {
+                            "列名": _col,
+                            "ユニーク数": _cardinality,
+                            "欠損数": _n_missing,
+                            "欠損率(%)": f"{_missing_rate:.1f}",
+                        }
+                        _numeric_s = pd.to_numeric(_s, errors="coerce")
+                        if _numeric_s.notna().any():
+                            _row["最小値"] = f"{_numeric_s.min():.4g}"
+                            _row["最大値"] = f"{_numeric_s.max():.4g}"
+                            _row["平均値"] = f"{_numeric_s.mean():.4g}"
+                            _row["標準偏差"] = f"{_numeric_s.std():.4g}"
+                        else:
+                            _row["最小値"] = _row["最大値"] = _row["平均値"] = _row["標準偏差"] = "—"
+                        _stat_rows.append(_row)
+                    _stat_df = pd.DataFrame(_stat_rows)
+                    st.dataframe(_stat_df, use_container_width=True, hide_index=True, height=min(600, 40 + len(_stat_rows) * 35))
+                    if added_smiles_cols:
+                        st.caption(f"🟢 SMILES展開で追加された列: **{len(added_smiles_cols)}個**")
+                except Exception as _e_stat:
+                    st.warning(f"統計量計算エラー: {_e_stat}")
+
+                # TypeDetector結果
                 st.markdown("---")
-                
-                # その下に型判定結果を表示
                 st.markdown("### 🔍 変数型の自動判定結果 (TypeDetector)")
-                dr_base = st.session_state.get("detection_result")
-                target_col_preview = st.session_state.get("target_col")
-                if dr_base:
-                    # 生のdr_baseはSMILES展開前なので、SMILES列が含まれる場合はプレビュー用DFで再判定する
+                dr_eda = st.session_state.get("detection_result")
+                if dr_eda:
                     if added_smiles_cols:
                         from backend.data.type_detector import TypeDetector
-                        tmp_dr = TypeDetector().detect(df_preview.drop(columns=[target_col_preview], errors="ignore") if target_col_preview else df_preview)
+                        tmp_dr = TypeDetector().detect(df_preview.drop(columns=[target_col_eda], errors="ignore") if target_col_eda else df_preview)
                     else:
-                        tmp_dr = dr_base
-                        
+                        tmp_dr = dr_eda
                     type_data = []
                     for c in df_preview.columns:
                         t = "❓不明"
-                        if target_col_preview and c == target_col_preview:
+                        if target_col_eda and c == target_col_eda:
                             t = "🎯 目的変数"
                         elif c in getattr(tmp_dr, "numeric_columns", []):
                             t = "🔢 数値"
@@ -1172,72 +1015,201 @@ else:
                         elif c in getattr(tmp_dr, "ignored_columns", []):
                             t = "❌ 除外（一意・定数等）"
                         type_data.append({"列名": c, "判定型": t})
-                    
-                    # 3列に分けて広く見せるなど工夫（またはシンプルなテーブル）
                     st.dataframe(pd.DataFrame(type_data), use_container_width=True, hide_index=True)
                 else:
                     st.info("型判定結果がありません")
 
-        # ── 実行ボタン（主役） ───────────────────────────────
-        st.markdown("")
+                # EDAタブでは記述子選択は行わない（SMILES特徴量設計タブで設定）
+                if st.session_state.get("smiles_col"):
+                    if st.session_state.get("precalc_done"):
+                        n_sel = len(st.session_state.get("adv_desc", []))
+                        st.info(f"🔬 記述子の選択は「⚗️ SMILES特徴量設計」タブで行えます。現在 **{n_sel}件** 選択中。")
+                    else:
+                        st.info("💡 「⚗️ SMILES特徴量設計」タブで記述子を計算・選択してください。")
 
-        if existing_result is None:
-            c_l, c_m, c_r = st.columns([1, 3, 1])
-            with c_m:
-                if st.button(
-                    "🚀 解析開始  （EDA → AutoML → 評価 → SHAP まで自動実行）",
-                    use_container_width=True,
-                    key="home_run",
-                    type="primary",
-                ):
-                    # 詳細設定がない場合はデフォルト値を使用
-                    adv = st.session_state.get("_adv", {})
-                    st.session_state["_run_config"] = dict(
-                        target_col = st.session_state["target_col"],
-                        smiles_col = st.session_state.get("smiles_col"),
-                        task       = st.session_state.get("task", "auto"),
-                        cv_folds   = adv.get("cv_folds", 5),
-                        models     = adv.get("models", []),
-                        model_params = st.session_state.get("model_params", {}),
-                        timeout    = adv.get("timeout", 300),
-                        scaler     = adv.get("scaler", "auto"),
-                        do_eda     = adv.get("do_eda", True),
-                        do_prep    = adv.get("do_prep", True),
-                        do_eval    = adv.get("do_eval", True),
-                        do_pca     = adv.get("do_pca", True),
-                        do_shap    = adv.get("do_shap", True),
-                        selected_descriptors = adv.get("selected_descriptors", None),
-                    )
-                    # 解析実行タブへ移動（タブ内で実行される）
-                    st.session_state["active_tab_idx"] = 1
-                    st.rerun()
-        else:
-            # 結果サマリーをホームに表示
-            ar = st.session_state.get("automl_result")
-            if ar:
-                st.success(
-                    f"✅ 解析完了！ 最良モデル: **{ar.best_model_key}** | "
-                    f"スコア: `{ar.best_score:.4f}` | "
-                    f"所要時間: {existing_result.elapsed:.1f}秒"
+        # ══════════════════════════════════════════════════════════════
+        # サブタブ5: パイプライン設計
+        # ══════════════════════════════════════════════════════════════
+        with ds_tab5:
+            df = st.session_state.get("df")
+            if df is None:
+                st.warning("⚠️ まず「📂 データ読込」タブでデータを読み込んでください。")
+            else:
+                # CV設定（コンパクト）
+                with st.expander("⚙️ 交差検証・その他の基本設定", expanded=False):
+                    c_cv1, c_cv2, c_cv3 = st.columns(3)
+                    with c_cv1:
+                        cv_folds  = st.slider("CV分割数", 2, 10, st.session_state.get("_adv_cv_folds", 5), key="adv_cv")
+                    with c_cv2:
+                        timeout   = st.slider("タイムアウト(秒)", 30, 3600, st.session_state.get("_adv_timeout", 300), key="adv_to")
+                    with c_cv3:
+                        scaler    = st.selectbox("スケーラー", ["auto","standard","robust","minmax","none"], key="adv_sc")
+                    c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+                    with c_p1: do_eda  = st.checkbox("EDA", value=True, key="adv_eda")
+                    with c_p2: do_prep = st.checkbox("前処理", value=True, key="adv_prep")
+                    with c_p3: do_eval = st.checkbox("評価", value=True, key="adv_eval")
+                    with c_p4: do_pca  = st.checkbox("PCA", value=True, key="adv_pca")
+                    do_shap = st.checkbox("SHAP解析", value=True, key="adv_shap")
+
+                # モデル選択（コンパクト）
+                with st.expander("🤖 使用するモデルを選ぶ", expanded=False):
+                    from backend.models.factory import list_models, get_default_automl_models, get_model_registry
+                    import inspect
+                    _tmp_task = st.session_state.get("task", "auto")
+                    if _tmp_task == "auto":
+                        _tc = st.session_state.get("target_col")
+                        _tmp_task = "regression" if (_tc and pd.api.types.is_float_dtype(df[_tc])) else "classification"
+
+                    available_models = list_models(task=_tmp_task, available_only=True)
+                    default_models   = get_default_automl_models(task=_tmp_task)
+
+                    def _get_category(mkey, mname):
+                        k = mkey.lower() + mname.lower()
+                        if any(x in k for x in ["linear","ridge","lasso","elastic","logistic","ard","huber","theilsen","ransac","pls","sgd"]): return "線形系"
+                        if any(x in k for x in ["svr","svc","support","rbf","kernel","gaussian"]): return "カーネル系"
+                        if any(x in k for x in ["tree","forest","boost","gbm","gradient"]): return "決定木系"
+                        return "その他"
+
+                    categories = {"線形系": [], "カーネル系": [], "決定木系": [], "その他": []}
+                    for m in available_models:
+                        categories[_get_category(m["key"], m["name"])].append(m)
+
+                    selected_models = st.session_state.get("adv_models", default_models)
+                    new_selection = []
+                    sel_tabs = st.tabs(list(categories.keys()))
+                    for cat_name, t_body in zip(categories.keys(), sel_tabs):
+                        with t_body:
+                            cat_cols = st.columns(4)
+                            for idx, m in enumerate(categories[cat_name]):
+                                with cat_cols[idx % 4]:
+                                    is_checked = m["key"] in selected_models
+                                    if not m["available"]:
+                                        st.checkbox(f"{m['name']} (未実装)", value=False, disabled=True, key=f"c_{m['key']}")
+                                    else:
+                                        if st.checkbox(m["name"], value=is_checked, key=f"c_{m['key']}"):
+                                            new_selection.append(m["key"])
+                    st.session_state["adv_models"] = new_selection
+                    selected_models = new_selection
+
+                # パイプライン全設定UI （7ステップタブ）
+                st.markdown("### ⚙️ パイプライン構成の設定")
+                st.caption(
+                    "各ステップで複数選択すると全組み合わせを自動評価します。\n\n"
+                    "**組合せ数** = `cont_imp × scaler × cat_imp × cat_enc × bin_imp × bin_enc × engineer × selector × estimator`"
+                )
+                try:
+                    from frontend_streamlit.components.pipeline_config_ui import render_pipeline_config_ui as _render_pg_ui
+                except ImportError:
+                    from components.pipeline_config_ui import render_pipeline_config_ui as _render_pg_ui
+
+                _all_cols_pg = list(df.columns) if df is not None else []
+                _task_pg     = st.session_state.get("task", "regression")
+                _target_pg   = st.session_state.get("target_col")
+                _smiles_pg   = st.session_state.get("smiles_col")
+
+                _pg_cfg = _render_pg_ui(
+                    all_cols=_all_cols_pg,
+                    target_col=_target_pg,
+                    smiles_col=_smiles_pg,
+                    task=_task_pg,
+                )
+                st.session_state["_pipeline_full_config"] = _pg_cfg
+
+                # ── per-feature 単調性制約 UI ───────────────────────────
+                st.markdown("---")
+                with st.expander("📐 単調性制約（特徴量ごとに設定）", expanded=False):
+                    try:
+                        from frontend_streamlit.components.pipeline_config_ui import render_monotonic_constraints_ui as _rmui
+                    except ImportError:
+                        from components.pipeline_config_ui import render_monotonic_constraints_ui as _rmui
+
+                    # 数値列（目的変数・SMILES除く）のみ対象
+                    _feat_cols_mono = [
+                        c for c in _all_cols_pg
+                        if c not in (_target_pg, _smiles_pg)
+                        and df is not None
+                        and pd.api.types.is_numeric_dtype(df[c])
+                    ] if df is not None else []
+
+                    if _feat_cols_mono:
+                        _mono_constraints = _rmui(
+                            feature_cols=_feat_cols_mono,
+                            n_cols=4,
+                        )
+                        st.session_state["_monotonic_constraints_dict"] = _mono_constraints
+                    else:
+                        st.info("ℹ️ 数値列が見つかりません。データを読み込んでから設定してください。")
+                        st.session_state["_monotonic_constraints_dict"] = {}
+
+                # 詳細設定の値をセッションに保存
+                st.session_state["_adv"] = dict(
+                    cv_folds=cv_folds, models=selected_models, timeout=timeout,
+                    scaler=scaler,
+                    do_eda=do_eda, do_prep=do_prep, do_eval=do_eval,
+                    do_pca=do_pca, do_shap=do_shap,
+                    selected_descriptors=st.session_state.get("adv_desc", []),
                 )
 
-            cc1, cc2, cc3 = st.columns(3)
-            with cc1:
-                if st.button("📊 結果を見る", use_container_width=True, key="view_res"):
-                    st.session_state["active_tab_idx"] = 2
-                    st.rerun()
-            with cc2:
-                if st.button("🔄 別データで再解析", use_container_width=True, key="reset"):
-                    for k in ["df","file_name","automl_result","pipeline_result",
-                              "target_col","detection_result","step_eda_done",
-                              "step_preprocess_done","_run_config"]:
-                        st.session_state[k] = None if k not in (
-                            "step_eda_done","step_preprocess_done") else False
-                    st.rerun()
-            with cc3:
-                if st.button("🔧 詳細ツールへ", use_container_width=True, key="to_expert"):
-                    st.session_state["page"] = "eda"
-                    st.rerun()
+        # ── 実行ボタン（データがある場合に常時表示） ─────────────────
+        df = st.session_state.get("df")
+        if df is not None:
+            st.markdown("---")
+            existing_result = st.session_state.get("pipeline_result")
+
+            if existing_result is None:
+                c_l, c_m, c_r = st.columns([1, 3, 1])
+                with c_m:
+                    if st.button(
+                        "🚀 解析開始  （EDA → AutoML → 評価 → SHAP まで自動実行）",
+                        use_container_width=True,
+                        key="home_run",
+                        type="primary",
+                    ):
+                        adv = st.session_state.get("_adv", {})
+                        st.session_state["_run_config"] = dict(
+                            target_col = st.session_state["target_col"],
+                            smiles_col = st.session_state.get("smiles_col"),
+                            task       = st.session_state.get("task", "auto"),
+                            cv_folds   = adv.get("cv_folds", 5),
+                            models     = adv.get("models", []),
+                            model_params = st.session_state.get("model_params", {}),
+                            timeout    = adv.get("timeout", 300),
+                            scaler     = adv.get("scaler", "auto"),
+                            do_eda     = adv.get("do_eda", True),
+                            do_prep    = adv.get("do_prep", True),
+                            do_eval    = adv.get("do_eval", True),
+                            do_pca     = adv.get("do_pca", True),
+                            do_shap    = adv.get("do_shap", True),
+                            selected_descriptors = adv.get("selected_descriptors", None),
+                            monotonic_constraints_dict = st.session_state.get("_monotonic_constraints_dict", {}),
+                        )
+                        st.session_state["active_tab_idx"] = 1
+                        st.rerun()
+            else:
+                ar = st.session_state.get("automl_result")
+                if ar:
+                    st.success(
+                        f"✅ 解析完了！ 最良モデル: **{ar.best_model_key}** | "
+                        f"スコア: `{ar.best_score:.4f}` | "
+                        f"所要時間: {existing_result.elapsed:.1f}秒"
+                    )
+                cc1, cc2, cc3 = st.columns(3)
+                with cc1:
+                    if st.button("📊 結果を見る", use_container_width=True, key="view_res"):
+                        st.session_state["active_tab_idx"] = 2
+                        st.rerun()
+                with cc2:
+                    if st.button("🔄 別データで再解析", use_container_width=True, key="reset"):
+                        for k in ["df","file_name","automl_result","pipeline_result",
+                                  "target_col","detection_result","step_eda_done",
+                                  "step_preprocess_done","_run_config"]:
+                            st.session_state[k] = None if k not in ("step_eda_done","step_preprocess_done") else False
+                        st.rerun()
+                with cc3:
+                    if st.button("🔧 詳細ツールへ", use_container_width=True, key="to_expert"):
+                        st.session_state["page"] = "eda"
+                        st.rerun()
+
 
     # ====================================================
     # TAB 2: 解析実行
@@ -1260,10 +1232,9 @@ else:
         if not has_result:
             st.info("⏳ 「🚀 ② 解析実行」タブで解析を実行すると、結果がここに表示されます。")
         else:
-            # 設定変更・再解析ボタン
             c_re1, c_re2 = st.columns([2, 1])
             with c_re2:
-                if st.button("� 設定を変えて再解析", key="tab3_rerun", use_container_width=True):
+                if st.button("🔄 設定を変えて再解析", key="tab3_rerun", use_container_width=True):
                     st.session_state["automl_result"] = None
                     st.rerun()
             with c_re1:
@@ -1276,14 +1247,56 @@ else:
                     )
 
             st.markdown("---")
-            st.caption("💡 SHAP解釈・次元削減・化合物解析は左サイドバー「詳細ツール」からも利用できます。")
 
-            # モデル評価を直接表示
-            try:
-                from frontend_streamlit.pages.pipeline import evaluation_page
-                evaluation_page.render()
-            except Exception as e:
-                st.error(f"❌ 評価ページの読み込みエラー: {e}")
-                import traceback
-                st.code(traceback.format_exc())
+            # ── 結果確認サブタブ ────────────────────────────────────────
+            res_tab1, res_tab2 = st.tabs(["📈 モデル評価", "🔬 モデル解釈性"])
+
+            with res_tab1:
+                try:
+                    from frontend_streamlit.pages.pipeline import evaluation_page
+                    evaluation_page.render()
+                except Exception as e:
+                    st.error(f"❌ 評価ページの読み込みエラー: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+            with res_tab2:
+                try:
+                    from frontend_streamlit.components.interpretability_ui import render_interpretability_ui
+                    ar = st.session_state.get("automl_result")
+                    if ar is None:
+                        st.info("解析結果がありません。")
+                    else:
+                        _model  = getattr(ar, "best_pipeline", None) or getattr(ar, "best_model", None)
+                        _X_test = getattr(ar, "X_test", None) or getattr(ar, "X_train", None)
+                        _y_test = getattr(ar, "y_test", None) or getattr(ar, "y_train", None)
+                        _target = st.session_state.get("target_col")
+                        _smiles = st.session_state.get("smiles_col")
+                        _df_all = st.session_state.get("df")
+
+                        if _X_test is not None and hasattr(_X_test, "columns"):
+                            _feat_names = list(_X_test.columns)
+                        elif _df_all is not None:
+                            _feat_names = [c for c in _df_all.columns if c not in (_target, _smiles)]
+                        else:
+                            _feat_names = [f"x{i}" for i in range(
+                                _X_test.shape[1] if _X_test is not None and hasattr(_X_test, "shape") else 10)]
+
+                        if _model is None:
+                            st.warning("モデルオブジェクトが取得できませんでした。")
+                        elif _X_test is None:
+                            st.warning("テストデータが取得できませんでした。")
+                        else:
+                            render_interpretability_ui(
+                                model=_model,
+                                X=_X_test,
+                                y=_y_test,
+                                feature_names=_feat_names,
+                                task=getattr(ar, "task", "regression"),
+                            )
+                except Exception as e:
+                    st.error(f"❌ 解釈性UIの読み込みエラー: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
 

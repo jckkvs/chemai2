@@ -9,6 +9,24 @@ import streamlit as st
 import numpy as np
 
 
+def _get_smiles_for_index(idx, df_raw) -> list[str]:
+    """インデックスに対応するSMILES列を取得する。SMILES列が無ければ空のリストを返す。"""
+    smiles_col = st.session_state.get("smiles_col")
+    if smiles_col and df_raw is not None and smiles_col in df_raw.columns:
+        return [str(df_raw.loc[i, smiles_col]) if i in df_raw.index else "" for i in idx]
+    return [""] * len(idx)
+
+
+def _apply_smiles_hover(fig, smiles_list: list[str]) -> None:
+    """Plotly図にSMILESホバー（2D構造ポップアップ）を付与する。"""
+    try:
+        from frontend_streamlit.components.smiles_hover import add_smiles_hover_to_plotly
+        if any(s for s in smiles_list):
+            add_smiles_hover_to_plotly(fig, smiles_list)
+    except Exception:
+        pass  # ホバー機能不可でも散布図は表示する
+
+
 def render() -> None:
     st.markdown("## 📐 次元削減")
 
@@ -218,6 +236,7 @@ def render() -> None:
                     )
             
             fig_2d.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#e0e0f0"), height=600)
+            _apply_smiles_hover(fig_2d, _get_smiles_for_index(emb_df.index, df_raw))
             st.plotly_chart(fig_2d, use_container_width=True)
 
         with tab_3d:
@@ -233,6 +252,7 @@ def render() -> None:
                 )
                 fig_3d.update_traces(marker=dict(size=4))
                 fig_3d.update_layout(margin=dict(l=0, r=0, b=0, t=40), height=750)
+                _apply_smiles_hover(fig_3d, _get_smiles_for_index(emb_df.index, df_raw))
                 st.plotly_chart(fig_3d, use_container_width=True)
             else:
                 st.info("3Dプロットを表示するには、元の特徴量が3つ以上必要です。")
@@ -276,6 +296,7 @@ def render() -> None:
                     hover_data={c: True for c in df_err.columns if not c.startswith("_")},
                 )
                 fig_err.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", height=600)
+                _apply_smiles_hover(fig_err, _get_smiles_for_index(emb_df.index, df_raw))
                 st.plotly_chart(fig_err, use_container_width=True)
                 
                 st.markdown("#### 🚩 誤差の大きいサンプル (Top 10)")
@@ -307,6 +328,7 @@ def render() -> None:
             fig.update_traces(marker=dict(size=3))
 
         fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#e0e0f0"), height=650)
+        _apply_smiles_hover(fig, _get_smiles_for_index(emb_df.index, df_raw))
         st.plotly_chart(fig, use_container_width=True)
 
     # 埋め込み結果ダウンロード

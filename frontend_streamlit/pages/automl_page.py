@@ -90,6 +90,7 @@ def render(run_config: dict | None = None) -> None:
             do_pca      = run_config.get("do_pca", True),
             do_shap     = run_config.get("do_shap", True),
             selected_descriptors = run_config.get("selected_descriptors", None),
+            monotonic_constraints_dict = run_config.get("monotonic_constraints_dict", {}),
         )
         return
 
@@ -455,6 +456,7 @@ def _run_full_pipeline(
     do_shap: bool = True,
     selected_descriptors: list[str] | None = None,
     extra_params: dict[str, Any] | None = None,
+    monotonic_constraints_dict: dict[str, int] | None = None,
 ) -> None:
     """Full pipeline. All CV, preprocessor, and model settings are fully configurable."""
     extra_params = extra_params or {}
@@ -564,6 +566,7 @@ def _run_full_pipeline(
             timeout_seconds=timeout,
             progress_callback=_cb,
             selected_descriptors=selected_descriptors,
+            monotonic_constraints_dict=monotonic_constraints_dict or {},
         )
         automl_res = engine.run(
             df, target_col=target_col, smiles_col=smiles_col,
