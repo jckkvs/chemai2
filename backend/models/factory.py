@@ -477,6 +477,7 @@ _CLASSIFICATION_REGISTRY: dict[str, dict[str, Any]] = {
         "class": LogisticRegression,
         "default_params": {
             "max_iter": 1000,
+            "solver": "liblinear",
             "random_state": RANDOM_STATE,
         },
         "available": True,

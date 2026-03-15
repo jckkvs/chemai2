@@ -35,7 +35,14 @@ def render() -> None:
         _show_builtin_feature_importance(result, df, target_col)
         return
 
-    X = df.drop(columns=[target_col])
+    # 除外列・weight列・info列を考慮
+    _drop_interp = [target_col]
+    _drop_interp.extend(st.session_state.get("col_role_exclude", []))
+    _drop_interp.extend(st.session_state.get("col_role_info", []))
+    _w_interp = st.session_state.get("col_role_weight")
+    if _w_interp: _drop_interp.append(_w_interp)
+    _drop_interp = [c for c in _drop_interp if c in df.columns]
+    X = df.drop(columns=_drop_interp)
     tab1, tab2, tab3 = st.tabs(["📊 SHAP Summary", "💧 Waterfall", "🔺 SRI分解"])
 
     with tab1:
@@ -114,7 +121,13 @@ def _show_builtin_feature_importance(result, df, target_col):
     """SHAPなしでモデル組み込みの特徴量重要度を表示する。"""
     model = result.best_pipeline[-1]
     if hasattr(model, "feature_importances_"):
-        X = df.drop(columns=[target_col])
+        _drop_bi = [target_col]
+        _drop_bi.extend(st.session_state.get("col_role_exclude", []))
+        _drop_bi.extend(st.session_state.get("col_role_info", []))
+        _w_bi = st.session_state.get("col_role_weight")
+        if _w_bi: _drop_bi.append(_w_bi)
+        _drop_bi = [c for c in _drop_bi if c in df.columns]
+        X = df.drop(columns=_drop_bi)
         try:
             fnames = result.best_pipeline[:-1].get_feature_names_out()
         except Exception:

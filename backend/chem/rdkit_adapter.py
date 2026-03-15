@@ -61,12 +61,14 @@ class RDKitAdapter(BaseChemAdapter):
         morgan_bits: int = 2048,
         rdkit_fp_bits: int = 2048,
         include_maccs: bool = False,
+        compute_gasteiger: bool = True,
     ) -> None:
         self.compute_fp = compute_fp
         self.morgan_radius = morgan_radius
         self.morgan_bits = morgan_bits
         self.rdkit_fp_bits = rdkit_fp_bits
         self.include_maccs = include_maccs
+        self.compute_gasteiger = compute_gasteiger
 
     @property
     def name(self) -> str:
@@ -82,6 +84,7 @@ class RDKitAdapter(BaseChemAdapter):
     def compute(
         self,
         smiles_list: list[str],
+        charge_config_store: Any | None = None,
         **kwargs: Any,
     ) -> DescriptorResult:
         """
@@ -98,13 +101,25 @@ class RDKitAdapter(BaseChemAdapter):
 
         from rdkit import Chem  # type: ignore
         from rdkit.Chem import Descriptors, rdMolDescriptors, AllChem, MACCSkeys  # type: ignore
+        from rdkit.Chem import rdPartialCharges  # Gasteiger電荷計算
 
         rows: list[dict[str, float]] = []
         failed: list[int] = []
 
         for idx, smi in enumerate(smiles_list):
             try:
-                mol = Chem.MolFromSmiles(smi)
+                # プロトン化変換を適用（charge_config_store がある場合）
+                if charge_config_store is not None:
+                    cfg = charge_config_store.get_config(smi)
+                    from backend.chem.protonation import apply_protonation
+                    smi_to_use = apply_protonation(smi, cfg)
+                else:
+                    smi_to_use = smi
+
+                mol = Chem.MolFromSmiles(smi_to_use)
+                if mol is None:
+                    # フォールバック: 元のSMILESを試す
+                    mol = Chem.MolFromSmiles(smi)
                 if mol is None:
                     raise ValueError(f"無効なSMILES: {smi!r}")
 
@@ -118,13 +133,40 @@ class RDKitAdapter(BaseChemAdapter):
                             fn = getattr(rdMolDescriptors, fn_name, None)
                         if fn is not None:
                             val = fn(mol)
-                            # valが関数のまま返ってきていないか、数値化可能かチェック
                             row[col] = float(val) if val is not None else np.nan
                         else:
                             row[col] = np.nan
                     except Exception as e:
                         logger.warning(f"記述子 {col} の計算失敗: {e}")
                         row[col] = np.nan
+
+                # Gasteiger 部分電荷記述子
+                if self.compute_gasteiger:
+                    try:
+                        mol_h = Chem.AddHs(mol)
+                        rdPartialCharges.ComputeGasteigerCharges(mol_h)
+                        charges = [
+                            float(mol_h.GetAtomWithIdx(i).GetDoubleProp('_GasteigerCharge'))
+                            for i in range(mol_h.GetNumAtoms())
+                        ]
+                        # NaN/Inf を除去
+                        charges = [q for q in charges if np.isfinite(q)]
+                        if charges:
+                            charges_arr = np.array(charges)
+                            row["gasteiger_q_max"]      = float(np.max(charges_arr))
+                            row["gasteiger_q_min"]      = float(np.min(charges_arr))
+                            row["gasteiger_q_range"]    = float(np.max(charges_arr) - np.min(charges_arr))
+                            row["gasteiger_q_std"]      = float(np.std(charges_arr))
+                            row["gasteiger_q_abs_mean"] = float(np.mean(np.abs(charges_arr)))
+                        else:
+                            for k in ["gasteiger_q_max", "gasteiger_q_min",
+                                      "gasteiger_q_range", "gasteiger_q_std", "gasteiger_q_abs_mean"]:
+                                row[k] = np.nan
+                    except Exception as eg:
+                        logger.debug(f"Gasteiger電荷計算失敗 ({smi[:20]}): {eg}")
+                        for k in ["gasteiger_q_max", "gasteiger_q_min",
+                                  "gasteiger_q_range", "gasteiger_q_std", "gasteiger_q_abs_mean"]:
+                            row[k] = np.nan
 
                 # Morgan フィンガープリント (ECFP4)
                 if self.compute_fp:

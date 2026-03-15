@@ -37,6 +37,19 @@ boruta>=0.3              # Boruta
 sklearn-genetic-opt>=5.0 # GeneticSelection
 linear-tree>=0.6         # LinearTree
 group-lasso>=0.4         # GroupLasso
+imodels>=1.4             # 解釈可能モデル(FIGS, RuleFit等)
+sage-importance>=0.0.6   # SAGE特徴量重要度
+shapiq>=1.0              # SHAP interactions (SRI分解)
+phate>=1.0               # PHATE 次元削減
+lime>=0.2                # LIME 局所解釈
+eli5>=0.13               # ELI5 特徴量重要度
+fairchem-core>=2.17      # Meta UMA (Universal Model for Atoms)
+scikit-fingerprints>=1.0 # 30種以上のフィンガープリント (ECFP, MACCS等)
+padelpy>=0.1             # PaDEL-Descriptor (1800+記述子, Java必要)
+descriptastorus>=2.6     # Merck 高速記述子計算 (RDKit2D標準化)
+mol2vec>=0.1             # Word2Vec分子埋め込み (300次元)
+molfeat>=0.9             # Datamol統合FPフレームワーク
+chemprop>=2.0            # D-MPNN グラフニューラルネットワーク
 
 # ========== 開発用 ==========
 pytest>=7.4

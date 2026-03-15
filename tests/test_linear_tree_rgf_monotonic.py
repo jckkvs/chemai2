@@ -122,7 +122,7 @@ class TestLinearTreeClassifier:
         np.testing.assert_allclose(proba.sum(axis=1), np.ones(150), atol=1e-5)
 
     def test_fit_not_mutate_base(self):
-        base = LogisticRegression(C=0.5, max_iter=500)
+        base = LogisticRegression(C=0.5, max_iter=500, solver="liblinear")
         m = self.cls(base_estimator=base, max_depth=2, random_state=0)
         m.fit(X_clf, y_clf)
         assert m.base_estimator.C == 0.5, "base_estimator.Cが変わっている"

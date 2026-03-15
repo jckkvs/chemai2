@@ -47,6 +47,9 @@ class AutoMLResult:
     elapsed_seconds: float
     warnings: list[str] = field(default_factory=list)
     processed_X: pd.DataFrame | None = None
+    # SHAP解析・評価用: パイプライン適用前の特徴量と目的変数
+    X_train: pd.DataFrame | None = None
+    y_train: np.ndarray | None = None
     # CV の Out-Of-Fold 予測 (全データに対するCVの予測値)
     oof_predictions: np.ndarray | None = None
     oof_true: np.ndarray | None = None
@@ -147,16 +150,24 @@ class AutoMLEngine:
 
         # Step 4: 目的変数・特徴量の準備
         y = df[target_col].values
-        X = df.drop(columns=[target_col])
-
-        # 特徴量が1つも残っていない場合のチェック
-        if X.shape[1] == 0:
-            raise ValueError("学習に使用できる特徴量がありません。目的変数以外の列が存在するか確認してください。")
+        _drop_cols = [target_col]
 
         groups = df[group_col].values if group_col and group_col in df.columns else None
         # cv_groups_col が指定されている場合はそちらを優先
         if self.cv_groups_col and self.cv_groups_col in df.columns:
             groups = df[self.cv_groups_col].values
+
+        # グループ列を特徴量から除外（_leakage_group等がfeatureに混入するのを防止）
+        if group_col and group_col in df.columns:
+            _drop_cols.append(group_col)
+        if self.cv_groups_col and self.cv_groups_col in df.columns and self.cv_groups_col not in _drop_cols:
+            _drop_cols.append(self.cv_groups_col)
+
+        X = df.drop(columns=_drop_cols)
+
+        # 特徴量が1つも残っていない場合のチェック
+        if X.shape[1] == 0:
+            raise ValueError("学習に使用できる特徴量がありません。目的変数以外の列が存在するか確認してください。")
 
         # Step 5: モデル学習
         self.progress_callback(4, total_steps, "複数モデルで学習中...")
@@ -244,10 +255,12 @@ class AutoMLEngine:
                     std_s = result.get("std_test_score", 0.0)
 
                 model_scores[mkey] = mean_s
+                fold_scores_list = result[score_key].tolist() if score_key in result else []
                 model_details[mkey] = {
                     "mean": mean_s,
                     "std": std_s,
                     "fit_time": float(np.mean(result.get("fit_time", [0]))),
+                    "fold_scores": fold_scores_list,
                 }
                 if mean_s > best_score:
                     best_score = mean_s
@@ -266,7 +279,22 @@ class AutoMLEngine:
 
         # Step 6: 最良モデルを全データで再学習
         self.progress_callback(5, total_steps, f"最良モデル({best_key})を全データで学習中...")
-        best_model = get_model(best_key, task=task)
+        best_model = get_model(best_key, task=task, **self.model_params.get(best_key, {}))
+        # 最良モデルにも単調性制約を適用
+        if self.monotonic_constraints_dict:
+            try:
+                from backend.pipeline.column_selector import ColumnMeta
+                from backend.pipeline.pipeline_builder import apply_monotonic_constraints
+                _col_meta_best = {
+                    col: ColumnMeta(monotonic=self.monotonic_constraints_dict.get(col, 0))
+                    for col in X_train.columns
+                }
+                best_model = apply_monotonic_constraints(
+                    best_model, _col_meta_best,
+                    feature_names=list(X_train.columns)
+                )
+            except Exception as _e:
+                logger.warning(f"最良モデルへの単調性制約適用をスキップ ({best_key}): {_e}")
         best_pipeline_base = build_full_pipeline(
             detection_result, best_model,
             target_col=target_col,
@@ -296,6 +324,7 @@ class AutoMLEngine:
             oof_preds = cross_val_predict(
                 best_pipeline, X_train, y,
                 cv=_cv_splitter, method=_cv_method, n_jobs=1,
+                groups=groups,
             )
             # predict_proba の場合はスコア（クラス1の確率）のみ or argmax
             if _cv_method == "predict_proba" and oof_preds.ndim == 2:
@@ -323,6 +352,8 @@ class AutoMLEngine:
             elapsed_seconds=elapsed,
             warnings=warnings,
             processed_X=X,
+            X_train=X_train,
+            y_train=y,
             oof_predictions=oof_preds,
             oof_true=y if oof_preds is not None else None,
         )

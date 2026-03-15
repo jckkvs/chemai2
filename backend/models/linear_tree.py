@@ -38,6 +38,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 from sklearn.base import (
     BaseEstimator, RegressorMixin, ClassifierMixin, clone,
     is_classifier,
@@ -561,10 +562,9 @@ class LinearForestRegressor(BaseEstimator, RegressorMixin):
         n = X_arr.shape[0]
 
         rng = np.random.default_rng(self.random_state)
-        self.estimators_: list[LinearTreeRegressor] = []
+        seeds = [int(rng.integers(0, 2**31)) for _ in range(self.n_estimators)]
 
-        for i in range(self.n_estimators):
-            seed = int(rng.integers(0, 2**31))
+        def _fit_one(seed: int) -> LinearTreeRegressor:
             tree = LinearTreeRegressor(
                 base_estimator=deepcopy(self.base_estimator),
                 max_depth=self.max_depth,
@@ -575,22 +575,30 @@ class LinearForestRegressor(BaseEstimator, RegressorMixin):
                 random_state=seed,
             )
             if self.bootstrap:
+                _rng = np.random.default_rng(seed)
                 n_sub = max(1, int(n * self.max_samples))
-                idx = rng.choice(n, size=n_sub, replace=True)
+                idx = _rng.choice(n, size=n_sub, replace=True)
                 tree.fit(X_arr[idx], y_arr[idx])
             else:
                 tree.fit(X_arr, y_arr)
-            self.estimators_.append(tree)
+            return tree
 
+        n_jobs = self.n_jobs if self.n_jobs != 0 else 1
+        self.estimators_: list[LinearTreeRegressor] = Parallel(n_jobs=n_jobs)(
+            delayed(_fit_one)(seed) for seed in seeds
+        )
         self.n_features_in_ = X_arr.shape[1]
-        logger.info(f"LinearForestRegressor: {self.n_estimators} 本の木を学習")
+        logger.info(f"LinearForestRegressor: {self.n_estimators} 本の木を学習 (n_jobs={n_jobs})")
         return self
 
     def predict(self, X: Any) -> np.ndarray:
         check_is_fitted(self, "estimators_")
         X_arr = _to_numpy(X)
-        preds = np.stack([t.predict(X_arr) for t in self.estimators_], axis=1)
-        return preds.mean(axis=1)
+        n_jobs = self.n_jobs if self.n_jobs != 0 else 1
+        preds_list = Parallel(n_jobs=n_jobs)(
+            delayed(t.predict)(X_arr) for t in self.estimators_
+        )
+        return np.stack(preds_list, axis=1).mean(axis=1)
 
 
 class LinearForestClassifier(BaseEstimator, ClassifierMixin):
@@ -632,11 +640,10 @@ class LinearForestClassifier(BaseEstimator, ClassifierMixin):
         self.classes_ = np.unique(y_arr)
         self.n_classes_ = len(self.classes_)
         rng = np.random.default_rng(self.random_state)
-        self.estimators_: list[LinearTreeClassifier] = []
-
+        seeds = [int(rng.integers(0, 2**31)) for _ in range(self.n_estimators)]
         n = X_arr.shape[0]
-        for i in range(self.n_estimators):
-            seed = int(rng.integers(0, 2**31))
+
+        def _fit_one_cls(seed: int) -> LinearTreeClassifier:
             tree = LinearTreeClassifier(
                 base_estimator=deepcopy(self.base_estimator),
                 max_depth=self.max_depth,
@@ -647,13 +654,18 @@ class LinearForestClassifier(BaseEstimator, ClassifierMixin):
                 random_state=seed,
             )
             if self.bootstrap:
+                _rng = np.random.default_rng(seed)
                 n_sub = max(1, int(n * self.max_samples))
-                idx = rng.choice(n, size=n_sub, replace=True)
+                idx = _rng.choice(n, size=n_sub, replace=True)
                 tree.fit(X_arr[idx], y_arr[idx])
             else:
                 tree.fit(X_arr, y_arr)
-            self.estimators_.append(tree)
+            return tree
 
+        n_jobs = self.n_jobs if self.n_jobs != 0 else 1
+        self.estimators_: list[LinearTreeClassifier] = Parallel(n_jobs=n_jobs)(
+            delayed(_fit_one_cls)(seed) for seed in seeds
+        )
         self.n_features_in_ = X_arr.shape[1]
         return self
 
@@ -665,10 +677,11 @@ class LinearForestClassifier(BaseEstimator, ClassifierMixin):
     def predict_proba(self, X: Any) -> np.ndarray:
         check_is_fitted(self, "estimators_")
         X_arr = _to_numpy(X)
-        probas = np.stack(
-            [t.predict_proba(X_arr) for t in self.estimators_], axis=0
+        n_jobs = self.n_jobs if self.n_jobs != 0 else 1
+        probas_list = Parallel(n_jobs=n_jobs)(
+            delayed(t.predict_proba)(X_arr) for t in self.estimators_
         )
-        return probas.mean(axis=0)
+        return np.stack(probas_list, axis=0).mean(axis=0)
 
 
 # ─────────────────────────────────────────────────────────────

@@ -180,7 +180,7 @@ class TestEvaluateClassification:
     def test_roc_auc_with_proba(self, cls_data: tuple) -> None:
         """確率配列が渡されたときROC-AUCが計算されること。(T-BM-004-03)"""
         X, y = cls_data
-        model = LogisticRegression(max_iter=200)
+        model = LogisticRegression(max_iter=200, solver="liblinear")
         model.fit(X, y)
         y_pred = model.predict(X)
         y_prob = model.predict_proba(X)
@@ -252,7 +252,7 @@ class TestBenchmarkModels:
         X_train, y_train = X[:80], y[:80]
         X_test, y_test = X[80:], y[80:]
         models = {
-            "lr": LogisticRegression(max_iter=200),
+            "lr": LogisticRegression(max_iter=200, solver="liblinear"),
             "dt": DecisionTreeClassifier(random_state=0),
         }
         result = benchmark_models(

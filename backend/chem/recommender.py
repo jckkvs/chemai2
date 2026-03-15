@@ -266,7 +266,202 @@ _RECOMMENDATION_DATA = [
             DescriptorInfo("TPSA", "RDKit", "極性表面積", "RDKit", "極性・官能基系"),
             DescriptorInfo("MolVolume", "COSMO-RS", "モル体積（Flory-Huggins理論におけるエントロピー項）", "Flory-Huggins solution theory", "立体・形状系"),
         ]
-    )
+    ),
+    TargetRecommendations(
+        target_name="アッベ数 (Abbe Number)",
+        summary="色分散の小ささを示す。分極率の波長依存性（異常分散）に関係し、電子分極が小さくπ電子系が少ないほどアッべ数が高い。屈折率と逆相関の傾向。",
+        category="光・電磁気系",
+        descriptors=[
+            DescriptorInfo("MolMR", "RDKit", "モル屈折（分極率の指標、アッベ数と負の相関）", "Lorentz-Lorenz", "量子化学・電子状態系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数（π電子→異常分散→低アッベ数）", "Bicerano (2002)", "トポロジー系"),
+            DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率（高いほど分散低→高アッベ数）", "Polymer Optics", "トポロジー系"),
+            DescriptorInfo("Polarizability", "XTB", "分極率", "GFN2-xTB", "量子化学・電子状態系"),
+            DescriptorInfo("HomoLumoGap", "XTB", "HOMO-LUMOギャップ（大きいほど分散が少ない）", "GFN2-xTB", "量子化学・電子状態系"),
+            DescriptorInfo("MolWt", "RDKit", "分子量", "General", "立体・形状系"),
+            DescriptorInfo("NumHalogens", "RDKit", "ハロゲン原子数（重原子は分散を増大）", "RDKit", "極性・官能基系"),
+            DescriptorInfo("VanDerWaalsVolume", "GroupContribution", "ファンデルワールス体積", "McGowan", "立体・形状系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="融点 (Tm / Melting Temperature)",
+        summary="結晶の秩序が崩壊する温度。格子エネルギー（分子間力の強さ）、分子の対称性、水素結合ネットワーク、分子量が支配的。",
+        category="熱・相転移系",
+        descriptors=[
+            DescriptorInfo("CohesiveEnergy", "COSMO-RS", "凝集エネルギー（格子エネルギーの指標）", "Bicerano (2002)", "熱力学・相互作用系"),
+            DescriptorInfo("DipoleMoment", "XTB", "双極子モーメント（極性分子間力）", "GFN2-xTB", "極性・官能基系"),
+            DescriptorInfo("HBD_Count", "RDKit", "水素結合供与体数", "Crystal packing theory", "極性・官能基系"),
+            DescriptorInfo("HBA_Count", "RDKit", "水素結合受容体数", "Crystal packing theory", "極性・官能基系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数（π-πスタッキング）", "Crystal Engineering", "トポロジー系"),
+            DescriptorInfo("MolWt", "RDKit", "分子量", "General thermodynamics", "立体・形状系"),
+            DescriptorInfo("SpherocityIndex", "RDKit", "球形度（対称性が高いほど高Tm）", "RDKit 3D", "立体・形状系"),
+            DescriptorInfo("NumRotatableBonds", "RDKit", "回転可能結合数（柔軟性→低Tm）", "RDKit", "トポロジー系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="熱膨張係数 (CTE / Coefficient of Thermal Expansion)",
+        summary="温度変化に対する体積膨張率。自由体積の大きさ、分子間力の弱さ、鎖の柔軟性が高いほどCTEが大きい。Tgとは負の相関。",
+        category="熱・相転移系",
+        descriptors=[
+            DescriptorInfo("FreeVolume", "GroupContribution", "自由体積（大きいほどCTE大）", "Bicerano (2002)", "立体・形状系"),
+            DescriptorInfo("CohesiveEnergyDensity", "GroupContribution", "凝集エネルギー密度（強いほどCTE小）", "Bicerano (2002)", "熱力学・相互作用系"),
+            DescriptorInfo("NumRotatableBonds", "RDKit", "回転可能結合数（柔軟→高CTE）", "Polymer Physics", "トポロジー系"),
+            DescriptorInfo("Tg_estimated", "GroupContribution", "ガラス転移温度（Tg以上でCTE急増）", "Bicerano (2002)", "熱・相転移系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数（剛直→低CTE）", "Polymer Physics", "トポロジー系"),
+            DescriptorInfo("VanDerWaalsVolume", "GroupContribution", "ファンデルワールス体積", "McGowan", "立体・形状系"),
+            DescriptorInfo("DipoleMoment", "XTB", "双極子モーメント", "GFN2-xTB", "極性・官能基系"),
+            DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率", "Bicerano (2002)", "トポロジー系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="溶解度 (Solubility / LogS)",
+        summary="溶媒への溶けやすさ。ハンセン溶解度パラメータの距離、分子の極性、水素結合能力、分子サイズが決定因子。",
+        category="界面・溶液系",
+        descriptors=[
+            DescriptorInfo("LogP", "RDKit", "オクタノール/水分配係数（水溶性と強い負相関）", "ADMET / Yalkowsky", "熱力学・相互作用系"),
+            DescriptorInfo("TPSA", "RDKit", "極性表面積（大きいほど水溶性）", "Ertl et al. (2000)", "極性・官能基系"),
+            DescriptorInfo("HBD_Count", "RDKit", "水素結合供与体数", "Lipinski", "極性・官能基系"),
+            DescriptorInfo("HBA_Count", "RDKit", "水素結合受容体数", "Lipinski", "極性・官能基系"),
+            DescriptorInfo("AqueousSolubility", "COSMO-RS", "COSMO-RS水溶性予測値", "COSMOTherm", "界面・溶液系"),
+            DescriptorInfo("MolWt", "RDKit", "分子量（大きいほど溶解エントロピー小）", "General", "立体・形状系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数", "RDKit", "トポロジー系"),
+            DescriptorInfo("SolvationFreeEnergy", "COSMO-RS", "溶媒和自由エネルギー", "COSMO-RS", "熱力学・相互作用系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="引張強度 (Tensile Strength)",
+        summary="引張破壊に至るまでの最大応力。凝集エネルギー密度、水素結合ネットワーク、主鎖の剛直性、結晶化度が影響。",
+        category="力学・強度系",
+        descriptors=[
+            DescriptorInfo("CohesiveEnergyDensity", "GroupContribution", "凝集エネルギー密度", "Bicerano (2002)", "熱力学・相互作用系"),
+            DescriptorInfo("HBD_Count", "RDKit", "水素結合供与体数（強い分子間ネットワーク）", "Polymer Mechanics", "極性・官能基系"),
+            DescriptorInfo("HBA_Count", "RDKit", "水素結合受容体数", "Polymer Mechanics", "極性・官能基系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数（剛直性と配向結晶化）", "Polymer Physics", "トポロジー系"),
+            DescriptorInfo("NumRotatableBonds", "RDKit", "回転可能結合数（柔軟性）", "Polymer Physics", "トポロジー系"),
+            DescriptorInfo("DipoleMoment", "XTB", "双極子モーメント", "GFN2-xTB", "極性・官能基系"),
+            DescriptorInfo("MolWt", "RDKit", "分子量", "Polymer science", "立体・形状系"),
+            DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率", "Bicerano (2002)", "トポロジー系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="靭性 (Toughness)",
+        summary="破壊までに吸収するエネルギー量。強度と伸びの積。絡み合い分子量、凝集力と柔軟性のバランス、衝撃吸収能力が重要。",
+        category="力学・強度系",
+        descriptors=[
+            DescriptorInfo("EntanglementMW", "GroupContribution", "絡み合い分子量", "Wu (1989) / Bicerano (2002)", "トポロジー系"),
+            DescriptorInfo("CohesiveEnergyDensity", "GroupContribution", "凝集エネルギー密度", "Bicerano (2002)", "熱力学・相互作用系"),
+            DescriptorInfo("NumRotatableBonds", "RDKit", "回転可能結合数（延性に寄与）", "Polymer Physics", "トポロジー系"),
+            DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率（柔軟性）", "Bicerano (2002)", "トポロジー系"),
+            DescriptorInfo("Tg_estimated", "GroupContribution", "ガラス転移温度（使用温度との差）", "Bicerano (2002)", "熱・相転移系"),
+            DescriptorInfo("HBD_Count", "RDKit", "水素結合供与体数（エネルギー吸収）", "Polymer Mechanics", "極性・官能基系"),
+            DescriptorInfo("MolWt", "RDKit", "分子量", "Polymer science", "立体・形状系"),
+            DescriptorInfo("DipoleMoment", "XTB", "双極子モーメント", "GFN2-xTB", "極性・官能基系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="バンドギャップ (Band Gap)",
+        summary="電子のHOMO-LUMOギャップに対応。共役長、電子供与・吸引基のバランス、分子の平面性が支配的。有機半導体・OLEDの設計指標。",
+        category="光・電磁気系",
+        descriptors=[
+            DescriptorInfo("HomoLumoGap", "XTB", "HOMO-LUMOギャップ（バンドギャップの直接近似）", "GFN2-xTB / Koopmans", "量子化学・電子状態系"),
+            DescriptorInfo("HomoEnergy", "XTB", "HOMOエネルギー", "GFN2-xTB", "量子化学・電子状態系"),
+            DescriptorInfo("LumoEnergy", "XTB", "LUMOエネルギー", "GFN2-xTB", "量子化学・電子状態系"),
+            DescriptorInfo("MaxConjugatedChain", "RDKit", "最大共役長（長い→小ギャップ）", "Physical Organic Chemistry", "トポロジー系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数（π非局在化）", "Organic Electronics", "トポロジー系"),
+            DescriptorInfo("Polarizability", "XTB", "分極率", "GFN2-xTB", "量子化学・電子状態系"),
+            DescriptorInfo("IonizationPotential", "XTB", "イオン化ポテンシャル", "GFN2-xTB", "量子化学・電子状態系"),
+            DescriptorInfo("ElectronAffinity", "XTB", "電子親和力", "GFN2-xTB", "量子化学・電子状態系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="導電率 (Electrical Conductivity)",
+        summary="電荷キャリアの移動度に依存。HOMO-LUMOギャップ（小さいほど導電性）、共役系、ドーパント相互作用、ホッピング経路の有無が支配的。",
+        category="光・電磁気系",
+        descriptors=[
+            DescriptorInfo("HomoLumoGap", "XTB", "HOMO-LUMOギャップ（小さいほど高導電性）", "GFN2-xTB", "量子化学・電子状態系"),
+            DescriptorInfo("MaxConjugatedChain", "RDKit", "最大共役長（キャリア移動経路）", "Organic Electronics", "トポロジー系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数（π軌道の非局在化）", "Organic Electronics", "トポロジー系"),
+            DescriptorInfo("ElectronAffinity", "XTB", "電子親和力（n型導電性）", "GFN2-xTB", "量子化学・電子状態系"),
+            DescriptorInfo("IonizationPotential", "XTB", "イオン化ポテンシャル（p型導電性）", "GFN2-xTB", "量子化学・電子状態系"),
+            DescriptorInfo("Polarizability", "XTB", "分極率", "GFN2-xTB", "量子化学・電子状態系"),
+            DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率（低いほど共役→高導電）", "Organic Electronics", "トポロジー系"),
+            DescriptorInfo("DipoleMoment", "XTB", "双極子モーメント", "GFN2-xTB", "極性・官能基系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="親水性 / 撥水性 (Hydrophilicity / Hydrophobicity)",
+        summary="水との親和性。接触角に対応。LogP、極性表面積、水素結合基の数、表面自由エネルギーが決定因子。",
+        category="界面・溶液系",
+        descriptors=[
+            DescriptorInfo("LogP", "RDKit", "オクタノール/水分配係数（疎水性の直接指標）", "Lipinski", "熱力学・相互作用系"),
+            DescriptorInfo("TPSA", "RDKit", "極性表面積（大きいほど親水性）", "Ertl et al. (2000)", "極性・官能基系"),
+            DescriptorInfo("HBD_Count", "RDKit", "水素結合供与体数", "Surface chemistry", "極性・官能基系"),
+            DescriptorInfo("HBA_Count", "RDKit", "水素結合受容体数", "Surface chemistry", "極性・官能基系"),
+            DescriptorInfo("SolvationFreeEnergy", "COSMO-RS", "水和自由エネルギー", "COSMO-RS", "熱力学・相互作用系"),
+            DescriptorInfo("HLB", "GroupContribution", "親水性疎水性バランス(HLB)", "Griffin's method", "熱力学・相互作用系"),
+            DescriptorInfo("NumHeteroatoms", "RDKit", "ヘテロ原子数（親水基の数）", "RDKit", "極性・官能基系"),
+            DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率", "Surface chemistry", "トポロジー系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="酸素透過性 (Oxygen Permeability / OTR)",
+        summary="酸素ガスの透過量。自由体積と拡散係数、凝集力と溶解度係数のバランスで決まる。結晶化度が高いほどバリア性が高い。",
+        category="輸送・透過性系",
+        descriptors=[
+            DescriptorInfo("FreeVolume", "GroupContribution", "自由体積（大きいほど透過性大）", "Bicerano (2002) / Freeman theory", "立体・形状系"),
+            DescriptorInfo("CohesiveEnergyDensity", "GroupContribution", "凝集エネルギー密度（高いほどバリア性大）", "Freeman (1999)", "熱力学・相互作用系"),
+            DescriptorInfo("NumRotatableBonds", "RDKit", "回転可能結合数（鎖可動性→拡散促進）", "Membrane science", "トポロジー系"),
+            DescriptorInfo("Tg_estimated", "GroupContribution", "ガラス転移温度（Tg以上で透過急増）", "Bicerano (2002)", "熱・相転移系"),
+            DescriptorInfo("VanDerWaalsVolume", "GroupContribution", "ファンデルワールス体積", "McGowan", "立体・形状系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数（パッキング密度→バリア性）", "Membrane science", "トポロジー系"),
+            DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率", "Bicerano (2002)", "トポロジー系"),
+            DescriptorInfo("DipoleMoment", "XTB", "双極子モーメント（O2との相互作用）", "GFN2-xTB", "極性・官能基系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="水蒸気透過性 (Water Vapor Permeability / WVTR)",
+        summary="水蒸気の透過量。親水基の多さ（溶解度係数）と自由体積（拡散係数）の積。極性基が多いほど水分の溶解度が上がり透過性増大。",
+        category="輸送・透過性系",
+        descriptors=[
+            DescriptorInfo("TPSA", "RDKit", "極性表面積（水蒸気との親和性）", "Ertl / Membrane science", "極性・官能基系"),
+            DescriptorInfo("HBD_Count", "RDKit", "水素結合供与体数（水分子の溶解促進）", "Water transport theory", "極性・官能基系"),
+            DescriptorInfo("HBA_Count", "RDKit", "水素結合受容体数", "Water transport theory", "極性・官能基系"),
+            DescriptorInfo("FreeVolume", "GroupContribution", "自由体積（拡散係数の指標）", "Bicerano (2002)", "立体・形状系"),
+            DescriptorInfo("LogP", "RDKit", "脂溶性（高いほど水蒸気バリア性）", "ADMET / Membrane science", "熱力学・相互作用系"),
+            DescriptorInfo("CohesiveEnergyDensity", "GroupContribution", "凝集エネルギー密度", "Freeman (1999)", "熱力学・相互作用系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数（パッキング→バリア性）", "Membrane science", "トポロジー系"),
+            DescriptorInfo("DipoleMoment", "XTB", "双極子モーメント", "GFN2-xTB", "極性・官能基系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="水素透過性 (Hydrogen Permeability)",
+        summary="水素ガスの透過量。H2は最小分子のため自由体積による拡散が支配的。凝集力や結晶性は溶解度を低下させバリア性を向上。",
+        category="輸送・透過性系",
+        descriptors=[
+            DescriptorInfo("FreeVolume", "GroupContribution", "自由体積（H2拡散に最も支配的）", "Freeman (1999) / Robeson upper bound", "立体・形状系"),
+            DescriptorInfo("CohesiveEnergyDensity", "GroupContribution", "凝集エネルギー密度（バリア性）", "Freeman (1999)", "熱力学・相互作用系"),
+            DescriptorInfo("Tg_estimated", "GroupContribution", "ガラス転移温度（ゴム状態で透過急増）", "Bicerano (2002)", "熱・相転移系"),
+            DescriptorInfo("NumRotatableBonds", "RDKit", "回転可能結合数（鎖運動性→拡散促進）", "Membrane science", "トポロジー系"),
+            DescriptorInfo("VanDerWaalsVolume", "GroupContribution", "ファンデルワールス体積", "McGowan / Bondi", "立体・形状系"),
+            DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率", "Bicerano (2002)", "トポロジー系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数", "Membrane science", "トポロジー系"),
+            DescriptorInfo("MolWt", "RDKit", "分子量", "General", "立体・形状系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="溶融粘度 (Melt Viscosity)",
+        summary="溶融状態での流れにくさ。分子量（絡み合い）、分子間力、鎖の剛直性が支配的。加工性に直結。",
+        category="熱・相転移系",
+        descriptors=[
+            DescriptorInfo("MolWt", "RDKit", "分子量（絡み合い分子量超で粘度急増）", "Rouse-Zimm / Reptation theory", "立体・形状系"),
+            DescriptorInfo("EntanglementMW", "GroupContribution", "絡み合い分子量", "Wu (1989) / Bicerano (2002)", "トポロジー系"),
+            DescriptorInfo("CohesiveEnergyDensity", "GroupContribution", "凝集エネルギー密度", "Bicerano (2002)", "熱力学・相互作用系"),
+            DescriptorInfo("NumRotatableBonds", "RDKit", "回転可能結合数（柔軟→低粘度）", "Polymer Rheology", "トポロジー系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環数（剛直→高粘度）", "Polymer Rheology", "トポロジー系"),
+            DescriptorInfo("HBD_Count", "RDKit", "水素結合供与体数（分子間拘束）", "Polymer Rheology", "極性・官能基系"),
+            DescriptorInfo("DipoleMoment", "XTB", "双極子モーメント", "GFN2-xTB", "極性・官能基系"),
+            DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率", "Polymer Physics", "トポロジー系"),
+        ]
+    ),
 ]
 
 def get_all_target_recommendations() -> List[TargetRecommendations]:

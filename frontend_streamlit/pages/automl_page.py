@@ -74,13 +74,60 @@ def render(run_config: dict | None = None) -> None:
 
     # ── ホームから渡された設定で即実行 ──────────────────────
     if run_config is not None:
+        _df_for_run = df.copy()
+
+        # P0-1/P1-1: 除外列+Info列をdrop
+        _exclude_cols = run_config.get("exclude_cols", [])
+        _cols_to_drop = [c for c in _exclude_cols if c in _df_for_run.columns]
+        if _cols_to_drop:
+            _df_for_run = _df_for_run.drop(columns=_cols_to_drop)
+            st.caption(f"🚫 除外列を解析から除去: {', '.join(_cols_to_drop)}")
+
+        # P0-2: グループ列（手動設定 or リーケージ検出）
+        _cv_groups_col = None
+        _manual_group_col = run_config.get("cv_groups_col")
+        if _manual_group_col and _manual_group_col in _df_for_run.columns:
+            _cv_groups_col = _manual_group_col
+        else:
+            # リーケージ検出のグループラベルがある場合はdfに一時列を追加
+            _leakage_groups = run_config.get("leakage_group_labels")
+            if _leakage_groups is not None and len(_leakage_groups) == len(_df_for_run):
+                _df_for_run["_leakage_group"] = _leakage_groups
+                _cv_groups_col = "_leakage_group"
+
+        # リーケージ推奨CV or 手動グループ列によるCV選択
+        _leakage_cv = run_config.get("leakage_recommended_cv")
+        _cv_key = "auto"
+        if _manual_group_col and _cv_groups_col:
+            _cv_key = "group_kfold"
+            st.info(f"📋 グループ列 `{_manual_group_col}` を使用して GroupKFold を適用します。")
+        elif _leakage_cv == "GroupKFold" and _cv_groups_col:
+            _cv_key = "group_kfold"
+            st.info("📋 **リーケージ検出** により GroupKFold を自動適用しました。同一グループがtrain/testに分割されることを防ぎます。")
+        elif _leakage_cv == "LeaveOneGroupOut" and _cv_groups_col:
+            _cv_key = "leave_one_group_out"
+            st.info("📋 **リーケージ検出** により LeaveOneGroupOut を自動適用しました。")
+
+        # P1-2: 時系列列の推奨
+        _time_col = run_config.get("col_role_time")
+        if _time_col and _time_col in _df_for_run.columns and _cv_key == "auto":
+            st.info(f"📅 時系列列 `{_time_col}` が設定されています。TimeSeriesSplit の使用を推奨します（詳細ツール→パイプライン設計で変更可能）。")
+
+        # P0-3: Weight列を説明変数から除外（sample_weightとして使用予定）
+        _weight_col = run_config.get("sample_weight_col")
+        if _weight_col and _weight_col in _df_for_run.columns:
+            _df_for_run = _df_for_run.drop(columns=[_weight_col])
+            st.caption(f"⚖️ Weight列 `{_weight_col}` を説明変数から除外しました。")
+
         _run_full_pipeline(
-            df          = df,
+            df          = _df_for_run,
             target_col  = run_config["target_col"],
             smiles_col  = run_config.get("smiles_col"),
             numeric_scaler = run_config.get("scaler", "auto"),
             task_override  = run_config.get("task", "auto"),
+            cv_key      = _cv_key,
             cv_folds    = run_config.get("cv_folds", 5),
+            cv_groups_col = _cv_groups_col,
             models      = run_config.get("models", []),
             timeout     = run_config.get("timeout", 300),
             do_eda      = run_config.get("do_eda", True),
@@ -963,3 +1010,43 @@ def _show_leaderboard(result: AutoMLResult) -> None:
         margin=dict(l=120, r=50, t=30, b=30),
     )
     st.plotly_chart(fig, use_container_width=True)
+
+    # ── CVバイアス評価（オプショナル） ─────────────────────────
+    # fold別スコアが存在する場合のみTT法バイアス推定を表示
+    has_fold_scores = False
+    if len(scores) >= 2:
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        param_labels = [k for k, _ in sorted_scores]
+        fold_curves = []
+        for key in param_labels:
+            d = details.get(key, {})
+            if "fold_scores" in d and d["fold_scores"]:
+                fold_curves.append(d["fold_scores"])
+        has_fold_scores = (
+            len(fold_curves) == len(param_labels)
+            and all(len(f) == len(fold_curves[0]) for f in fold_curves)
+        )
+
+    if has_fold_scores:
+        with st.expander("📐 CVバイアス推定", expanded=False):
+            try:
+                from backend.models.cv_bias_evaluator import estimate_tibshirani_bias
+                import numpy as _np
+
+                curves = _np.array(fold_curves).T  # (K folds, P models)
+                tt_result = estimate_tibshirani_bias(
+                    curves, param_values=None, higher_is_better=True
+                )
+                st.markdown(f"""
+| 指標 | 値 |
+|------|-----|
+| **CVスコア** | `{tt_result.raw_score:.4f}` |
+| **推定バイアス** | `{tt_result.bias_estimate:+.4f}` |
+| **補正後スコア** | `{tt_result.corrected_score:.4f}` |
+""")
+                st.caption(
+                    "複数モデルから最良を選ぶ際に生じるスコアの過大評価を補正した値です。"
+                )
+            except Exception as e:
+                st.caption(f"バイアス推定をスキップしました: {e}")
+

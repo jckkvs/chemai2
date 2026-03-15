@@ -241,3 +241,139 @@ def progressive_precalculate(smiles_list: list[str], target_col_name: str = ""):
 
     df_result = df_result.loc[:, ~df_result.columns.duplicated()]
     yield 1.0, f"完了 — {len(df_result.columns)}個の主要記述子を抽出しました", df_result
+
+
+def precalculate_all_descriptors(
+    smiles_list: list[str],
+    target_col_name: str = "",
+    engine_flags: dict[str, bool] | None = None,
+    molai_n_components: int = 32,
+    progress_callback: Any = None,
+) -> tuple[pd.DataFrame, dict | None]:
+    """
+    全記述子を一括計算する関数。app.py のインラインコードを統一。
+
+    Args:
+        smiles_list: 有効なSMILESのリスト
+        target_col_name: 目的変数名（推奨記述子の選定に使用）
+        engine_flags: {"use_mordred": True, ...} 各エンジンのON/OFF
+        molai_n_components: MolAI PCA次元数
+        progress_callback: (step, total, message) を呼ぶコールバック（省略可）
+
+    Returns:
+        (df_result, molai_variance_info)
+        - df_result: 記述子DataFrame
+        - molai_variance_info: MolAI PCA寄与率情報 or None
+    """
+    if engine_flags is None:
+        engine_flags = {}
+
+    def _progress(step: int, total: int, msg: str) -> None:
+        if progress_callback:
+            progress_callback(step, total, msg)
+
+    n = len(smiles_list)
+    if n == 0:
+        return pd.DataFrame(), None
+
+    # --- ステップ1: RDKit基本記述子（推奨+数え上げ+主要物理化学） ---
+    _progress(1, 5, "推奨記述子を計算中...")
+    df_result = pd.DataFrame(index=range(n))
+
+    from backend.chem.recommender import get_target_recommendation_by_name
+    rdkit_adapter = RDKitAdapter(compute_fp=False)
+
+    rec = get_target_recommendation_by_name(target_col_name)
+    rec_names = [d.name for d in rec.descriptors] if rec else []
+    if rec_names and rdkit_adapter.is_available():
+        try:
+            df_tmp = rdkit_adapter.compute(smiles_list, selected_descriptors=rec_names).descriptors
+            df_result = pd.concat([df_result, df_tmp], axis=1)
+        except Exception:
+            pass
+
+    _progress(2, 5, "数え上げ系記述子を計算中...")
+    if rdkit_adapter.is_available():
+        try:
+            mdata = rdkit_adapter.get_descriptors_metadata()
+            count_names = [m.name for m in mdata if m.is_count and m.name not in df_result.columns]
+            if count_names:
+                df_tmp = rdkit_adapter.compute(smiles_list, selected_descriptors=count_names).descriptors
+                df_result = pd.concat([df_result, df_tmp], axis=1)
+        except Exception:
+            pass
+
+    CURATED = [
+        "MolWt", "LogP", "TPSA", "HBA", "HBD", "RotBonds",
+        "RingCount", "AromaticRingCount", "FractionCSP3",
+        "HeavyAtoms", "MolMR", "HallKierAlpha",
+    ]
+    _progress(3, 5, "主要物理化学記述子を計算中...")
+    curated = [c for c in CURATED if c not in df_result.columns]
+    if curated and rdkit_adapter.is_available():
+        try:
+            df_tmp = rdkit_adapter.compute(smiles_list, selected_descriptors=curated).descriptors
+            df_result = pd.concat([df_result, df_tmp], axis=1)
+        except Exception:
+            pass
+
+    df_result = df_result.loc[:, ~df_result.columns.duplicated()]
+    df_result = df_result.apply(pd.to_numeric, errors="coerce").convert_dtypes()
+
+    # --- ステップ2: 追加エンジン ---
+    _progress(4, 5, "追加エンジンの記述子を計算中...")
+    _engine_adapters = {
+        "use_mordred":  ("Mordred",      "backend.chem.mordred_adapter",       "MordredAdapter",      {"selected_only": True}),
+        "use_xtb":      ("XTB",          "backend.chem.xtb_adapter",           "XTBAdapter",          {}),
+        "use_cosmo":    ("COSMO-RS",     "backend.chem.cosmo_adapter",         "CosmoAdapter",        {}),
+        "use_unipka":   ("UniPKa",       "backend.chem.unipka_adapter",        "UniPkaAdapter",       {}),
+        "use_contrib":  ("GroupContrib", "backend.chem.group_contrib_adapter", "GroupContribAdapter", {}),
+        "use_uma":      ("UMA",          "backend.chem.uma_adapter",           "UMAAdapter",          {}),
+        "use_skfp":     ("scikit-FP",    "backend.chem.skfp_adapter",          "SkfpAdapter",         {}),
+        "use_padel":    ("PaDEL",        "backend.chem.padel_adapter",         "PaDELAdapter",        {}),
+        "use_ds":       ("DescriptaStorus","backend.chem.descriptastorus_adapter","DescriptaStorusAdapter",{}),
+        "use_mol2vec":  ("Mol2Vec",      "backend.chem.mol2vec_adapter",       "Mol2VecAdapter",      {}),
+        "use_molfeat":  ("Molfeat",      "backend.chem.molfeat_adapter",       "MolfeatAdapter",      {}),
+        "use_chemprop": ("Chemprop",     "backend.chem.chemprop_adapter",      "ChempropAdapter",     {}),
+    }
+    extra_results: list[tuple[str, int]] = []  # [(name, n_new_cols), ...]
+
+    for ekey, (ename, module_path, class_name, kwargs) in _engine_adapters.items():
+        if engine_flags.get(ekey, False):
+            try:
+                mod = __import__(module_path, fromlist=[class_name])
+                adapter_cls = getattr(mod, class_name)
+                adapter = adapter_cls(**kwargs)
+                if adapter.is_available():
+                    eres = adapter.compute(smiles_list)
+                    edf = eres.descriptors
+                    new_cols = [c for c in edf.columns if c not in df_result.columns]
+                    if new_cols:
+                        edf_new = edf[new_cols].copy()
+                        edf_new.index = df_result.index[:len(edf_new)]
+                        df_result = pd.concat([df_result, edf_new], axis=1)
+                        extra_results.append((ename, len(new_cols)))
+            except Exception as e:
+                logger.warning(f"{ename} スキップ: {e}")
+
+    # --- ステップ3: MolAI ---
+    molai_variance = None
+    if engine_flags.get("use_molai", False):
+        _progress(5, 5, "MolAI CNN Encoder + PCA を計算中...")
+        try:
+            from backend.chem.molai_adapter import MolAIAdapter
+            molai_adp = MolAIAdapter(n_components=molai_n_components)
+            if molai_adp.is_available():
+                molai_adp.compute(smiles_list)
+                if molai_adp._pca is not None:
+                    evr = molai_adp._pca.explained_variance_ratio_
+                    molai_variance = {
+                        "ratio": evr.tolist(),
+                        "cumulative": evr.cumsum().tolist(),
+                        "n_components": molai_n_components,
+                    }
+        except Exception as e:
+            logger.warning(f"MolAI スキップ: {e}")
+
+    _progress(5, 5, f"完了 — {len(df_result.columns)}個の記述子を抽出")
+    return df_result, molai_variance

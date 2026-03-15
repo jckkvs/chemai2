@@ -57,6 +57,41 @@ try:
 except Exception:
     MolAIAdapter = _make_unavailable_adapter("MolAIAdapter")  # type: ignore[assignment,misc]
 
+try:
+    from backend.chem.uma_adapter import UMAAdapter
+except Exception:
+    UMAAdapter = _make_unavailable_adapter("UMAAdapter")  # type: ignore[assignment,misc]
+
+try:
+    from backend.chem.skfp_adapter import SkfpAdapter
+except Exception:
+    SkfpAdapter = _make_unavailable_adapter("SkfpAdapter")  # type: ignore[assignment,misc]
+
+try:
+    from backend.chem.padel_adapter import PaDELAdapter
+except Exception:
+    PaDELAdapter = _make_unavailable_adapter("PaDELAdapter")  # type: ignore[assignment,misc]
+
+try:
+    from backend.chem.descriptastorus_adapter import DescriptaStorusAdapter
+except Exception:
+    DescriptaStorusAdapter = _make_unavailable_adapter("DescriptaStorusAdapter")  # type: ignore[assignment,misc]
+
+try:
+    from backend.chem.mol2vec_adapter import Mol2VecAdapter
+except Exception:
+    Mol2VecAdapter = _make_unavailable_adapter("Mol2VecAdapter")  # type: ignore[assignment,misc]
+
+try:
+    from backend.chem.molfeat_adapter import MolfeatAdapter
+except Exception:
+    MolfeatAdapter = _make_unavailable_adapter("MolfeatAdapter")  # type: ignore[assignment,misc]
+
+try:
+    from backend.chem.chemprop_adapter import ChempropAdapter
+except Exception:
+    ChempropAdapter = _make_unavailable_adapter("ChempropAdapter")  # type: ignore[assignment,misc]
+
 __all__ = [
     "BaseChemAdapter",
     "DescriptorResult",
@@ -67,4 +102,11 @@ __all__ = [
     "GroupContribAdapter",
     "MordredAdapter",
     "MolAIAdapter",
+    "UMAAdapter",
+    "SkfpAdapter",
+    "PaDELAdapter",
+    "DescriptaStorusAdapter",
+    "Mol2VecAdapter",
+    "MolfeatAdapter",
+    "ChempropAdapter",
 ]

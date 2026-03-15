@@ -22,9 +22,11 @@ def test_dynamic_cv_extra_params():
 
 def test_invalid_cv_param_warning(caplog):
     # 無効な引数を渡した場合の警告確認
-    cfg = CVConfig(
-        cv_key="KFold",
-        extra_params={"invalid_arg": 123}
-    )
-    cv = get_cv(cfg)
+    import logging
+    with caplog.at_level(logging.WARNING, logger="backend.models.cv_manager"):
+        cfg = CVConfig(
+            cv_key="KFold",
+            extra_params={"invalid_arg": 123}
+        )
+        cv = get_cv(cfg)
     assert "無効な引数が指定されました" in caplog.text

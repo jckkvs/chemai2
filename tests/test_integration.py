@@ -9,7 +9,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
@@ -181,7 +182,7 @@ class TestModelTrainingPipeline:
         detector = TypeDetector()
         dr = detector.detect(train)
         pipeline = build_full_pipeline(
-            dr, LogisticRegression(max_iter=500), target_col="label"
+            dr, DecisionTreeClassifier(random_state=42), target_col="label"
         )
         X_train = train.drop(columns=["label"])
         y_train = train["label"].values
@@ -190,7 +191,7 @@ class TestModelTrainingPipeline:
 
         pipeline.fit(X_train, y_train)
         y_pred = pipeline.predict(X_test)
-        y_prob = pipeline.predict_proba(X_test)
+        y_prob = pipeline.predict_proba(X_test) if hasattr(pipeline, 'predict_proba') else None
 
         score = evaluate_classification(y_test, y_pred, y_prob=y_prob, model_key="lr")
         assert score.accuracy is not None

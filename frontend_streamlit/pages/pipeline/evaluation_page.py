@@ -5,6 +5,24 @@ import pandas as pd
 import streamlit as st
 
 
+def _get_feature_df(df: "pd.DataFrame", target_col: str) -> "pd.DataFrame":
+    """除外列・weight列・group列を考慮した説明変数DataFrameを返す。"""
+    drop_cols = [target_col]
+    # 除外列 + Info列
+    drop_cols.extend(st.session_state.get("col_role_exclude", []))
+    drop_cols.extend(st.session_state.get("col_role_info", []))
+    # Weight列・Group列（説明変数ではない）
+    _w = st.session_state.get("col_role_weight")
+    if _w:
+        drop_cols.append(_w)
+    _g = st.session_state.get("col_role_group")
+    if _g:
+        drop_cols.append(_g)
+    # 存在する列のみdrop
+    drop_cols = [c for c in drop_cols if c in df.columns]
+    return df.drop(columns=drop_cols)
+
+
 def render() -> None:
     st.markdown("## 📊 モデル評価")
     result = st.session_state.get("automl_result")
@@ -36,15 +54,32 @@ def render() -> None:
 
     st.markdown("---")
 
+    # P2-5: メトリクス用語ガイド
+    with st.expander("📖 評価指標の読み方", expanded=False):
+        if result.task == "regression":
+            st.markdown(
+                "- **R²** (決定係数): 1に近いほど高精度。0.9以上が理想的\n"
+                "- **RMSE** (二乗平均平方根誤差): 小さいほど良い。目的変数のスケールに依存\n"
+                "- **MAE** (平均絶対誤差): 外れ値に頑健な誤差指標\n"
+                "- **CV OOF**: 各foldで未学習データに対する予測 → **最もリアルな汎化精度**"
+            )
+        else:
+            st.markdown(
+                "- **Accuracy**: 全体の正解率\n"
+                "- **F1** (weighted): 精度とリコールの調和平均。不均衡データに有用\n"
+                "- **Precision**: 陽性予測のうち実際に陽性の割合\n"
+                "- **Recall**: 実際の陽性のうち正しく予測された割合"
+            )
+
     # ─── タブ ──────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4 = st.tabs(
-        ["📈 予測精度", "📊 全モデル比較", "📉 学習曲線", "🔍 残差/混同行列"]
+        ["📈 予測精度", "📊 全モデル比較 & Fold分布", "📉 学習曲線", "🔍 残差/混同行列"]
     )
 
     # ─── Tab1: 予測精度 ───────────────────────────────────────────
     with tab1:
         if df is not None and target_col:
-            X = df.drop(columns=[target_col])
+            X = _get_feature_df(df, target_col)
             y_true = df[target_col].values
 
             # --- SMILES列がある場合は事前展開してから予測する ---
@@ -143,10 +178,81 @@ def render() -> None:
                 xaxis_tickangle=-30,
             )
             st.plotly_chart(fig, use_container_width=True)
+
+            # CVバイアス推定はautoml_page.pyのリーダーボード側で表示
+            # （fold_scoresが必要なため、ここでは省略）
         else:
             st.info("全モデルのCVスコアが取得できませんでした。")
             # 最良モデルのみ表示
             st.markdown(f"**最良モデル**: `{result.best_model_key}` — スコア: `{result.best_score:.4f}`")
+
+        # ── Fold別CVスコアの箱ひげ図 / バイオリンプロット ───────────
+        st.markdown("---")
+        st.markdown("### 🎲 Fold別CVスコアの分布")
+        st.caption(
+            "各モデルのCV Foldごとのスコア分布。"
+            "平均スコアだけでなく、**分布の幅（安定性）**もモデル選択の重要な判断材料です。"
+        )
+        details = result.model_details if hasattr(result, "model_details") else {}
+        fold_data_rows = []
+        for mkey, d in details.items():
+            fs = d.get("fold_scores", [])
+            if fs:
+                for fi, sv in enumerate(fs):
+                    fold_data_rows.append({
+                        "モデル": mkey,
+                        "Fold": f"Fold {fi+1}",
+                        "スコア": sv,
+                    })
+        if fold_data_rows:
+            import plotly.express as px
+            fold_df = pd.DataFrame(fold_data_rows)
+            # 平均スコア順でソート
+            model_order = fold_df.groupby("モデル")["スコア"].mean().sort_values(ascending=False).index.tolist()
+            fig_fold = px.box(
+                fold_df, x="モデル", y="スコア",
+                color="モデル",
+                category_orders={"モデル": model_order},
+                title=f"Fold別CVスコア分布 ({result.scoring})",
+                template="plotly_dark",
+                points="all",
+            )
+            fig_fold.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#e0e0f0"),
+                showlegend=False,
+                xaxis_tickangle=-30,
+            )
+            st.plotly_chart(fig_fold, use_container_width=True)
+
+            # CV安定性の自動判定 + アドバイス
+            best_fold = details.get(result.best_model_key, {})
+            best_fs = best_fold.get("fold_scores", [])
+            if len(best_fs) >= 2:
+                _cv_std = float(np.std(best_fs))
+                _cv_mean = float(np.mean(best_fs))
+                _cv_cv = _cv_std / abs(_cv_mean) if abs(_cv_mean) > 1e-10 else 0
+                if _cv_cv < 0.05:
+                    st.success(
+                        f"✅ **{result.best_model_key}** のCVスコアは非常に安定しています"
+                        f"（変動係数 = {_cv_cv:.1%}）。汎化性能の信頼度が高いです。"
+                    )
+                elif _cv_cv < 0.15:
+                    st.info(
+                        f"💡 **{result.best_model_key}** のCVスコアの変動係数は {_cv_cv:.1%} です。"
+                        f"安定性は許容範囲内ですが、"
+                        f"データの増量や特徴量エンジニアリングで改善余地があります。"
+                    )
+                else:
+                    st.warning(
+                        f"⚠️ **{result.best_model_key}** のCVスコアが不安定です"
+                        f"（変動係数 = {_cv_cv:.1%}）。\n\n"
+                        f"考えられる原因: データ不足・Fold間のデータ偏り・リーケージ・モデルの過学習\n"
+                        f"対策: CV分割数を増やす・データを追加・正則化を強化・モデルを変更"
+                    )
+        else:
+            st.info("Fold別スコアデータがありません。")
 
     # ─── Tab3: 学習曲線 ──────────────────────────────────────────
     with tab3:
@@ -161,7 +267,7 @@ def render() -> None:
                     try:
                         from backend.data.benchmark import compute_learning_curve
                         # Pipeline内にSMILES Transformerが有るので元データ（SMILES列含む）をそのまま渡す
-                        X = df.drop(columns=[target_col])
+                        X = _get_feature_df(df, target_col)
                         y = df[target_col]
                         lc = compute_learning_curve(
                             result.best_pipeline, X, y,
@@ -205,12 +311,58 @@ def render() -> None:
     # ─── Tab4: 残差/混同行列 ─────────────────────────────────────
     with tab4:
         if df is not None and target_col:
-            X = df.drop(columns=[target_col])
+            X = _get_feature_df(df, target_col)
             y_true = df[target_col].values
+
+            # OOF予測の残差分析（推奨）
+            y_oof = getattr(result, "oof_predictions", None)
+            y_oof_true = getattr(result, "oof_true", None)
+            if y_oof is not None and y_oof_true is not None and result.task == "regression":
+                st.markdown(
+                    '<div class="section-header">🟢 CV Out-of-Fold 残差分析（推奨）</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "OOF予測は各Foldで未学習のデータに対する予測です。"
+                    "過学習の影響を受けない、**最も信頼できる残差分析**です。"
+                )
+                _show_residuals(y_oof_true, y_oof, label="OOF")
+
+                # 残差の統計サマリー
+                _res_oof = y_oof - y_oof_true
+                _res_cols = st.columns(4)
+                with _res_cols[0]:
+                    st.metric("平均残差", f"{np.mean(_res_oof):.4f}")
+                with _res_cols[1]:
+                    st.metric("残差の標準偏差", f"{np.std(_res_oof):.4f}")
+                with _res_cols[2]:
+                    st.metric("最大過大評価", f"+{np.max(_res_oof):.4f}")
+                with _res_cols[3]:
+                    st.metric("最大過小評価", f"{np.min(_res_oof):.4f}")
+
+                # バイアス判定
+                _mean_res = np.mean(_res_oof)
+                if abs(_mean_res) < np.std(_res_oof) * 0.1:
+                    st.success("✅ 予測に系統的なバイアスは見られません。")
+                else:
+                    _dir = "過大評価" if _mean_res > 0 else "過小評価"
+                    st.warning(
+                        f"⚠️ 平均残差が {_mean_res:.4f} で、{_dir}の傾向があります。\n"
+                        f"モデルの選択や特徴量エンジニアリングの見直しを検討してください。"
+                    )
+                st.markdown("---")
+
+            # 全データ残差（参考）
             try:
                 y_pred = result.best_pipeline.predict(X)
+                if y_oof is not None and result.task == "regression":
+                    st.markdown(
+                        '<div class="section-header">🟡 全データ学習の残差（参考）</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption("ℹ️ 訓練データへの予測のため過楽観です。OOF残差を優先してください。")
                 if result.task == "regression":
-                    _show_residuals(y_true, y_pred)
+                    _show_residuals(y_true, y_pred, label="全データ")
                 else:
                     _show_confusion_matrix(y_true, y_pred)
             except Exception as e:
@@ -370,22 +522,29 @@ def _show_classification_metrics(
     st.text(classification_report(y_true, y_pred, zero_division=0))
 
 
-def _show_residuals(y_true: np.ndarray, y_pred: np.ndarray) -> None:
+def _show_residuals(y_true: np.ndarray, y_pred: np.ndarray, label: str = "") -> None:
     """残差プロット。"""
     import plotly.express as px
     residuals = y_pred - y_true
-    res_df = pd.DataFrame({"予測値": y_pred, "残差": residuals})
+    res_df = pd.DataFrame({"予測値": y_pred, "残差": residuals, "実測値": y_true})
+    _title_prefix = f"[{label}] " if label else ""
 
     col1, col2 = st.columns(2)
     with col1:
         fig1 = px.scatter(
             res_df, x="予測値", y="残差",
-            title="残差プロット (予測値 vs 残差)",
+            title=f"{_title_prefix}残差プロット (予測値 vs 残差)",
             template="plotly_dark",
             color_discrete_sequence=["#00d4ff"],
             opacity=0.6,
         )
         fig1.add_hline(y=0, line_dash="dash", line_color="#fbbf24")
+        # ±2σバンドを追加（異常値検出の目安）
+        _std_res = float(np.std(residuals))
+        fig1.add_hline(y=2*_std_res, line_dash="dot", line_color="rgba(255,107,157,0.5)",
+                       annotation_text="+2σ")
+        fig1.add_hline(y=-2*_std_res, line_dash="dot", line_color="rgba(255,107,157,0.5)",
+                       annotation_text="-2σ")
         fig1.update_layout(
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             font=dict(color="#e0e0f0"),
@@ -394,7 +553,7 @@ def _show_residuals(y_true: np.ndarray, y_pred: np.ndarray) -> None:
     with col2:
         fig2 = px.histogram(
             res_df, x="残差", nbins=30,
-            title="残差の分布",
+            title=f"{_title_prefix}残差の分布",
             template="plotly_dark",
             color_discrete_sequence=["#7b2ff7"],
         )

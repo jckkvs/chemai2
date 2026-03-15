@@ -307,9 +307,40 @@ def build_feature_engineering_pipeline(
     """
     steps: list[tuple[str, Any]] = []
 
+    # 1. 交互作用特徴量
     if config.add_interactions:
         steps.append(("interactions", InteractionTransformer(
             degree=config.interaction_degree,
             interaction_only=config.interaction_only,
         )))
+
+    # 2. グループ集約特徴量
+    for i, agg_cfg in enumerate(config.group_agg_configs):
+        group_col = agg_cfg.get("group_col", "")
+        agg_cols = agg_cfg.get("agg_cols", [])
+        agg_funcs = agg_cfg.get("agg_funcs", None)
+        if group_col and agg_cols:
+            steps.append((
+                f"group_agg_{i}",
+                GroupAggTransformer(
+                    group_col=group_col,
+                    agg_cols=agg_cols,
+                    agg_funcs=agg_funcs,
+                ),
+            ))
+
+    # 3. 時系列特徴量（Datetime列があれば）
+    if config.datetime_cols:
+        steps.append(("datetime_features", DatetimeFeatureExtractor(
+            add_cyclic=config.add_cyclic,
+        )))
+
+    # 4. ラグ・ローリング特徴量
+    if config.lag_rolling_cols:
+        steps.append(("lag_rolling", LagRollingTransformer(
+            lags=config.lags,
+            windows=config.rolling_windows,
+        )))
+
     return steps
+

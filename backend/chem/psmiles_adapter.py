@@ -11,8 +11,15 @@ from typing import ClassVar
 
 import numpy as np
 import pandas as pd
-from rdkit import Chem
-from rdkit.Chem import Descriptors, rdMolDescriptors
+try:
+    from rdkit import Chem
+    from rdkit.Chem import Descriptors, rdMolDescriptors
+    _RDKIT_AVAILABLE = True
+except ImportError:
+    Chem = None  # type: ignore[assignment]
+    Descriptors = None  # type: ignore[assignment]
+    rdMolDescriptors = None  # type: ignore[assignment]
+    _RDKIT_AVAILABLE = False
 
 from backend.chem.base import BaseChemAdapter, DescriptorResult
 

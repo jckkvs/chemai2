@@ -5,6 +5,17 @@ pytest共通フィクスチャと設定。
 """
 from __future__ import annotations
 
+import os
+
+# ---------- MKL DLL クラッシュ回避 (Windows) ----------
+# Intel MKL の threadpoolctl が MKL_Get_Max_Threads() 呼出時に
+# SEH exception (WinError 0xc06d007f) を起こす環境固有バグの回避策。
+# テスト起動前に環境変数でスレッド数を制限する。
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_THREADING_LAYER", "SEQUENTIAL")
+
 import numpy as np
 import pandas as pd
 import pytest

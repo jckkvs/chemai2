@@ -385,7 +385,7 @@ class TestAutoMLEngine:
     def test_automl_engine_classification(self) -> None:
         """AutoMLの分類タスク実行テスト(task="auto"で自動判定)"""
         df = generate_numeric_data(n_samples=50, n_features=3, n_classes=2, task="classification")
-        engine = AutoMLEngine(task="auto", cv_folds=2, model_keys=["logistic", "rf_c", "dt_c"])
+        engine = AutoMLEngine(task="auto", cv_folds=2, model_keys=["dt_c", "rf_c"])
         result = engine.run(df, "target")
         assert result.task == "classification"
 

@@ -181,7 +181,14 @@ def _run_single(
     cv: int,
     config_override: PipelineConfig | None = None,
 ) -> None:
-    X = df.drop(columns=[target_col])
+    # 除外列・weight列・info列を考慮
+    _drop = [target_col]
+    _drop.extend(st.session_state.get("col_role_exclude", []))
+    _drop.extend(st.session_state.get("col_role_info", []))
+    _w = st.session_state.get("col_role_weight")
+    if _w: _drop.append(_w)
+    _drop = [c for c in _drop if c in df.columns]
+    X = df.drop(columns=_drop)
     y = df[target_col].values
 
     cfg = config_override or PipelineConfig()
@@ -476,7 +483,14 @@ def _render_grid_search(
     st.markdown(f"理論: **{n_all}** 件 → 実行: **{n_run}** 件")
 
     if st.button("🔬 グリッドサーチ実行", use_container_width=True, key="pg_g_run"):
-        X = df.drop(columns=[target_col])
+        # 除外列・weight列・info列を考慮
+        _drop_g = [target_col]
+        _drop_g.extend(st.session_state.get("col_role_exclude", []))
+        _drop_g.extend(st.session_state.get("col_role_info", []))
+        _wg = st.session_state.get("col_role_weight")
+        if _wg: _drop_g.append(_wg)
+        _drop_g = [c for c in _drop_g if c in df.columns]
+        X = df.drop(columns=_drop_g)
         y = df[target_col].values
 
         with st.spinner("パイプライン生成中..."):

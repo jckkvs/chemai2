@@ -6,6 +6,10 @@ import pandas as pd
 
 def render() -> None:
     st.markdown("## 🧬 化合物解析 (SMILES)")
+    st.caption(
+        "💡 このページは個別の化合物をインタラクティブに調べるための探索ツールです。"
+        "メインの解析フローで使う記述子の選択は「⚗️ SMILES特徴量設計」タブで行えます。"
+    )
 
     from backend.chem.rdkit_adapter import RDKitAdapter
     rdkit_ok = RDKitAdapter().is_available()
@@ -16,7 +20,7 @@ def render() -> None:
     st.markdown("""
 <div class="card">
 <h4>🧬 化合物記述子計算</h4>
-<p style="color:#b0afd0;">SMILESデータから分子記述子・フィンガープリントを計算します。</p>
+<p style="color:#b0afd0;">SMILESデータから分子記述子・フィンガープリントを計算します。個別のSMILESを入力して結果を確認できます。</p>
 </div>""", unsafe_allow_html=True)
 
     tab1, tab2 = st.tabs(["📂 データから計算", "✏️ 単一SMILES解析"])

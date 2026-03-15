@@ -74,7 +74,12 @@ class CosmoAdapter(BaseChemAdapter):
                 "kwargs['cosmi_files'] に COSMI/sigma ファイルのリストを渡してください。"
             )
             df = pd.DataFrame([nan_row] * n)
-            return DescriptorResult(descriptors=df)
+            return DescriptorResult(
+                descriptors=df,
+                smiles_list=smiles_list,
+                failed_indices=list(range(n)),
+                adapter_name=self.name,
+            )
 
         records: list[dict[str, float]] = []
         for i, smi in enumerate(smiles_list):

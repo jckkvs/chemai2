@@ -641,8 +641,11 @@ else:
                 st.info("🧬 SMILES列が設定されていません。「🏷️ 列の役割設定」タブでSMILES列を指定してください。")
             else:
                 smiles_col_sf = st.session_state["smiles_col"]
+                target_col_sf = st.session_state.get("target_col", "")
 
-                # 記述子事前計算
+                # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                # 全記述子の自動計算（ボタンなし・全エンジン自動）
+                # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 if not st.session_state.get("precalc_done", False):
                     from backend.chem.rdkit_adapter import RDKitAdapter
                     from backend.chem.recommender import get_target_recommendation_by_name as _get_rec
@@ -653,271 +656,502 @@ else:
                     valid_idx = smiles_series[valid_mask].index
                     n = len(smiles_list)
 
-                    st.info(f"⚙️ **{n} 件のSMILES記述子を計算中...** しばらくお待ちください。")
+                    st.info(f"⚙️ **{n} 件のSMILESに対し、利用可能な全エンジンで記述子を自動計算中...**")
 
-                    target_name = st.session_state.get("target_col", "")
                     rdkit = RDKitAdapter(compute_fp=False)
                     df_result = pd.DataFrame(index=range(n))
 
-                    with st.spinner("1/3 推奨記述子を計算中..."):
-                        rec = _get_rec(target_name)
-                        rec_names = [d.name for d in rec.descriptors] if rec else []
-                        if rec_names and rdkit.is_available():
+                    with st.spinner("全RDKit記述子を計算中..."):
+                        if rdkit.is_available():
                             try:
-                                df_tmp = rdkit.compute(smiles_list, selected_descriptors=rec_names).descriptors
+                                all_rdkit_names = rdkit.get_descriptor_names()
+                                df_tmp = rdkit.compute(smiles_list, selected_descriptors=all_rdkit_names).descriptors
                                 df_result = pd.concat([df_result, df_tmp], axis=1)
                             except Exception:
                                 pass
 
-                    with st.spinner("2/3 数え上げ系記述子を計算中..."):
+                    with st.spinner("Mordred記述子を計算中..."):
                         try:
-                            mdata = rdkit.get_descriptors_metadata()
-                            count_names = [m.name for m in mdata if m.is_count and m.name not in df_result.columns]
-                            if count_names and rdkit.is_available():
-                                df_tmp = rdkit.compute(smiles_list, selected_descriptors=count_names).descriptors
-                                df_result = pd.concat([df_result, df_tmp], axis=1)
+                            from backend.chem import MordredAdapter as _MordPre
+                            _mord = _MordPre(selected_only=True)
+                            if _mord.is_available():
+                                _mord_res = _mord.compute(smiles_list)
+                                if hasattr(_mord_res, 'descriptors') and _mord_res.descriptors is not None:
+                                    _new_cols = [c for c in _mord_res.descriptors.columns if c not in df_result.columns]
+                                    if _new_cols:
+                                        df_result = pd.concat([df_result, _mord_res.descriptors[_new_cols]], axis=1)
                         except Exception:
                             pass
 
-                    CURATED = ["MolWt","LogP","TPSA","HBA","HBD","RotBonds",
-                               "RingCount","AromaticRingCount","FractionCSP3",
-                               "HeavyAtoms","MolMR","HallKierAlpha"]
-                    with st.spinner("3/3 主要物理化学記述子を計算中..."):
-                        curated = [c for c in CURATED if c not in df_result.columns]
-                        if curated and rdkit.is_available():
-                            try:
-                                df_tmp = rdkit.compute(smiles_list, selected_descriptors=curated).descriptors
-                                df_result = pd.concat([df_result, df_tmp], axis=1)
-                            except Exception:
-                                pass
+                    with st.spinner("原子団寄与法記述子を計算中..."):
+                        try:
+                            from backend.chem import GroupContribAdapter as _GCAPre
+                            _gca = _GCAPre()
+                            if _gca.is_available():
+                                _gca_res = _gca.compute(smiles_list)
+                                if hasattr(_gca_res, 'descriptors') and _gca_res.descriptors is not None:
+                                    _new_cols = [c for c in _gca_res.descriptors.columns if c not in df_result.columns]
+                                    if _new_cols:
+                                        df_result = pd.concat([df_result, _gca_res.descriptors[_new_cols]], axis=1)
+                        except Exception:
+                            pass
 
+                    # MolAI CNN (デフォルト PCA次元=6)
+                    try:
+                        from backend.chem.molai_adapter import MolAIAdapter as _MolAIAdapterPre
+                        _molai_n_pre = st.session_state.get("molai_n_components", 6)
+                        _molai_adp = _MolAIAdapterPre(n_components=_molai_n_pre)
+                        if _molai_adp.is_available():
+                            with st.spinner("MolAI CNN特徴量を計算中..."):
+                                _molai_result = _molai_adp.compute(smiles_list)
+                                if hasattr(_molai_result, 'descriptors') and _molai_result.descriptors is not None:
+                                    _new_cols = [c for c in _molai_result.descriptors.columns if c not in df_result.columns]
+                                    if _new_cols:
+                                        df_result = pd.concat([df_result, _molai_result.descriptors[_new_cols]], axis=1)
+                                if hasattr(_molai_adp, '_pca') and _molai_adp._pca is not None:
+                                    _evr = _molai_adp._pca.explained_variance_ratio_
+                                    st.session_state["molai_explained_variance"] = {
+                                        "ratio": _evr.tolist(), "cumulative": _evr.cumsum().tolist(),
+                                        "n_components": _molai_n_pre,
+                                    }
+                    except Exception:
+                        pass
+
+                    # XTB (利用可能なら)
+                    try:
+                        from backend.chem import XTBAdapter as _XTBPre
+                        _xtb = _XTBPre()
+                        if _xtb.is_available():
+                            with st.spinner("XTB量子化学記述子を計算中..."):
+                                _xtb_res = _xtb.compute(smiles_list)
+                                if hasattr(_xtb_res, 'descriptors') and _xtb_res.descriptors is not None:
+                                    _new_cols = [c for c in _xtb_res.descriptors.columns if c not in df_result.columns]
+                                    if _new_cols:
+                                        df_result = pd.concat([df_result, _xtb_res.descriptors[_new_cols]], axis=1)
+                    except Exception:
+                        pass
+
+                    # UniPKa (利用可能なら)
+                    try:
+                        from backend.chem import UniPkaAdapter as _UniPre
+                        _upka = _UniPre()
+                        if _upka.is_available():
+                            with st.spinner("UniPKa pKa記述子を計算中..."):
+                                _upka_res = _upka.compute(smiles_list)
+                                if hasattr(_upka_res, 'descriptors') and _upka_res.descriptors is not None:
+                                    _new_cols = [c for c in _upka_res.descriptors.columns if c not in df_result.columns]
+                                    if _new_cols:
+                                        df_result = pd.concat([df_result, _upka_res.descriptors[_new_cols]], axis=1)
+                    except Exception:
+                        pass
+
+                    # COSMO-RS (利用可能なら)
+                    try:
+                        from backend.chem import CosmoAdapter as _CosmoPre
+                        _cosmo = _CosmoPre()
+                        if _cosmo.is_available():
+                            with st.spinner("COSMO-RS溶媒和記述子を計算中..."):
+                                _cosmo_res = _cosmo.compute(smiles_list)
+                                if hasattr(_cosmo_res, 'descriptors') and _cosmo_res.descriptors is not None:
+                                    _new_cols = [c for c in _cosmo_res.descriptors.columns if c not in df_result.columns]
+                                    if _new_cols:
+                                        df_result = pd.concat([df_result, _cosmo_res.descriptors[_new_cols]], axis=1)
+                    except Exception:
+                        pass
+
+                    # クリーンアップ
                     df_result = df_result.loc[:, ~df_result.columns.duplicated()]
                     df_result.index = valid_idx
                     df_result = df_result.apply(pd.to_numeric, errors="coerce").convert_dtypes()
-                    n_descs = len(df_result.columns)
+                    df_result = df_result.dropna(axis=1, how="all")
 
-                    if st.session_state.get("use_molai", False):
-                        with st.spinner("🤖 MolAI CNN Encoder + PCA 計算中..."):
-                            try:
-                                from backend.chem.molai_adapter import MolAIAdapter as _MolAIAdapterPre
-                                _molai_n_pre = st.session_state.get("molai_n_components", 32)
-                                _molai_adp = _MolAIAdapterPre(n_components=_molai_n_pre)
-                                if _molai_adp.is_available():
-                                    _molai_result = _molai_adp.compute(smiles_list)
-                                    if _molai_adp._pca is not None:
-                                        _evr = _molai_adp._pca.explained_variance_ratio_
-                                        st.session_state["molai_explained_variance"] = {
-                                            "ratio": _evr.tolist(), "cumulative": _evr.cumsum().tolist(), "n_components": _molai_n_pre,
-                                        }
-                                    else:
-                                        st.session_state["molai_explained_variance"] = None
-                            except Exception as _e_molai:
-                                st.session_state["molai_explained_variance"] = None
-
-                    st.success(f"✅ 計算完了！ {n_descs} 個の記述子を抽出しました（{n}件）")
+                    # 推奨記述子を初期選択に設定
+                    rec = _get_rec(target_col_sf)
+                    if rec:
+                        _init = [d.name for d in rec.descriptors if d.name in df_result.columns]
+                    else:
+                        _init = [d for d in ["MolWt","LogP","TPSA","HBA","HBD","RotBonds",
+                                              "RingCount","AromaticRingCount","FractionCSP3",
+                                              "HeavyAtoms","MolMR","HallKierAlpha"] if d in df_result.columns]
+                    st.session_state["adv_desc"] = _init
                     st.session_state["precalc_smiles_df"] = df_result
                     st.session_state["precalc_done"] = True
                     st.rerun()
 
-                # ── 計算エンジン選択（計算コスト明示） ──────────────────────────
-                st.markdown("### 🔧 使用する計算エンジン")
-                st.caption(
-                    "インストール済みのエンジンは自動的にONです。"
-                    "計算コストが高いエンジン（XTB等）は分子数が多い場合に時間がかかるため、明示的にONにする設計です。"
-                )
+                # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                # 計算完了 → ユーザーはテーブルでチェックするだけ
+                # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                _precalc_df = st.session_state.get("precalc_smiles_df")
+                if _precalc_df is not None:
+                    from backend.chem.recommender import (
+                        get_target_recommendation_by_name as _get_rec2,
+                        get_all_target_recommendations as _get_all_recs,
+                    )
 
-                from backend.chem import RDKitAdapter as _RDKitAdp, XTBAdapter as _XTBAdp
-                from backend.chem import CosmoAdapter as _CosmoAdp, UniPkaAdapter as _UniPkaAdp
-                from backend.chem import GroupContribAdapter as _GCAAdp, MordredAdapter as _MordAdp
-                from backend.chem import MolAIAdapter as _MolAIAdp
+                    _cur_sel = set(st.session_state.get("adv_desc", []))
+                    n_total = len(_precalc_df.columns)
+                    n_sel = len(_cur_sel)
 
-                # コスト凡例: 🟢=高速, 🟡=中程度, 🔴=重い（分子ごとに計算）
-                _lib_info = [
-                    {"key": "use_rdkit",   "name": "RDKit",        "icon": "🧪", "cost": "🟢", "cost_label": "高速",
-                     "dims": "~200種", "desc": "物理化学的記述子の標準。常にON推奨。",
-                     "adapter": _RDKitAdp(), "auto_on": True},
-                    {"key": "use_mordred",  "name": "Mordred",      "icon": "📐", "cost": "🟡", "cost_label": "中",
-                     "dims": "~1,800種", "desc": "網羅的記述子。次元数が多いため特徴選択と一緒に使う。",
-                     "adapter": _MordAdp(selected_only=True), "auto_on": False},
-                    {"key": "use_molai",    "name": "MolAI (CNN+PCA)", "icon": "🤖", "cost": "🟡", "cost_label": "中",
-                     "dims": "n_components", "desc": "CNNで分子構造を圧縮した潜在ベクトル。",
-                     "adapter": _MolAIAdp(n_components=st.session_state.get("molai_n_components", 32)),
-                     "auto_on": False, "has_params": True},
-                    {"key": "use_xtb",      "name": "XTB",          "icon": "⚛️", "cost": "🔴", "cost_label": "重い",
-                     "dims": "~20種", "desc": "HOMO-LUMO・双極子モーメント等。1分子あたり数秒〜分かかる。",
-                     "adapter": _XTBAdp(), "auto_on": False},
-                    {"key": "use_cosmo",    "name": "COSMO-RS",     "icon": "💧", "cost": "🔴", "cost_label": "重い",
-                     "dims": "~10種", "desc": "溶媒和記述子。COSMOthermが必要。",
-                     "adapter": _CosmoAdp(), "auto_on": False},
-                    {"key": "use_unipka",   "name": "UniPKa",       "icon": "⚗️", "cost": "🟡", "cost_label": "中",
-                     "dims": "~5種", "desc": "酸・塩基のpKa予測。",
-                     "adapter": _UniPkaAdp(), "auto_on": False},
-                    {"key": "use_contrib",  "name": "GroupContrib", "icon": "🔩", "cost": "🟢", "cost_label": "高速",
-                     "dims": "~15種", "desc": "基団寄与法による熱物性。",
-                     "adapter": _GCAAdp(), "auto_on": False},
-                ]
+                    st.markdown(
+                        f"### ⚗️ 記述子の選択　"
+                        f"<span style='color:#4ade80; font-size:0.85em'>全{n_total}個計算済</span>　"
+                        f"<span style='color:#60a5fa; font-size:0.85em'>{n_sel}個選択中</span>",
+                        unsafe_allow_html=True,
+                    )
+                    st.caption("全エンジンで記述子は自動計算済みです。テーブルの✅で選択してください。")
 
-                _lib_cols = st.columns(3)
-                for _li, _linfo in enumerate(_lib_info):
-                    with _lib_cols[_li % 3]:
-                        _avail = _linfo["adapter"].is_available()
-                        _use_key = _linfo["key"]
-                        # auto_on=Trueかつavailableなら初期値ON
-                        _default_val = _linfo["auto_on"] and _avail
-                        _curr_val = st.session_state.get(_use_key, _default_val)
-                        _border_color = "#4c9be8" if (_curr_val and _avail) else ("#555" if _avail else "#222")
-                        _bg_color = "#0d1f2d" if (_curr_val and _avail) else "#0e1117"
-                        _avail_color = "#4ade80" if _avail else "#f87171"
-                        st.markdown(
-                            f'<div style="border:1px solid {_border_color}; border-radius:8px; '
-                            f'padding:8px 12px; margin-bottom:4px; background:{_bg_color}">'
-                            f'{_linfo["icon"]} <b>{_linfo["name"]}</b> '
-                            f'<span style="color:{_avail_color}; font-size:0.75em">{"✅" if _avail else "🚫 未インストール"}</span><br>'
-                            f'<span style="font-size:0.75em; color:#888">{_linfo["cost"]} {_linfo["cost_label"]} | {_linfo["dims"]} | {_linfo["desc"]}</span>'
-                            f'</div>',
-                            unsafe_allow_html=True,
-                        )
-                        _new_val = st.checkbox(
-                            "使用する" if not _curr_val else "使用中 ✓",
-                            value=_curr_val,
-                            disabled=not _avail,
-                            key=f"chk_lib_{_use_key}",
-                        )
-                        if _new_val != _curr_val:
-                            st.session_state[_use_key] = _new_val
-                            if _use_key == "use_molai":
-                                st.session_state["precalc_done"] = False
-                                st.session_state["molai_explained_variance"] = None
-                            st.rerun()
+                    # 推奨パネル
+                    rec = _get_rec2(target_col_sf)
+                    if rec:
+                        with st.expander(f"💡 「{rec.target_name}」推奨記述子", expanded=True):
+                            st.caption(rec.summary)
+                            _rec_avail = [d for d in rec.descriptors if d.name in _precalc_df.columns]
+                            if _rec_avail:
+                                st.dataframe(pd.DataFrame([{
+                                    "記述子": d.name, "ライブラリ": d.library,
+                                    "意味": d.meaning, "根拠": d.source,
+                                } for d in _rec_avail]), use_container_width=True, hide_index=True)
+                                _not_yet = [d.name for d in _rec_avail if d.name not in _cur_sel]
+                                if _not_yet and st.button(f"🎯 推奨{len(_rec_avail)}件を全て選択", key="btn_rec_sel", type="primary"):
+                                    _cur_sel.update(d.name for d in _rec_avail)
+                                    st.session_state["adv_desc"] = list(_cur_sel)
+                                    st.rerun()
+                                elif not _not_yet:
+                                    st.success("✅ 推奨記述子は全て選択済みです")
+                    else:
+                        with st.expander("💡 推奨プリセットを選択", expanded=False):
+                            st.caption(f"「{target_col_sf}」に自動マッチするプリセットがありません。下から選んでください。")
+                            all_recs = _get_all_recs()
+                            _cats = {}
+                            for r in all_recs:
+                                _cats.setdefault(r.category, []).append(r)
+                            for cat_name, cat_recs in _cats.items():
+                                st.markdown(f"**{cat_name}**")
+                                _bcols = st.columns(min(4, len(cat_recs)))
+                                for i, r in enumerate(cat_recs):
+                                    with _bcols[i % len(_bcols)]:
+                                        if st.button(r.target_name, key=f"preset_{r.target_name}"):
+                                            _avail = [d.name for d in r.descriptors if d.name in _precalc_df.columns]
+                                            _cur_sel.update(_avail)
+                                            st.session_state["adv_desc"] = list(_cur_sel)
+                                            st.rerun()
 
-                        if _linfo.get("has_params") and _new_val and _avail:
-                            _molai_n = st.slider(
-                                "PCA次元数", min_value=1, max_value=256,
-                                value=st.session_state.get("molai_n_components", 32),
-                                step=1, key="slider_molai_n",
-                            )
-                            if _molai_n != st.session_state.get("molai_n_components", 32):
-                                st.session_state["molai_n_components"] = _molai_n
-                                st.session_state["precalc_done"] = False
-                                st.session_state["molai_explained_variance"] = None
-                                st.rerun()
-
-                # 再計算ボタン
-                if st.session_state.get("precalc_done"):
-                    if st.button("🔄 記述子を再計算", key="recalc_smiles"):
-                        st.session_state["precalc_done"] = False
-                        st.session_state["precalc_smiles_df"] = None
-                        st.rerun()
-
-                # MolAI寄与率グラフ
-                _molai_is_on = st.session_state.get("use_molai", False)
-                _mev = st.session_state.get("molai_explained_variance")
-                if _molai_is_on and _mev and _mev.get("ratio"):
-                    import plotly.graph_objects as _go_ev
-                    _evr = _mev["ratio"]; _evc = _mev["cumulative"]; _nc = _mev["n_components"]
-                    _pcs = [f"PC{i+1}" for i in range(len(_evr))]
-                    with st.expander(f"📊 MolAI PCA 寄与率（n={_nc}）", expanded=False):
-                        _fig_ev = _go_ev.Figure()
-                        _fig_ev.add_bar(x=_pcs, y=[v*100 for v in _evr], name="寄与率 (%)", marker_color="#4c9be8")
-                        _fig_ev.add_scatter(x=_pcs, y=[v*100 for v in _evc], name="累積寄与率 (%)",
-                                            mode="lines+markers", yaxis="y2",
-                                            line=dict(color="#f4a261", width=2), marker=dict(size=5))
-                        _fig_ev.update_layout(
-                            yaxis=dict(title="寄与率 (%)", range=[0, max(v*100 for v in _evr)*1.15]),
-                            yaxis2=dict(title="累積寄与率 (%)", overlaying="y", side="right", range=[0,105], showgrid=False),
-                            legend=dict(orientation="h", y=1.15), height=300, margin=dict(l=10, r=10, t=40, b=40),
-                        )
-                        st.plotly_chart(_fig_ev, use_container_width=True)
-
-                # ── 記述子の選択（計算完了後） ────────────────────────────────
-                if st.session_state.get("precalc_smiles_df") is not None:
-                    st.markdown("---")
-                    st.markdown("### 🔬 記述子の選択")
-                    st.caption("計算済みの記述子の中から解析に使う記述子を絞り込めます。")
-
-                    from backend.chem import RDKitAdapter as _RDKitAdp2, XTBAdapter as _XTBAdp2
-                    from backend.chem import CosmoAdapter as _CosmoAdp2, UniPkaAdapter as _UniPkaAdp2
-                    from backend.chem import GroupContribAdapter as _GCAAdp2, MordredAdapter as _MordAdp2
-                    from backend.chem import MolAIAdapter as _MolAIAdp2
-
-                    _molai_n_comp2 = st.session_state.get("molai_n_components", 32)
-                    _all_adps2 = [
-                        _RDKitAdp2(compute_fp=True), _MordAdp2(selected_only=True),
-                        _XTBAdp2(), _CosmoAdp2(), _UniPkaAdp2(), _GCAAdp2(),
-                        _MolAIAdp2(n_components=_molai_n_comp2)
-                    ]
-                    lib_descriptors2 = {}
-                    all_avail_descs2 = []
-                    for _adp2 in _all_adps2:
-                        if _adp2.is_available():
-                            _lib_nm2 = _adp2.__class__.__name__.replace("Adapter", "")
-                            _names2 = _adp2.get_descriptor_names()
-                            lib_descriptors2[_lib_nm2] = _names2
-                            all_avail_descs2.extend(_names2)
-
-                    _DEFAULT_DESCRIPTORS = [
-                        "MolWt", "LogP", "TPSA", "HBA", "HBD", "RotBonds",
-                        "RingCount", "AromaticRingCount", "FractionCSP3",
-                        "HeavyAtoms", "MolMR", "HallKierAlpha",
-                    ]
-                    _default_desc2 = st.session_state.get("adv_desc", _DEFAULT_DESCRIPTORS)
-                    _cur_sel2 = set([d for d in _default_desc2 if d in all_avail_descs2])
-
-                    def _upd_desc2(new_sel: set):
-                        st.session_state["adv_desc"] = list(new_sel)
-                        st.rerun()
-
-                    _precalc_df2 = st.session_state.get("precalc_smiles_df")
-                    _target_col2 = st.session_state.get("target_col")
-                    _target_series2 = df[_target_col2] if _target_col2 in df.columns and pd.api.types.is_numeric_dtype(df[_target_col2]) else None
-
-                    _corr_dict2 = {}
-                    if _precalc_df2 is not None and _target_series2 is not None:
+                    # 相関係数計算
+                    _corr = {}
+                    if target_col_sf in df.columns and pd.api.types.is_numeric_dtype(df[target_col_sf]):
                         try:
-                            _al_tgt = _target_series2.loc[_precalc_df2.index]
-                            _corr_s2 = _precalc_df2.corrwith(_al_tgt, method="pearson").abs()
-                            _corr_dict2 = _corr_s2.to_dict()
+                            _corr = _precalc_df.corrwith(df[target_col_sf].loc[_precalc_df.index], method="pearson").abs().to_dict()
                         except Exception:
                             pass
 
-                    def _sort_descs2(names):
-                        return sorted(names, key=lambda d: _corr_dict2.get(d, 0.0) if pd.notna(_corr_dict2.get(d, 0.0)) else 0.0, reverse=True)
+                    _rec_names = set(d.name for d in rec.descriptors) if rec else set()
 
-                    tab_corr2, tab_lib2 = st.tabs(["相関係数から選ぶ", "ライブラリから選ぶ"])
+                    # メタデータ
+                    _meta = {}
+                    try:
+                        from backend.chem import RDKitAdapter as _RDA_m
+                        for m in _RDA_m(compute_fp=False).get_descriptors_metadata():
+                            _meta[m.name] = {"meaning": getattr(m, 'description', ''), "cat": getattr(m, 'category', '')}
+                    except Exception:
+                        pass
+                    if rec:
+                        for d in rec.descriptors:
+                            _meta.setdefault(d.name, {})
+                            if not _meta[d.name].get("meaning"):
+                                _meta[d.name]["meaning"] = d.meaning
+                            if not _meta[d.name].get("cat"):
+                                _meta[d.name]["cat"] = d.category
 
-                    with tab_corr2:
-                        if not _corr_dict2:
-                            st.warning("相関係数を計算するには数値型の目的変数が必要です。")
-                        else:
-                            _s_descs2 = _sort_descs2([d for d in _corr_dict2.keys() if pd.notna(_corr_dict2.get(d))])
-                            c1, c2 = st.columns(2)
-                            if c1.button("上位10件を選択", key="sel_top_10"):
-                                _upd_desc2(_cur_sel2.union(_s_descs2[:10]))
-                            if c2.button("上位30件を選択", key="sel_top_30"):
-                                _upd_desc2(_cur_sel2.union(_s_descs2[:30]))
-                            _new_corr2 = st.multiselect(
-                                "記述子を選択（目的変数との相関降順）",
-                                options=_s_descs2,
-                                default=[d for d in _s_descs2 if d in _cur_sel2],
-                                format_func=lambda d: f"{d} (|r|={_corr_dict2.get(d, 0):.3f})",
-                                key="desc_corr_sel",
+                    # テーブルデータ
+                    _rows = []
+                    # エンジンごとの記述子名マッピング
+                    _engine_map = {}
+                    try:
+                        from backend.chem import RDKitAdapter as _EM_R, MordredAdapter as _EM_M
+                        from backend.chem import GroupContribAdapter as _EM_G, MolAIAdapter as _EM_A
+                        from backend.chem import XTBAdapter as _EM_X, CosmoAdapter as _EM_C, UniPkaAdapter as _EM_U
+                        for _em_cls, _em_nm in [(_EM_R(compute_fp=False),"RDKit"), (_EM_M(selected_only=True),"Mordred"),
+                                                 (_EM_G(),"GroupContrib"), (_EM_X(),"XTB"),
+                                                 (_EM_C(),"COSMO-RS"), (_EM_U(),"UniPKa")]:
+                            if _em_cls.is_available():
+                                for _en in _em_cls.get_descriptor_names():
+                                    _engine_map.setdefault(_en, _em_nm)
+                        for c in _precalc_df.columns:
+                            if c.startswith("MolAI_") or c.startswith("molai_"):
+                                _engine_map.setdefault(c, "MolAI")
+                    except Exception:
+                        pass
+
+                    for c in _precalc_df.columns:
+                        _r = _corr.get(c, float('nan'))
+                        _m = _meta.get(c, {})
+                        _rows.append({
+                            "✅": c in _cur_sel,
+                            "★": "★" if c in _rec_names else "",
+                            "記述子名": c,
+                            "ソース": _engine_map.get(c, ""),
+                            "|r|": round(_r, 3) if pd.notna(_r) else None,
+                            "ユニーク数": int(_precalc_df[c].nunique(dropna=True)),
+                            "意味": _m.get("meaning", ""),
+                            "分類": _m.get("cat", ""),
+                        })
+                    _rows.sort(key=lambda x: x["|r|"] if x["|r|"] is not None else -1, reverse=True)
+
+                    # フィルタ（複数の選び方を提供）
+                    _fc1, _fc2, _fc3, _fc4 = st.columns([1, 1, 1, 2])
+                    with _fc1:
+                        _flt = st.selectbox("表示", ["全て", "選択中", "未選択", "推奨のみ"], key="df_flt")
+                    with _fc2:
+                        _avail_engines = sorted(set(_engine_map.values()))
+                        _flt_engine = st.selectbox("エンジン", ["全て"] + _avail_engines, key="df_flt_eng")
+                    with _fc3:
+                        _flt_corr = st.slider("|r|≥", 0.0, 1.0, 0.0, 0.01, key="df_flt_corr")
+                    with _fc4:
+                        _srch = st.text_input("検索", key="df_srch", placeholder="記述子名で絞り込み")
+                    _tdf = pd.DataFrame(_rows)
+                    if _flt == "選択中":
+                        _tdf = _tdf[_tdf["✅"] == True]
+                    elif _flt == "未選択":
+                        _tdf = _tdf[_tdf["✅"] == False]
+                    elif _flt == "推奨のみ":
+                        _tdf = _tdf[_tdf["★"] == "★"]
+                    if _flt_engine != "全て":
+                        _tdf = _tdf[_tdf["ソース"] == _flt_engine]
+                    if _flt_corr > 0:
+                        _tdf = _tdf[_tdf["|r|"].fillna(0) >= _flt_corr]
+                    if _srch:
+                        _tdf = _tdf[_tdf["記述子名"].str.contains(_srch, case=False, na=False)]
+
+                    # data_editor
+                    _edited = st.data_editor(
+                        _tdf,
+                        column_config={
+                            "✅": st.column_config.CheckboxColumn("選択", default=False),
+                            "★": st.column_config.TextColumn("推奨", width="small"),
+                            "記述子名": st.column_config.TextColumn("記述子名", width="medium"),
+                            "ソース": st.column_config.TextColumn("エンジン", width="small"),
+                            "|r|": st.column_config.NumberColumn("|r|", format="%.3f", width="small"),
+                            "ユニーク数": st.column_config.NumberColumn("ユニーク", width="small"),
+                            "意味": st.column_config.TextColumn("物理的意味", width="large"),
+                            "分類": st.column_config.TextColumn("分類", width="medium"),
+                        },
+                        disabled=["★", "記述子名", "ソース", "|r|", "ユニーク数", "意味", "分類"],
+                        use_container_width=True,
+                        hide_index=True,
+                        key="desc_editor",
+                        height=min(700, 40 + len(_tdf) * 35),
+                    )
+
+                    if _edited is not None:
+                        _new_sel = set(_edited[_edited["✅"] == True]["記述子名"].tolist())
+                        _invisible = _cur_sel - set(_tdf["記述子名"].tolist())
+                        _final = _new_sel | _invisible
+                        if _final != _cur_sel:
+                            st.session_state["adv_desc"] = list(_final)
+
+                    st.session_state.setdefault("adv_desc", list(_cur_sel))
+
+                    # ── 高度な設定（折りたたみ：詳しい人向け） ──
+                    with st.expander("🔧 高度なエンジン設定（通常は変更不要）", expanded=False):
+                        st.caption(
+                            "全エンジンでの記述子計算は自動的に実行済みです。"
+                            "MolAI PCA次元の変更やエンジン個別の切替が必要な場合のみお使いください。"
+                        )
+
+                        from backend.chem import RDKitAdapter as _RDKitAdp, XTBAdapter as _XTBAdp
+                        from backend.chem import CosmoAdapter as _CosmoAdp, UniPkaAdapter as _UniPkaAdp
+                        from backend.chem import GroupContribAdapter as _GCAAdp, MordredAdapter as _MordAdp
+                        from backend.chem import MolAIAdapter as _MolAIAdp
+
+                        _engine_list = [
+                            ("🧪 RDKit",        _RDKitAdp(),  "~200種",       "🟢 高速"),
+                            ("📐 Mordred",       _MordAdp(selected_only=True), "~1,800種", "🟡 中程度"),
+                            ("🤖 MolAI (CNN+PCA)", _MolAIAdp(n_components=st.session_state.get("molai_n_components", 6)), "n_comp", "🟡 中程度"),
+                            ("⚛️ XTB",           _XTBAdp(),    "~20種",        "🔴 重い"),
+                            ("💧 COSMO-RS",      _CosmoAdp(),  "~10種",        "🔴 重い"),
+                            ("⚗️ UniPKa",        _UniPkaAdp(), "~5種",         "🟡 中程度"),
+                            ("🔩 GroupContrib",  _GCAAdp(),    "~15種",        "🟢 高速"),
+                        ]
+
+                        for _ename, _eadp, _edims, _ecost in _engine_list:
+                            _eavail = _eadp.is_available()
+                            _estatus = "✅ 計算済み" if _eavail else "🚫 未インストール"
+                            _ecolor = "#4ade80" if _eavail else "#f87171"
+                            st.markdown(
+                                f"- {_ename} <span style='color:{_ecolor}'>{_estatus}</span> | {_edims} | {_ecost}",
+                                unsafe_allow_html=True,
                             )
-                            if set(_new_corr2) != _cur_sel2:
-                                _upd_desc2(set(_new_corr2))
 
-                    with tab_lib2:
-                        for _ln2, _ld2 in lib_descriptors2.items():
-                            with st.expander(f"📚 {_ln2} ({len(_ld2)}種)", expanded=False):
-                                _lib_sel2 = [d for d in _ld2 if d in _cur_sel2]
-                                _new_lib2 = st.multiselect(
-                                    f"{_ln2} の記述子",
-                                    options=_ld2, default=_lib_sel2,
-                                    key=f"desc_lib2_{_ln2}",
+                        # MolAI PCA次元設定
+                        st.markdown("---")
+                        st.markdown("**MolAI CNN + PCA 設定**")
+                        _molai_avail = _MolAIAdp(n_components=6).is_available()
+                        if _molai_avail:
+                            _molai_n = st.slider(
+                                "PCA次元数",
+                                min_value=1, max_value=256,
+                                value=st.session_state.get("molai_n_components", 6),
+                                step=1,
+                                key="slider_molai_n_adv",
+                                help="MolAI CNNの潜在表現をPCAで圧縮する次元数。デフォルト6。",
+                            )
+                            if _molai_n != st.session_state.get("molai_n_components", 6):
+                                st.session_state["molai_n_components"] = _molai_n
+                                st.session_state["precalc_done"] = False
+                                st.session_state["precalc_smiles_df"] = None
+                                st.rerun()
+
+                            # MolAI寄与率グラフ
+                            _mev = st.session_state.get("molai_explained_variance")
+                            if _mev and _mev.get("ratio"):
+                                import plotly.graph_objects as _go_ev
+                                _evr = _mev["ratio"]; _evc = _mev["cumulative"]; _nc = _mev["n_components"]
+                                _pcs = [f"PC{i+1}" for i in range(len(_evr))]
+                                _fig_ev = _go_ev.Figure()
+                                _fig_ev.add_bar(x=_pcs, y=[v*100 for v in _evr], name="寄与率 (%)", marker_color="#4c9be8")
+                                _fig_ev.add_scatter(x=_pcs, y=[v*100 for v in _evc], name="累積寄与率 (%)",
+                                                    mode="lines+markers", yaxis="y2",
+                                                    line=dict(color="#f4a261", width=2), marker=dict(size=5))
+                                _fig_ev.update_layout(
+                                    yaxis=dict(title="寄与率 (%)", range=[0, max(v*100 for v in _evr)*1.15]),
+                                    yaxis2=dict(title="累積 (%)", overlaying="y", side="right", range=[0,105], showgrid=False),
+                                    legend=dict(orientation="h", y=1.15), height=250,
+                                    margin=dict(l=10, r=10, t=30, b=30),
                                 )
-                                if set(_new_lib2) != set(_lib_sel2):
-                                    _upd_desc2((_cur_sel2 - set(_ld2)) | set(_new_lib2))
+                                st.plotly_chart(_fig_ev, use_container_width=True)
+                        else:
+                            st.info("MolAIは現在利用できません。")
 
-                    st.session_state.setdefault("adv_desc", list(_cur_sel2))
+                        # 再計算
+                        st.markdown("---")
+                        if st.button("🔄 全記述子を再計算する", key="btn_recalc_adv"):
+                            st.session_state["precalc_done"] = False
+                            st.session_state["precalc_smiles_df"] = None
+                            st.rerun()
+
+                    # ── 記述子セット登録（複数セットを比較試行） ──
+                    st.markdown("---")
+                    st.markdown("### 📋 記述子セットの登録・比較")
+                    st.caption(
+                        "現在の選択を名前付きセットとして保存できます。"
+                        "複数セットを登録しておくと、パイプライン実行時に全セットを一括比較できます。"
+                    )
+
+                    # セットの初期化
+                    if "_desc_sets" not in st.session_state:
+                        st.session_state["_desc_sets"] = {}
+
+                    _desc_sets = st.session_state["_desc_sets"]
+
+                    # 現在の選択を保存
+                    _sc1, _sc2 = st.columns([3, 1])
+                    with _sc1:
+                        _set_name = st.text_input(
+                            "セット名", value="", key="desc_set_name",
+                            placeholder="例: 推奨+MolAI、XTBのみ、全記述子 等",
+                        )
+                    with _sc2:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if st.button("💾 現在の選択を保存", key="btn_save_set", type="primary"):
+                            if _set_name.strip():
+                                _desc_sets[_set_name.strip()] = list(st.session_state.get("adv_desc", []))
+                                st.session_state["_desc_sets"] = _desc_sets
+                                st.success(f"✅ セット「{_set_name.strip()}」を保存しました（{len(st.session_state.get('adv_desc', []))}個）")
+                                st.rerun()
+                            else:
+                                st.warning("セット名を入力してください。")
+
+                    # クイック登録ショートカット
+                    with st.expander("⚡ よく使うセットを一括登録", expanded=False):
+                        st.caption("エンジンやカテゴリに基づくセットをワンクリックで登録できます。")
+                        _qc1, _qc2, _qc3 = st.columns(3)
+
+                        # RDKit記述子のみ
+                        with _qc1:
+                            if st.button("RDKit記述子のみ", key="quick_rdkit"):
+                                try:
+                                    from backend.chem import RDKitAdapter as _QR
+                                    _qr = _QR(compute_fp=False)
+                                    _qr_names = [n for n in _qr.get_descriptor_names() if n in _precalc_df.columns] if _qr.is_available() else []
+                                    _desc_sets["RDKit記述子のみ"] = _qr_names
+                                    st.session_state["_desc_sets"] = _desc_sets
+                                    st.rerun()
+                                except Exception:
+                                    pass
+
+                        # MolAIのみ
+                        with _qc2:
+                            if st.button("MolAIのみ", key="quick_molai"):
+                                _molai_cols = [c for c in _precalc_df.columns if c.startswith("MolAI_") or c.startswith("molai_")]
+                                _desc_sets["MolAIのみ"] = _molai_cols
+                                st.session_state["_desc_sets"] = _desc_sets
+                                st.rerun()
+
+                        # 推奨記述子のみ
+                        with _qc3:
+                            if rec:
+                                if st.button(f"推奨（{rec.target_name}）", key="quick_rec"):
+                                    _rec_n = [d.name for d in rec.descriptors if d.name in _precalc_df.columns]
+                                    _desc_sets[f"推奨（{rec.target_name}）"] = _rec_n
+                                    st.session_state["_desc_sets"] = _desc_sets
+                                    st.rerun()
+
+                        _qc4, _qc5, _qc6 = st.columns(3)
+                        with _qc4:
+                            if st.button("推奨 + MolAI", key="quick_rec_molai"):
+                                _combined = list(set(
+                                    [d.name for d in rec.descriptors if d.name in _precalc_df.columns] if rec else []
+                                ) | set(c for c in _precalc_df.columns if c.startswith("MolAI_") or c.startswith("molai_")))
+                                _desc_sets["推奨 + MolAI"] = _combined
+                                st.session_state["_desc_sets"] = _desc_sets
+                                st.rerun()
+
+                        with _qc5:
+                            if st.button("全記述子", key="quick_all"):
+                                _desc_sets["全記述子"] = list(_precalc_df.columns)
+                                st.session_state["_desc_sets"] = _desc_sets
+                                st.rerun()
+
+                        with _qc6:
+                            if st.button("|r| 上位30件", key="quick_top30"):
+                                _sorted_by_r = sorted(
+                                    [(c, abs(_corr.get(c, 0)) if pd.notna(_corr.get(c, 0)) else 0) for c in _precalc_df.columns],
+                                    key=lambda x: x[1], reverse=True
+                                )
+                                _desc_sets["|r| 上位30件"] = [c for c, _ in _sorted_by_r[:30]]
+                                st.session_state["_desc_sets"] = _desc_sets
+                                st.rerun()
+
+                    # 登録済みセット一覧
+                    if _desc_sets:
+                        st.markdown("#### 登録済みセット")
+                        for _sname, _sdescs in _desc_sets.items():
+                            _sc_a, _sc_b, _sc_c = st.columns([4, 1, 1])
+                            with _sc_a:
+                                st.markdown(
+                                    f"**{_sname}** — {len(_sdescs)}個の記述子",
+                                )
+                            with _sc_b:
+                                if st.button("読込", key=f"load_set_{_sname}"):
+                                    st.session_state["adv_desc"] = _sdescs
+                                    st.rerun()
+                            with _sc_c:
+                                if st.button("🗑️", key=f"del_set_{_sname}"):
+                                    del _desc_sets[_sname]
+                                    st.session_state["_desc_sets"] = _desc_sets
+                                    st.rerun()
+
+                        # 一括比較フラグ
+                        st.markdown("---")
+                        _use_multi = st.checkbox(
+                            "🔄 パイプライン実行時に全登録セットを一括比較する",
+                            value=st.session_state.get("_use_multi_desc_sets", False),
+                            key="chk_multi_desc",
+                            help="ONにすると、パイプライン実行時に各記述子セットで個別にモデルを構築・評価し、結果を比較できます。",
+                        )
+                        st.session_state["_use_multi_desc_sets"] = _use_multi
+                        if _use_multi:
+                            st.info(f"✅ {len(_desc_sets)}セットを一括比較します。パイプライン実行時間は約{len(_desc_sets)}倍になります。")
 
         # ══════════════════════════════════════════════════════════════
         # サブタブ3: SMILES特徴量設計
@@ -935,17 +1169,28 @@ else:
                 added_smiles_cols = []
 
                 if smiles_col_eda and smiles_col_eda in df_preview.columns:
-                    try:
-                        from backend.chem.smiles_transformer import SmilesDescriptorTransformer
-                        selected_desc_preview = st.session_state.get("adv_desc", [])
-                        transformer = SmilesDescriptorTransformer(
-                            smiles_col=smiles_col_eda,
-                            selected_descriptors=selected_desc_preview if selected_desc_preview else None
-                        )
-                        df_preview = transformer.fit_transform(df_preview)
-                        added_smiles_cols = [c for c in df_preview.columns if c not in df.columns]
-                    except Exception as e:
-                        st.warning(f"SMILES展開プレビュー失敗: {e}")
+                    selected_desc_preview = st.session_state.get("adv_desc", [])
+                    _precalc = st.session_state.get("precalc_smiles_df")
+
+                    if _precalc is not None and selected_desc_preview:
+                        # 事前計算済みデータから選択された記述子を直接利用
+                        _avail_cols = [c for c in selected_desc_preview if c in _precalc.columns]
+                        if _avail_cols:
+                            _desc_slice = _precalc[_avail_cols].loc[df_preview.index.intersection(_precalc.index)]
+                            df_preview = pd.concat([df_preview, _desc_slice], axis=1)
+                            added_smiles_cols = _avail_cols
+                    else:
+                        # 事前計算データがない場合はSmilesDescriptorTransformerで計算
+                        try:
+                            from backend.chem.smiles_transformer import SmilesDescriptorTransformer
+                            transformer = SmilesDescriptorTransformer(
+                                smiles_col=smiles_col_eda,
+                                selected_descriptors=selected_desc_preview if selected_desc_preview else None
+                            )
+                            df_preview = transformer.fit_transform(df_preview)
+                            added_smiles_cols = [c for c in df_preview.columns if c not in df.columns]
+                        except Exception as e:
+                            st.warning(f"SMILES展開プレビュー失敗: {e}")
 
                 df_preview = df_preview.apply(pd.to_numeric, errors='ignore').convert_dtypes()
 
@@ -1026,6 +1271,215 @@ else:
                         st.info(f"🔬 記述子の選択は「⚗️ SMILES特徴量設計」タブで行えます。現在 **{n_sel}件** 選択中。")
                     else:
                         st.info("💡 「⚗️ SMILES特徴量設計」タブで記述子を計算・選択してください。")
+
+                # ══════════════════════════════════════════════════════════════
+                # 🧹 データクリーニング
+                # ══════════════════════════════════════════════════════════════
+                st.markdown("---")
+                st.markdown(
+                    '<div class="section-header">🧹 データクリーニング</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "EDAの分析結果を見ながら、データを直接加工できます。"
+                    "変更は即座に反映され、Undoで元に戻せます。"
+                )
+
+                from backend.data.data_cleaner import (
+                    drop_columns, drop_rows_with_missing,
+                    remove_constant_columns, clip_outliers,
+                    remove_duplicates, preview_missing_impact,
+                    preview_outlier_impact, get_cleaning_summary,
+                )
+
+                # 初期化: Undo用スタック & ログ
+                if "_df_history" not in st.session_state:
+                    st.session_state["_df_history"] = []
+                if "_cleaning_log" not in st.session_state:
+                    st.session_state["_cleaning_log"] = []
+
+                # ── 現在のデータ概要 ──
+                _cs = get_cleaning_summary(df)
+                _cs_c1, _cs_c2, _cs_c3, _cs_c4 = st.columns(4)
+                with _cs_c1:
+                    st.metric("行数", f"{len(df):,}")
+                with _cs_c2:
+                    st.metric("列数", f"{df.shape[1]}")
+                with _cs_c3:
+                    st.metric("欠損率", f"{_cs['total_missing_rate']:.1%}")
+                with _cs_c4:
+                    _issues = _cs["n_const_cols"] + _cs["n_dup_rows"] + _cs["n_all_missing_cols"]
+                    st.metric("検出問題", f"{_issues}件")
+
+                # ── 操作履歴 & Undo ──
+                _log = st.session_state.get("_cleaning_log", [])
+                if _log:
+                    with st.expander(f"操作履歴（{len(_log)}件）", expanded=False):
+                        for _li, _la in enumerate(reversed(_log)):
+                            st.markdown(
+                                f'<div class="card" style="padding:0.5rem 0.8rem; margin-bottom:0.3rem;">'
+                                f'<span style="color:#00d4ff;">●</span> '
+                                f'<b>{_la.description}</b> '
+                                f'<span style="font-size:0.78rem; color:#8888aa;">'
+                                f'({_la.rows_before}→{_la.rows_after}行, '
+                                f'{_la.cols_before}→{_la.cols_after}列)</span></div>',
+                                unsafe_allow_html=True,
+                            )
+
+                    if st.button("⏪ 直前の操作をUndoする", key="undo_cleaning",
+                                 use_container_width=True):
+                        _hist = st.session_state.get("_df_history", [])
+                        if _hist:
+                            st.session_state["df"] = _hist.pop()
+                            st.session_state["_df_history"] = _hist
+                            _log_list = st.session_state.get("_cleaning_log", [])
+                            if _log_list:
+                                _log_list.pop()
+                                st.session_state["_cleaning_log"] = _log_list
+                            st.success("⏪ Undo完了！直前の操作を取り消しました。")
+                            st.rerun()
+                        else:
+                            st.warning("Undo履歴がありません。")
+
+                # ── クリーニングアクション ──
+                _clean_tabs = st.tabs([
+                    "列の除外",
+                    "欠損行削除",
+                    "定数列除去",
+                    "外れ値クリップ",
+                    "重複行除去",
+                ])
+
+                # --- 1. 列の除外 ---
+                with _clean_tabs[0]:
+                    _target_col_clean = st.session_state.get("target_col")
+                    _smiles_col_clean = st.session_state.get("smiles_col")
+                    _protect = [c for c in [_target_col_clean, _smiles_col_clean] if c]
+                    _droppable = [c for c in df.columns if c not in _protect]
+
+                    if not _droppable:
+                        st.info("除外可能な列がありません。")
+                    else:
+                        _cols_to_drop = st.multiselect(
+                            "除外する列を選択",
+                            options=_droppable,
+                            key="clean_drop_cols",
+                            help="目的変数・SMILES列は保護されます",
+                        )
+                        if _cols_to_drop:
+                            st.caption(f"選択中: {len(_cols_to_drop)}列 → 残り{df.shape[1] - len(_cols_to_drop)}列")
+                            if st.button("選択列を除外する", key="btn_drop_cols",
+                                         type="primary", use_container_width=True):
+                                st.session_state["_df_history"].append(df.copy())
+                                _new_df, _action = drop_columns(df, _cols_to_drop)
+                                st.session_state["df"] = _new_df
+                                st.session_state["_cleaning_log"].append(_action)
+                                st.success(f"✅ {_action.description}")
+                                st.rerun()
+
+                # --- 2. 欠損行削除 ---
+                with _clean_tabs[1]:
+                    _miss_threshold = st.slider(
+                        "欠損率の閾値",
+                        min_value=0.0, max_value=1.0, value=0.5, step=0.05,
+                        key="clean_miss_thresh",
+                        help="各行が持つ欠損率がこの値以上の行を削除（0.0=欠損が1つでもあれば削除）",
+                    )
+                    _miss_impact = preview_missing_impact(df, threshold=_miss_threshold)
+                    if _miss_impact > 0:
+                        st.warning(f"{_miss_impact:,}行（全体の{_miss_impact/len(df):.1%}）が削除されます。")
+                    else:
+                        st.success("削除対象の行はありません。")
+
+                    if _miss_impact > 0:
+                        if st.button("欠損行を削除する", key="btn_drop_miss",
+                                     type="primary", use_container_width=True):
+                            st.session_state["_df_history"].append(df.copy())
+                            _new_df, _action = drop_rows_with_missing(df, threshold=_miss_threshold)
+                            st.session_state["df"] = _new_df
+                            st.session_state["_cleaning_log"].append(_action)
+                            st.success(f"✅ {_action.description}")
+                            st.rerun()
+
+                # --- 3. 定数列除去 ---
+                with _clean_tabs[2]:
+                    if _cs["n_const_cols"] > 0:
+                        st.warning(
+                            f"定数列が **{_cs['n_const_cols']}列** 見つかりました: "
+                            f"{', '.join(_cs['const_cols'][:8])}"
+                            + (f" 他{_cs['n_const_cols']-8}列" if _cs['n_const_cols'] > 8 else "")
+                        )
+                        if st.button("定数列を一括除去する", key="btn_rm_const",
+                                     type="primary", use_container_width=True):
+                            st.session_state["_df_history"].append(df.copy())
+                            _new_df, _action = remove_constant_columns(df)
+                            st.session_state["df"] = _new_df
+                            st.session_state["_cleaning_log"].append(_action)
+                            st.success(f"✅ {_action.description}")
+                            st.rerun()
+                    else:
+                        st.success("定数列は見つかりませんでした。")
+
+                # --- 4. 外れ値クリッピング ---
+                with _clean_tabs[3]:
+                    _num_cols = list(df.select_dtypes(include="number").columns)
+                    if not _num_cols:
+                        st.info("数値列がないため外れ値クリッピングは利用できません。")
+                    else:
+                        _iqr_mult = st.slider(
+                            "IQR倍率",
+                            min_value=1.0, max_value=5.0, value=1.5, step=0.1,
+                            key="clean_iqr_mult",
+                            help="Q1 - IQR*倍率 〜 Q3 + IQR*倍率 の範囲にクリップ",
+                        )
+                        _outlier_cols = st.multiselect(
+                            "対象列（空=全数値列）",
+                            options=_num_cols,
+                            key="clean_outlier_cols",
+                        )
+                        _target_outlier_cols = _outlier_cols if _outlier_cols else None
+                        _outlier_preview = preview_outlier_impact(
+                            df, iqr_multiplier=_iqr_mult, columns=_target_outlier_cols
+                        )
+                        _total_outliers = sum(_outlier_preview.values())
+                        if _total_outliers > 0:
+                            st.warning(
+                                f"{len(_outlier_preview)}列で計{_total_outliers:,}値の外れ値を検出。"
+                            )
+                            with st.expander("列別の詳細"):
+                                for _oc, _on in sorted(_outlier_preview.items(), key=lambda x: -x[1]):
+                                    st.markdown(f"- **{_oc}**: {_on}値")
+                            if st.button("外れ値をクリップする", key="btn_clip_outliers",
+                                         type="primary", use_container_width=True):
+                                st.session_state["_df_history"].append(df.copy())
+                                _new_df, _action = clip_outliers(
+                                    df, iqr_multiplier=_iqr_mult, columns=_target_outlier_cols
+                                )
+                                st.session_state["df"] = _new_df
+                                st.session_state["_cleaning_log"].append(_action)
+                                st.success(f"✅ {_action.description}")
+                                st.rerun()
+                        else:
+                            st.success("外れ値は検出されませんでした。")
+
+                # --- 5. 重複行除去 ---
+                with _clean_tabs[4]:
+                    if _cs["n_dup_rows"] > 0:
+                        st.warning(
+                            f"**{_cs['n_dup_rows']:,}件** の重複行が見つかりました。"
+                        )
+                        if st.button("重複行を除去する", key="btn_rm_dup",
+                                     type="primary", use_container_width=True):
+                            st.session_state["_df_history"].append(df.copy())
+                            _new_df, _action = remove_duplicates(df)
+                            st.session_state["df"] = _new_df
+                            st.session_state["_cleaning_log"].append(_action)
+                            st.success(f"✅ {_action.description}")
+                            st.rerun()
+                    else:
+                        st.success("重複行は見つかりませんでした。")
+
+
 
         # ══════════════════════════════════════════════════════════════
         # サブタブ5: パイプライン設計
@@ -1249,7 +1703,7 @@ else:
             st.markdown("---")
 
             # ── 結果確認サブタブ ────────────────────────────────────────
-            res_tab1, res_tab2 = st.tabs(["📈 モデル評価", "🔬 モデル解釈性"])
+            res_tab1, res_tab2, res_tab_bo = st.tabs(["📈 モデル評価", "🔬 モデル解釈性", "🎯 実験計画(BO)"])
 
             with res_tab1:
                 try:
@@ -1299,4 +1753,8 @@ else:
                     import traceback
                     st.code(traceback.format_exc())
 
+
+            with res_tab_bo:
+                from frontend_streamlit.components.bayesian_opt_ui import render_bayesian_opt_ui
+                render_bayesian_opt_ui()
 

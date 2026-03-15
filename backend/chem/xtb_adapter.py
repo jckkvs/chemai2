@@ -40,11 +40,23 @@ _XTB_DESCRIPTORS = {
     "xtb_IonizationPotential":  "イオン化ポテンシャル（推定） [eV]",
     "xtb_ElectronAffinity":     "電子親和力（推定） [eV]",
     "xtb_Electrophilicity":     "親電子性インデックス [eV]",
+    # Mulliken電荷統計（charge_config で xtb_mulliken 選択時）
+    "xtb_MullikenChargeMax":    "原子Mulliken電荷の最大値（最も正電荷の原子）",
+    "xtb_MullikenChargeMin":    "原子Mulliken電荷の最小値（最も負電荷の原子）",
+    "xtb_MullikenChargeMean":   "原子Mulliken電荷の平均値",
+    "xtb_MullikenChargeStd":    "原子Mulliken電荷の標準偏差",
 }
 
 
-def _smiles_to_xyz(smiles: str) -> str | None:
-    """SMILES → 3D座標 (XYZ 形式文字列)。RDKit を使用。"""
+def _smiles_to_xyz(smiles: str, charge: int = 0) -> str | None:
+    """
+    SMILES → 3D座標 (XYZ 形式文字列)。RDKit を使用。
+
+    Args:
+        smiles: 入力 SMILES
+        charge: 分子の形式電荷（3D構造生成には直接不要だが、
+                MMFF/UFF 最適化の際に電荷を考慮させるために渡す）
+    """
     try:
         from rdkit import Chem
         from rdkit.Chem import AllChem
@@ -56,13 +68,20 @@ def _smiles_to_xyz(smiles: str) -> str | None:
         result = AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
         if result != 0:
             AllChem.EmbedMolecule(mol, AllChem.ETKDG())
-        AllChem.MMFFOptimizeMolecule(mol)
+        # MMFF最適化（荷電分子にはUFFの方が安定する場合があるが、MMFFを優先）
+        try:
+            AllChem.MMFFOptimizeMolecule(mol)
+        except Exception:
+            try:
+                AllChem.UFFOptimizeMolecule(mol)
+            except Exception:
+                pass  # 最適化失敗でも座標は得られている場合がある
 
         conf = mol.GetConformer()
         atoms = [mol.GetAtomWithIdx(i).GetSymbol() for i in range(mol.GetNumAtoms())]
         positions = conf.GetPositions()
 
-        lines = [str(len(atoms)), f"Generated from SMILES: {smiles}"]
+        lines = [str(len(atoms)), f"Generated from SMILES: {smiles} charge={charge}"]
         for sym, pos in zip(atoms, positions):
             lines.append(f"{sym:2s}  {pos[0]:12.6f}  {pos[1]:12.6f}  {pos[2]:12.6f}")
         return "\n".join(lines)
@@ -72,37 +91,81 @@ def _smiles_to_xyz(smiles: str) -> str | None:
 
 
 def _parse_xtb_output(output: str) -> dict[str, float]:
-    """xtb 出力テキストから各種記述子を抽出する。
+    """
+    xtb 出力テキストから各種記述子を抽出する。
 
     Implements: §3.9 xtb出力パース
+    Mulliken電荷の抽出も追加（qTOTAL 列を読む）
     """
     result: dict[str, float] = {}
     lines = output.splitlines()
-    for line in lines:
+    mulliken_charges: list[float] = []
+    in_charges_block = False
+
+    for i, line in enumerate(lines):
         line_l = line.lower()
         try:
             if "homo-lumo gap" in line_l:
                 result["xtb_HomoLumoGap"] = float(line.split()[-2])
             elif "| homo" in line_l and "eV" in line:
-                result["xtb_HomoEnergy"] = float(line.split()[-2])
+                # 形式: " | HOMO | -0.51262 | -13.9492 | eV |"
+                # パイプ区切りなので split('|') でeV値を取得
+                pipe_parts = [p.strip() for p in line.split("|") if p.strip()]
+                for pp in pipe_parts:
+                    tokens = pp.split()
+                    if len(tokens) >= 1:
+                        try:
+                            val = float(tokens[0])
+                            # eV単位の値を取得（最後の数値フィールド）
+                            result["xtb_HomoEnergy"] = val
+                        except ValueError:
+                            pass
             elif "| lumo" in line_l and "eV" in line:
-                result["xtb_LumoEnergy"] = float(line.split()[-2])
+                pipe_parts = [p.strip() for p in line.split("|") if p.strip()]
+                for pp in pipe_parts:
+                    tokens = pp.split()
+                    if len(tokens) >= 1:
+                        try:
+                            val = float(tokens[0])
+                            result["xtb_LumoEnergy"] = val
+                        except ValueError:
+                            pass
             elif "total energy" in line_l and "Eh" in line:
                 result["xtb_TotalEnergy"] = float(line.split()[-2])
-            elif "dipole moment" in line_l:
-                # next non-empty line has values
-                pass
             elif "| total" in line_l and "debye" in line_l.replace("| total", ""):
+                # 形式: " | total | 0.000 0.001 0.002 1.234 Debye"
+                pipe_parts = [p.strip() for p in line.split("|") if p.strip()]
+                for pp in pipe_parts:
+                    if "debye" in pp.lower():
+                        tokens = pp.split()
+                        # Debye直前の数値がtotal dipole moment
+                        for t in reversed(tokens):
+                            try:
+                                result["xtb_DipoleMoment"] = float(t)
+                                break
+                            except ValueError:
+                                pass
+                        break
+
+            # Mulliken電荷ブロックの検出
+            # xtb出力: "Mulliken/CM5 charges" または "#   Z          covCN         q      C6AA"
+            elif "mulliken" in line_l and "charge" in line_l:
+                in_charges_block = True
+                mulliken_charges = []
+            elif in_charges_block:
                 parts = line.split()
-                if len(parts) >= 5:
+                # 形式: "  1  C   ...  q_value  ..." — 4列目が電荷の場合が多い
+                if len(parts) >= 4:
                     try:
-                        result["xtb_DipoleMoment"] = float(parts[-1])
-                    except ValueError:
-                        pass
+                        q = float(parts[3])  # Mulliken電荷列（xTBの標準出力形式）
+                        mulliken_charges.append(q)
+                    except (ValueError, IndexError):
+                        in_charges_block = False  # 数値でなければブロック終了
+
         except (ValueError, IndexError):
             pass
 
-    # HOMO-LUMO 由来の推定値
+    # HOMO-LUMO 由来の推定値（Koopmans定理）
     homo = result.get("xtb_HomoEnergy")
     lumo = result.get("xtb_LumoEnergy")
     if homo is not None and lumo is not None:
@@ -114,6 +177,14 @@ def _parse_xtb_output(output: str) -> dict[str, float]:
         eta = (ip - ea) / 2.0
         if eta > 0:
             result["xtb_Electrophilicity"] = (mu ** 2) / (2.0 * eta)
+
+    # Mulliken電荷統計
+    if mulliken_charges:
+        charges_arr = np.array(mulliken_charges)
+        result["xtb_MullikenChargeMax"]  = float(np.max(charges_arr))
+        result["xtb_MullikenChargeMin"]  = float(np.min(charges_arr))
+        result["xtb_MullikenChargeMean"] = float(np.mean(charges_arr))
+        result["xtb_MullikenChargeStd"]  = float(np.std(charges_arr))
 
     return result
 
@@ -189,14 +260,18 @@ class XTBAdapter(BaseChemAdapter):
         self,
         smiles_list: list[str],
         selected_descriptors: list[str] | None = None,
+        charge_config_store: Any | None = None,
         **kwargs: Any,
     ) -> DescriptorResult:
-        """SMILES リストから XTB 量子化学記述子を計算する。
+        """
+        SMILES リストから XTB 量子化学記述子を計算する。
 
         Implements: §3.9 XTB計算フロー
         Args:
             smiles_list: 入力 SMILES のリスト
             selected_descriptors: 使用する記述子名（None = 全件）
+            charge_config_store: ChargeConfigStore インスタンス。
+                None のとき、SMILES から形式電荷を自動読取し、スピン=1（閉殻）を使用。
         Returns:
             DescriptorResult: xtb_* 列からなる DataFrame
         """
@@ -215,7 +290,23 @@ class XTBAdapter(BaseChemAdapter):
             for i, smi in enumerate(smiles_list):
                 row = {k: np.nan for k in col_names}
                 try:
-                    xyz = _smiles_to_xyz(smi)
+                    # 電荷・スピンを解決
+                    if charge_config_store is not None:
+                        charge = charge_config_store.resolve_charge(smi)
+                        spin   = charge_config_store.resolve_spin(smi)
+                        cfg    = charge_config_store.get_config(smi)
+                        # プロトン化変換を適用してから3D構造を生成
+                        from backend.chem.protonation import apply_protonation
+                        smi_for_xtb = apply_protonation(smi, cfg)
+                        uhf = spin - 1  # 不対電子数
+                    else:
+                        # デフォルト: SMILESから形式電荷を自動読取
+                        from backend.chem.charge_config import _read_smiles_formal_charge
+                        charge = _read_smiles_formal_charge(smi)
+                        uhf = 0  # 閉殻
+                        smi_for_xtb = smi
+
+                    xyz = _smiles_to_xyz(smi_for_xtb, charge=charge)
                     if xyz is None:
                         raise ValueError(f"SMILES → XYZ 変換失敗: {smi[:30]}")
 
@@ -223,14 +314,29 @@ class XTBAdapter(BaseChemAdapter):
                     with open(xyz_path, "w") as f:
                         f.write(xyz)
 
-                    # xtb single-point 計算
+                    # xtb single-point 計算（電荷・スピンを明示的に指定）
+                    cmd = ["xtb", xyz_path, f"--gfn{self.gfn}", "--sp",
+                           "--chrg", str(charge)]
+                    if uhf > 0:
+                        cmd += ["--uhf", str(uhf)]
+
+                    logger.debug(
+                        "XTB cmd: %s (chrg=%d, uhf=%d)",
+                        " ".join(cmd[:4]), charge, uhf,
+                    )
+
                     result = subprocess.run(
-                        ["xtb", xyz_path, f"--gfn{self.gfn}", "--sp"],
+                        cmd,
                         cwd=tmpdir,
                         capture_output=True,
                         text=True,
-                        timeout=60,
+                        timeout=120,  # 荷電分子は収束に時間がかかる場合がある
                     )
+                    if result.returncode != 0:
+                        logger.warning(
+                            "XTB 非0終了 (idx=%d, chrg=%d, uhf=%d): %s",
+                            i, charge, uhf, result.stderr[-200:],
+                        )
                     parsed = _parse_xtb_output(result.stdout)
                     for k in col_names:
                         if k in parsed:
