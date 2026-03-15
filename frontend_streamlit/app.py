@@ -906,13 +906,12 @@ else:
                         with _etab:
                             _flt_engine = "全て" if _etab_idx == 0 else _avail_engines[_etab_idx - 1]
 
-                            # サブフィルタ
-                            _fc1, _fc2, _fc3 = st.columns([1, 1, 2])
-                            with _fc1:
-                                _flt = st.radio("表示", ["全て", "選択中", "未選択", "推奨のみ"], key=f"df_flt_{_etab_idx}", horizontal=True)
-                            with _fc2:
+                            # フィルタ（クリック数最小化）
+                            _flt = st.pills("表示", ["全て", "選択中", "未選択", "推奨のみ"], default="全て", key=f"df_flt_{_etab_idx}")
+                            _fc_a, _fc_b = st.columns([1, 2])
+                            with _fc_a:
                                 _flt_corr = st.slider("|r|≥", 0.0, 1.0, 0.0, 0.01, key=f"df_flt_corr_{_etab_idx}")
-                            with _fc3:
+                            with _fc_b:
                                 _srch = st.text_input("検索", key=f"df_srch_{_etab_idx}", placeholder="記述子名で絞り込み")
 
                             _tdf = pd.DataFrame(_rows)
