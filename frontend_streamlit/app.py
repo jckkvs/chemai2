@@ -514,27 +514,47 @@ else:
                     if rec:
                         st.info(f"💡 **推奨される記述子**: {rec.summary}")
 
-                    # タスク種別
-                    task_opt = st.selectbox(
-                        "📋 タスク種別",
+                    # タスク種別（自動判定 + 変更は折りたたみ）
+                    _auto_task = "regression" if pd.api.types.is_float_dtype(df[target]) else "classification"
+                    _task_label = "📈 回帰（数値予測）" if _auto_task == "regression" else "🏷️ 分類（カテゴリ予測）"
+                    st.markdown(f"**📋 タスク種別**: {_task_label}（自動判定）")
+                    _task_override = st.pills(
+                        "変更する場合",
                         ["auto（自動）", "regression（回帰）", "classification（分類）"],
+                        default="auto（自動）",
                         key="home_task",
                     )
-                    st.session_state["task"] = task_opt.split("（")[0]
+                    st.session_state["task"] = _task_override.split("（")[0] if _task_override else "auto"
 
-                    # SMILES列（任意）
-                    smiles_options = none_opt + all_cols
-                    cur_smiles = st.session_state.get("smiles_col")
-                    smiles_idx = (smiles_options.index(cur_smiles) if cur_smiles in smiles_options else
-                                  next((i+1 for i, c in enumerate(all_cols) if c.lower()=="smiles"), 0))
-                    smiles_raw = st.selectbox(
-                        "🧬 SMILES列（任意・化合物構造列）",
-                        smiles_options,
-                        index=smiles_idx,
-                        key="adv_sm",
-                        help="SMILES形式の化合物構造が含まれる列。指定すると化学記述子を自動計算します。",
-                    )
-                    new_smiles_col = None if smiles_raw == "（なし）" else smiles_raw
+                    # SMILES列（自動検出 + 確認）
+                    _det_smiles = st.session_state.get("smiles_col")
+                    if _det_smiles and _det_smiles in all_cols:
+                        st.markdown(f"**🧬 SMILES列**: `{_det_smiles}`（自動検出済み）")
+                        _change_smiles = st.checkbox("SMILES列を変更する", key="chg_sm", value=False)
+                        if _change_smiles:
+                            smiles_options = none_opt + all_cols
+                            smiles_raw = st.selectbox(
+                                "SMILES列の変更",
+                                smiles_options,
+                                index=smiles_options.index(_det_smiles) if _det_smiles in smiles_options else 0,
+                                key="adv_sm",
+                            )
+                            new_smiles_col = None if smiles_raw == "（なし）" else smiles_raw
+                        else:
+                            new_smiles_col = _det_smiles
+                    else:
+                        smiles_options = none_opt + all_cols
+                        cur_smiles = st.session_state.get("smiles_col")
+                        smiles_idx = (smiles_options.index(cur_smiles) if cur_smiles in smiles_options else
+                                      next((i+1 for i, c in enumerate(all_cols) if c.lower()=="smiles"), 0))
+                        smiles_raw = st.selectbox(
+                            "🧬 SMILES列（任意・化合物構造列）",
+                            smiles_options,
+                            index=smiles_idx,
+                            key="adv_sm",
+                            help="SMILES形式の化合物構造が含まれる列。指定すると化学記述子を自動計算します。",
+                        )
+                        new_smiles_col = None if smiles_raw == "（なし）" else smiles_raw
                     if st.session_state.get("smiles_col") != new_smiles_col:
                         st.session_state["precalc_done"] = False
                         st.session_state["precalc_smiles_df"] = None
@@ -1627,6 +1647,26 @@ else:
                         type="primary",
                     ):
                         adv = st.session_state.get("_adv", {})
+
+                        # リーケージチェック自動実行（数値列が2列以上ある場合）
+                        _target_lk = st.session_state.get("target_col")
+                        _smiles_lk = st.session_state.get("smiles_col")
+                        _excl_lk = st.session_state.get("col_role_exclude", [])
+                        _feat_lk = [c for c in df.columns if c not in [_target_lk, _smiles_lk] + _excl_lk]
+                        _X_lk = df[_feat_lk].select_dtypes(include="number")
+                        _leakage_group_labels = None
+                        _leakage_recommended_cv = None
+                        if _X_lk.shape[1] >= 2 and len(df) <= 5000:
+                            try:
+                                from backend.data.leakage_detector import detect_leakage
+                                _lk_report = detect_leakage(_X_lk, df[_target_lk], method="auto")
+                                if _lk_report.risk_level in ("medium", "high") and _lk_report.group_labels is not None:
+                                    _leakage_group_labels = _lk_report.group_labels
+                                    _leakage_recommended_cv = _lk_report.recommended_cv
+                                st.session_state["leakage_report"] = _lk_report
+                            except Exception:
+                                pass
+
                         st.session_state["_run_config"] = dict(
                             target_col = st.session_state["target_col"],
                             smiles_col = st.session_state.get("smiles_col"),
@@ -1643,6 +1683,12 @@ else:
                             do_shap    = adv.get("do_shap", True),
                             selected_descriptors = adv.get("selected_descriptors", None),
                             monotonic_constraints_dict = st.session_state.get("_monotonic_constraints_dict", {}),
+                            leakage_group_labels = _leakage_group_labels,
+                            leakage_recommended_cv = _leakage_recommended_cv,
+                            cv_groups_col = st.session_state.get("col_role_group"),
+                            exclude_cols = st.session_state.get("col_role_exclude", []),
+                            col_role_time = st.session_state.get("col_role_time"),
+                            sample_weight_col = st.session_state.get("col_role_weight"),
                         )
                         st.session_state["active_tab_idx"] = 1
                         st.rerun()
