@@ -897,57 +897,65 @@ else:
                         })
                     _rows.sort(key=lambda x: x["|r|"] if x["|r|"] is not None else -1, reverse=True)
 
-                    # フィルタ（複数の選び方を提供）
-                    _fc1, _fc2, _fc3, _fc4 = st.columns([1, 1, 1, 2])
-                    with _fc1:
-                        _flt = st.selectbox("表示", ["全て", "選択中", "未選択", "推奨のみ"], key="df_flt")
-                    with _fc2:
-                        _avail_engines = sorted(set(_engine_map.values()))
-                        _flt_engine = st.selectbox("エンジン", ["全て"] + _avail_engines, key="df_flt_eng")
-                    with _fc3:
-                        _flt_corr = st.slider("|r|≥", 0.0, 1.0, 0.0, 0.01, key="df_flt_corr")
-                    with _fc4:
-                        _srch = st.text_input("検索", key="df_srch", placeholder="記述子名で絞り込み")
-                    _tdf = pd.DataFrame(_rows)
-                    if _flt == "選択中":
-                        _tdf = _tdf[_tdf["✅"] == True]
-                    elif _flt == "未選択":
-                        _tdf = _tdf[_tdf["✅"] == False]
-                    elif _flt == "推奨のみ":
-                        _tdf = _tdf[_tdf["★"] == "★"]
-                    if _flt_engine != "全て":
-                        _tdf = _tdf[_tdf["ソース"] == _flt_engine]
-                    if _flt_corr > 0:
-                        _tdf = _tdf[_tdf["|r|"].fillna(0) >= _flt_corr]
-                    if _srch:
-                        _tdf = _tdf[_tdf["記述子名"].str.contains(_srch, case=False, na=False)]
+                    # エンジン別タブ（comboboxよりタブの方が選択しやすい）
+                    _avail_engines = sorted(set(_engine_map.values()))
+                    _engine_tab_labels = ["🔍 全て"] + [f"🏷️ {e}" for e in _avail_engines]
+                    _engine_tabs = st.tabs(_engine_tab_labels)
 
-                    # data_editor
-                    _edited = st.data_editor(
-                        _tdf,
-                        column_config={
-                            "✅": st.column_config.CheckboxColumn("選択", default=False),
-                            "★": st.column_config.TextColumn("推奨", width="small"),
-                            "記述子名": st.column_config.TextColumn("記述子名", width="medium"),
-                            "ソース": st.column_config.TextColumn("エンジン", width="small"),
-                            "|r|": st.column_config.NumberColumn("|r|", format="%.3f", width="small"),
-                            "ユニーク数": st.column_config.NumberColumn("ユニーク", width="small"),
-                            "意味": st.column_config.TextColumn("物理的意味", width="large"),
-                            "分類": st.column_config.TextColumn("分類", width="medium"),
-                        },
-                        disabled=["★", "記述子名", "ソース", "|r|", "ユニーク数", "意味", "分類"],
-                        use_container_width=True,
-                        hide_index=True,
-                        key="desc_editor",
-                        height=min(700, 40 + len(_tdf) * 35),
-                    )
+                    for _etab_idx, _etab in enumerate(_engine_tabs):
+                        with _etab:
+                            _flt_engine = "全て" if _etab_idx == 0 else _avail_engines[_etab_idx - 1]
 
-                    if _edited is not None:
-                        _new_sel = set(_edited[_edited["✅"] == True]["記述子名"].tolist())
-                        _invisible = _cur_sel - set(_tdf["記述子名"].tolist())
-                        _final = _new_sel | _invisible
-                        if _final != _cur_sel:
-                            st.session_state["adv_desc"] = list(_final)
+                            # サブフィルタ
+                            _fc1, _fc2, _fc3 = st.columns([1, 1, 2])
+                            with _fc1:
+                                _flt = st.radio("表示", ["全て", "選択中", "未選択", "推奨のみ"], key=f"df_flt_{_etab_idx}", horizontal=True)
+                            with _fc2:
+                                _flt_corr = st.slider("|r|≥", 0.0, 1.0, 0.0, 0.01, key=f"df_flt_corr_{_etab_idx}")
+                            with _fc3:
+                                _srch = st.text_input("検索", key=f"df_srch_{_etab_idx}", placeholder="記述子名で絞り込み")
+
+                            _tdf = pd.DataFrame(_rows)
+                            if _flt == "選択中":
+                                _tdf = _tdf[_tdf["✅"] == True]
+                            elif _flt == "未選択":
+                                _tdf = _tdf[_tdf["✅"] == False]
+                            elif _flt == "推奨のみ":
+                                _tdf = _tdf[_tdf["★"] == "★"]
+                            if _flt_engine != "全て":
+                                _tdf = _tdf[_tdf["ソース"] == _flt_engine]
+                            if _flt_corr > 0:
+                                _tdf = _tdf[_tdf["|r|"].fillna(0) >= _flt_corr]
+                            if _srch:
+                                _tdf = _tdf[_tdf["記述子名"].str.contains(_srch, case=False, na=False)]
+
+                            # data_editor（各タブ内に配置）
+                            _edited = st.data_editor(
+                                _tdf,
+                                column_config={
+                                    "✅": st.column_config.CheckboxColumn("選択", default=False),
+                                    "★": st.column_config.TextColumn("推奨", width="small"),
+                                    "記述子名": st.column_config.TextColumn("記述子名", width="medium"),
+                                    "ソース": st.column_config.TextColumn("エンジン", width="small"),
+                                    "|r|": st.column_config.NumberColumn("|r|", format="%.3f", width="small"),
+                                    "ユニーク数": st.column_config.NumberColumn("ユニーク", width="small"),
+                                    "意味": st.column_config.TextColumn("物理的意味", width="large"),
+                                    "分類": st.column_config.TextColumn("分類", width="medium"),
+                                },
+                                disabled=["★", "記述子名", "ソース", "|r|", "ユニーク数", "意味", "分類"],
+                                use_container_width=True,
+                                hide_index=True,
+                                key=f"desc_editor_{_etab_idx}",
+                                height=min(700, 40 + len(_tdf) * 35),
+                            )
+
+                            # 選択状態をsession_stateに反映
+                            if _edited is not None:
+                                _new_sel = set(_edited[_edited["✅"] == True]["記述子名"].tolist())
+                                _invisible = _cur_sel - set(_tdf["記述子名"].tolist())
+                                _final = _new_sel | _invisible
+                                if _final != _cur_sel:
+                                    st.session_state["adv_desc"] = list(_final)
 
                     st.session_state.setdefault("adv_desc", list(_cur_sel))
 
