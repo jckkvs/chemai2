@@ -159,233 +159,6 @@ def render(run_config: dict | None = None) -> None:
 
     st.markdown("---")
 
-    # ── Pipeline設定パネル（折り畳み） ────────────────────────
-    # ── Expert 設定パネル（整理されたタブ形式） ────────────────
-    st.markdown("### 🛠️ 専門家向け詳細設定")
-    with st.expander("⚙️ パイプライン構成をカスタマイズする", expanded=False):
-        from backend.models.factory import list_models, get_model_registry
-        from backend.models.cv_manager import list_cv_methods, _CV_REGISTRY
-        import inspect
-
-        # タブの定義
-        cfg_tab1, cfg_tab2, cfg_tab3 = st.tabs([
-            "🎯 基本構成 & モデル選択", 
-            "🧠 各モデルの詳細引数", 
-            "🔬 高度な設定 (CV・前処理)"
-        ])
-
-        # --- Tab 1: 基本構成 & モデル選択 ---
-        with cfg_tab1:
-            col_t1, col_t2 = st.columns(2)
-            with col_t1:
-                st.markdown("**タスク & 実行フラグ**")
-                task_override = st.selectbox(
-                    "タスク種別",
-                    ["auto", "regression", "classification"],
-                    key="pl_task",
-                    help="autoの場合は目的変数のデータ型から自動判定します"
-                )
-                
-                # SMILES列の選択
-                smiles_options = ["なし"] + df.columns.tolist()
-                smiles_default_idx = 0
-                for i, col in enumerate(df.columns):
-                    if col.lower() == "smiles":
-                        smiles_default_idx = i + 1
-                        break
-                smiles_col_raw = st.selectbox("SMILES列 (化合物データの場合)", smiles_options, index=smiles_default_idx, key="pl_smiles")
-                smiles_col = None if smiles_col_raw == "なし" else smiles_col_raw
-                
-                timeout = st.slider("全体タイムアウト(秒)", 30, 3600, 300, key="pl_to")
-
-            with col_t2:
-                st.markdown("**評価対象モデルの選択**")
-                task_for_models = st.session_state.get("task", "auto")
-                if task_for_models == "auto":
-                    # 仮判定
-                    task_for_models = "regression" if pd.api.types.is_float_dtype(df[target_col]) else "classification"
-                
-                all_model_list = list_models(task_for_models, available_only=True)
-                all_model_keys = [m["key"] for m in all_model_list]
-                
-                default_sel_models = st.session_state.get("adv_models", all_model_keys)
-                selected_model_keys = st.multiselect(
-                    "評価に含めるモデル",
-                    options=all_model_keys,
-                    default=[k for k in default_sel_models if k in all_model_keys],
-                    format_func=lambda k: next((m["name"] for m in all_model_list if m["key"] == k), k),
-                    key="cfg_models",
-                    help="AutoMLで比較するベースモデルを選択します"
-                )
-
-            st.markdown("---")
-            st.markdown("**出力オプション**")
-            c_p1, c_p2 = st.columns(2)
-            with c_p1:
-                do_pca = st.checkbox("次元削減(PCA)を表示", value=True, key="pl_pca")
-            with c_p2:
-                do_shap = st.checkbox("SHAP解析(重要度)を表示", value=True, key="pl_shap")
-
-        # --- Tab 2: 各モデルの詳細引数 ---
-        with cfg_tab2:
-            st.markdown("各モデルのハイパーパラメータを個別に調整できます。")
-            # task_for_models を再計算（cfg_tab1 のローカル変数に依存しないように）
-            _task2 = st.session_state.get("task", "auto")
-            if _task2 in ("auto", "auto（自動）"):
-                _task2 = "regression" if pd.api.types.is_float_dtype(df[target_col]) else "classification"
-            registry = get_model_registry(_task2)
-            
-            # Tab1 で選択されたモデルキーを確実に取得する
-            active_models = selected_model_keys if selected_model_keys else st.session_state.get("cfg_models", [])
-            model_params_dict = {}
-
-            if not active_models:
-                st.info("左のタブでモデルを選択してください。")
-            else:
-                for mkey in active_models:
-                    entry = registry.get(mkey, {})
-                    mname = entry.get("name", mkey)
-                    m_item = entry.get("class") or entry.get("factory")
-                    
-                    if m_item:
-                        with st.expander(f"⚙️ {mname} ({mkey})"):
-                            target_func = m_item.__init__ if inspect.isclass(m_item) else m_item
-                            try:
-                                msig = inspect.signature(target_func)
-                            except Exception:
-                                st.warning(f"{mkey} の引数を取得できませんでした。")
-                                continue
-                                
-                            default_ps = entry.get("default_params", {})
-                            m_p_vals = {}
-                            m_cols = st.columns(3)
-                            m_idx = 0
-                            
-                            for pname, pinfo in msig.parameters.items():
-                                if pname in ("self", "kwargs", "args"):
-                                    continue
-                                
-                                dval = default_ps.get(pname, pinfo.default if pinfo.default is not inspect.Parameter.empty else None)
-                                anno = pinfo.annotation
-                                
-                                with m_cols[m_idx % 3]:
-                                    k_p = f"mp_{mkey}_{pname}"
-                                    if isinstance(dval, bool) or anno is bool:
-                                        m_p_vals[pname] = st.checkbox(pname, value=bool(dval) if dval is not None else False, key=k_p)
-                                    elif isinstance(dval, int) or anno is int:
-                                        iv = int(dval) if dval is not None and not isinstance(dval, str) else 0
-                                        m_p_vals[pname] = st.number_input(pname, value=iv, key=k_p)
-                                    elif isinstance(dval, float) or anno is float:
-                                        fv = float(dval) if dval is not None else 0.0
-                                        m_p_vals[pname] = st.number_input(pname, value=fv, format="%.4f", key=k_p)
-                                    elif dval is None:
-                                        raw = st.text_input(pname, value="", key=k_p, help="空白=None")
-                                        m_p_vals[pname] = None if raw.strip() == "" else raw.strip()
-                                    else:
-                                        m_p_vals[pname] = st.text_input(pname, value=str(dval), key=k_p)
-                                m_idx += 1
-                            model_params_dict[mkey] = m_p_vals
-
-        # --- Tab 3: 高度な設定 (CV・前処理) ---
-        with cfg_tab3:
-            st.markdown("**📊 交差検証 (Cross-Validation)**")
-            cv_methods_all = list_cv_methods(task="regression")
-            cv_key_map = {m["key"]: f"{m['name']}  —  {m['description']}" for m in cv_methods_all}
-
-            cv_key_sel = st.selectbox(
-                "CV手法",
-                options=list(cv_key_map.keys()),
-                format_func=lambda k: cv_key_map[k],
-                index=0,
-                key="cfg_cv_key",
-            )
-
-            cv_entry = _CV_REGISTRY.get(cv_key_sel, {})
-            cv_class = cv_entry.get("class")
-            cv_params: dict = {}
-
-            if cv_class:
-                sig = inspect.signature(cv_class.__init__)
-                cv_p_cols = st.columns(3)
-                p_idx = 0
-                for pname, pinfo in sig.parameters.items():
-                    if pname in ("self", "test_fold"): continue
-                    dval = cv_entry.get("default_params", {}).get(pname, pinfo.default if pinfo.default is not inspect.Parameter.empty else None)
-                    anno = pinfo.annotation
-                    with cv_p_cols[p_idx % 3]:
-                        k_cv = f"cv_p_{pname}"
-                        if isinstance(dval, bool) or anno is bool:
-                            cv_params[pname] = st.checkbox(pname, value=bool(dval), key=k_cv)
-                        elif isinstance(dval, int) or anno is int:
-                            cv_params[pname] = st.number_input(pname, value=int(dval) if dval is not None else 0, key=k_cv)
-                        elif isinstance(dval, float) or anno is float:
-                            cv_params[pname] = st.number_input(pname, value=float(dval) if dval is not None else 0.0, format="%.3f", key=k_cv)
-                        else:
-                            cv_params[pname] = st.text_input(pname, value=str(dval) if dval is not None else "", key=k_cv)
-                    p_idx += 1
-
-            requires_groups = cv_entry.get("requires_groups", False)
-            groups_sel = st.selectbox("グループ列 (オプション)", ["なし"] + df.columns.tolist(), key="cfg_group_col")
-            cfg_group_col = None if groups_sel == "なし" else groups_sel
-
-            st.markdown("---")
-            st.markdown("**🔧 前処理 (Preprocessing)**")
-            ps_col1, ps_col2 = st.columns(2)
-            with ps_col1:
-                st.markdown("*数値列*")
-                numeric_scaler = st.selectbox("スケーラー", ["auto", "standard", "minmax", "robust", "none"], key="cfg_scaler")
-                numeric_imputer = st.selectbox("欠損補完", ["mean", "median", "knn", "constant"], key="cfg_num_imputer")
-                add_missing_ind = st.checkbox("欠損指標列を追加", value=True, key="cfg_miss_ind")
-            with ps_col2:
-                st.markdown("*カテゴリ列*")
-                cat_low_encoder = st.selectbox("エンコーダ(低)", ["onehot", "ordinal", "target"], key="cfg_cat_low")
-                cat_high_encoder = st.selectbox("エンコーダ(高)", ["ordinal", "target", "binary"], key="cfg_cat_high")
-                cat_imputer = st.selectbox("欠損補完", ["most_frequent", "constant"], key="cfg_cat_imputer")
-
-
-    # デフォルト値（設定パネルを開いていない場合）
-    if "cfg_cv_key" not in st.session_state:
-        cv_key_sel = "kfold"
-        cv_params = {}
-        cfg_group_col = None
-        numeric_scaler = "auto"
-        numeric_imputer = "mean"
-        add_missing_ind = True
-        cat_low_encoder = "onehot"
-        cat_high_encoder = "ordinal"
-        cat_imputer = "most_frequent"
-        selected_model_keys = []
-        model_params_dict = {}
-        task_override = "auto"
-        smiles_col = None
-        timeout = 300
-        do_pca = True
-        do_shap = True
-    else:
-        # すべてセッションステートから取得
-        cv_key_sel = st.session_state.get("cfg_cv_key", "kfold")
-        cfg_group_col = None if st.session_state.get("cfg_group_col", "なし") == "なし" else st.session_state.get("cfg_group_col")
-        numeric_scaler = st.session_state.get("cfg_scaler", "auto")
-        numeric_imputer = st.session_state.get("cfg_num_imputer", "mean")
-        add_missing_ind = st.session_state.get("cfg_miss_ind", True)
-        cat_low_encoder = st.session_state.get("cfg_cat_low", "onehot")
-        cat_high_encoder = st.session_state.get("cfg_cat_high", "ordinal")
-        cat_imputer = st.session_state.get("cfg_cat_imputer", "most_frequent")
-        selected_model_keys = st.session_state.get("cfg_models", [])
-        
-        # model_params_dict は selected_model_keys に基づいて構築済み
-        task_override = st.session_state.get("pl_task", "auto")
-        smiles_col_raw = st.session_state.get("pl_smiles", "なし")
-        smiles_col = None if smiles_col_raw == "なし" else smiles_col_raw
-        timeout = st.session_state.get("pl_to", 300)
-        do_pca = st.session_state.get("pl_pca", True)
-        do_shap = st.session_state.get("pl_shap", True)
-
-    # extra_params は後方互換のため空に
-    extra_params = {}
-
-
-
     # ── 既存結果の表示 ─────────────────────────────────────
     existing_pl = st.session_state.get("pipeline_result")
     existing_ml = st.session_state.get("automl_result")
@@ -394,16 +167,11 @@ def render(run_config: dict | None = None) -> None:
     if existing_pl is not None:
         _show_pipeline_result(existing_pl)
         st.markdown("---")
-        col_re1, col_re2 = st.columns(2)
-        with col_re1:
-            if st.button("🔄 パイプラインを再実行", use_container_width=True, key="rerun_pl"):
-                st.session_state["pipeline_result"] = None
-                st.session_state["automl_result"] = None
-                st.rerun()
-        with col_re2:
-            if existing_ml and st.button("🤖 AutoMLのみ再実行", use_container_width=True, key="rerun_ml"):
-                st.session_state["automl_result"] = None
-                st.rerun()
+        if st.button("🔄 設定を変えて再解析", use_container_width=True, key="rerun_pl"):
+            st.session_state["pipeline_result"] = None
+            st.session_state["automl_result"] = None
+            st.session_state["active_tab_idx"] = 0
+            st.rerun()
         return
 
     elif existing_ml is not None:
@@ -411,60 +179,60 @@ def render(run_config: dict | None = None) -> None:
         st.success(f"✅ 前回の結果: 最良モデル = **{existing_ml.best_model_key}** | "
                    f"スコア = `{existing_ml.best_score:.4f}`")
         _show_leaderboard(existing_ml)
-        if st.button("🔄 再実行", use_container_width=True, key="rerun_old"):
+        if st.button("🔄 設定を変えて再解析", use_container_width=True, key="rerun_old"):
             st.session_state["automl_result"] = None
+            st.session_state["active_tab_idx"] = 0
             st.rerun()
         return
 
-    # ── 実行ボタン ───────────────────────────────────────────
+    # ── 未実行 → ① データ設定タブで設定してください ─────────────
+    # 設定は全て「①データ設定」タブのパイプライン設計で行う（二重設定廃止）
+    adv = st.session_state.get("_adv", {})
+
+    # Tab1の「解析開始」ボタンから遷移していない場合
+    st.markdown("""
+<div style="text-align:center; padding:3rem; color:#555;">
+  <div style="font-size:3rem;">🔬</div>
+  <div style="margin-top:1rem; color:#8888aa;">
+    「① データ設定」タブで設定を完了し、<br>下部の「🚀 解析開始」ボタンを押してください。
+  </div>
+  <div style="margin-top:0.5rem; font-size:0.85rem; color:#666;">
+    設定が完了していれば、以下のボタンからも直接実行できます。
+  </div>
+</div>""", unsafe_allow_html=True)
+
     c1, c2, c3 = st.columns([1, 3, 1])
     with c2:
         run_clicked = st.button(
-            "🚀 フルパイプライン実行（EDA → AutoML → SHAP）",
+            "🚀 現在の設定で実行",
             use_container_width=True,
             key="run_full",
             type="primary",
         )
 
     if not run_clicked:
-        st.markdown("""
-<div style="text-align:center; padding:3rem; color:#555;">
-  <div style="font-size:3rem;">🔬</div>
-  <div style="margin-top:1rem; color:#8888aa;">
-    「フルパイプライン実行」を押すと、EDA → 前処理 → AutoML → 評価 → 次元削減 → SHAP を自動で実行します
-  </div>
-  <div style="margin-top:0.5rem; font-size:0.85rem; color:#666;">
-    各フェーズは上の⚙️設定で個別にON/OFFできます
-  </div>
-</div>""", unsafe_allow_html=True)
         return
 
-    # ── フルパイプライン実行 ─────────────────────────────────
+    # ── adv設定からパイプライン実行 ─────────────────────────────
+    smiles_col = st.session_state.get("smiles_col")
+    task_override = st.session_state.get("task", "auto")
     _run_full_pipeline(
         df=df,
         target_col=target_col,
         smiles_col=smiles_col,
-        numeric_scaler=numeric_scaler,
-        numeric_imputer=numeric_imputer,
-        add_missing_indicator=add_missing_ind,
-        cat_low_encoder=cat_low_encoder,
-        cat_high_encoder=cat_high_encoder,
-        categorical_imputer=cat_imputer,
+        numeric_scaler=adv.get("scaler", "auto"),
         task_override=task_override,
-        cv_key=cv_key_sel,
-        cv_params=cv_params,
-        cv_groups_col=cfg_group_col,
-        models=selected_model_keys,
-        model_params=model_params_dict,
-        timeout=timeout,
-        do_eda=True,
-        do_prep=True,
+        cv_folds=adv.get("cv_folds", 5),
+        models=adv.get("models", []),
+        timeout=adv.get("timeout", 300),
+        do_eda=adv.get("do_eda", True),
+        do_prep=adv.get("do_prep", True),
         do_ml=True,
-        do_eval=True,
-        do_pca=do_pca,
-        do_shap=do_shap,
-        selected_descriptors=st.session_state.get("adv_desc"),
-        extra_params=extra_params,
+        do_eval=adv.get("do_eval", True),
+        do_pca=adv.get("do_pca", True),
+        do_shap=adv.get("do_shap", True),
+        selected_descriptors=adv.get("selected_descriptors"),
+        monotonic_constraints_dict=st.session_state.get("_monotonic_constraints_dict", {}),
     )
 
 

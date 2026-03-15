@@ -1069,7 +1069,7 @@ else:
                                 st.warning("セット名を入力してください。")
 
                     # クイック登録ショートカット
-                    with st.expander("⚡ よく使うセットを一括登録", expanded=False):
+                    with st.expander("⚡ よく使うセットを一括登録", expanded=True):
                         st.caption("エンジンやカテゴリに基づくセットをワンクリックで登録できます。")
                         _qc1, _qc2, _qc3 = st.columns(3)
 
@@ -1513,7 +1513,7 @@ else:
                     do_shap = st.checkbox("SHAP解析", value=True, key="adv_shap")
 
                 # モデル選択（コンパクト）
-                with st.expander("🤖 使用するモデルを選ぶ", expanded=False):
+                with st.expander("🤖 使用するモデルを選ぶ", expanded=True):
                     from backend.models.factory import list_models, get_default_automl_models, get_model_registry
                     import inspect
                     _tmp_task = st.session_state.get("task", "auto")
@@ -1654,9 +1654,9 @@ else:
                         f"スコア: `{ar.best_score:.4f}` | "
                         f"所要時間: {existing_result.elapsed:.1f}秒"
                     )
-                cc1, cc2, cc3 = st.columns(3)
+                cc1, cc2 = st.columns(2)
                 with cc1:
-                    if st.button("📊 結果を見る", use_container_width=True, key="view_res"):
+                    if st.button("📊 結果タブへ", use_container_width=True, key="view_res"):
                         st.session_state["active_tab_idx"] = 2
                         st.rerun()
                 with cc2:
@@ -1665,10 +1665,6 @@ else:
                                   "target_col","detection_result","step_eda_done",
                                   "step_preprocess_done","_run_config"]:
                             st.session_state[k] = None if k not in ("step_eda_done","step_preprocess_done") else False
-                        st.rerun()
-                with cc3:
-                    if st.button("🔧 詳細ツールへ", use_container_width=True, key="to_expert"):
-                        st.session_state["page"] = "eda"
                         st.rerun()
 
 
