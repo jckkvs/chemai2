@@ -529,7 +529,7 @@ else:
                     # SMILES列（自動検出 + 確認）
                     _det_smiles = st.session_state.get("smiles_col")
                     if _det_smiles and _det_smiles in all_cols:
-                        st.markdown(f"**🧬 SMILES列**: `{_det_smiles}`")
+                        st.markdown(f"**SMILES列**: `{_det_smiles}`")
                         _change_smiles = st.checkbox("SMILES列を変更する", key="chg_sm", value=False)
                         if _change_smiles:
                             smiles_options = none_opt + all_cols
@@ -1080,13 +1080,16 @@ else:
                     with _sc2:
                         st.markdown("<br>", unsafe_allow_html=True)
                         if st.button("💾 現在の選択を保存", key="btn_save_set", type="primary"):
-                            if _set_name.strip():
-                                _desc_sets[_set_name.strip()] = list(st.session_state.get("adv_desc", []))
-                                st.session_state["_desc_sets"] = _desc_sets
-                                st.success(f"✅ セット「{_set_name.strip()}」を保存しました（{len(st.session_state.get('adv_desc', []))}個）")
-                                st.rerun()
-                            else:
-                                st.warning("セット名を入力してください。")
+                            _final_name = _set_name.strip()
+                            if not _final_name:
+                                _n = len(_desc_sets) + 1
+                                while f"セット{_n}" in _desc_sets:
+                                    _n += 1
+                                _final_name = f"セット{_n}"
+                            _desc_sets[_final_name] = list(st.session_state.get("adv_desc", []))
+                            st.session_state["_desc_sets"] = _desc_sets
+                            st.success(f"✅ セット「{_final_name}」を保存しました（{len(st.session_state.get('adv_desc', []))}個）")
+                            st.rerun()
 
                     # クイック登録ショートカット
                     with st.expander("⚡ よく使うセットを一括登録", expanded=True):
@@ -1686,7 +1689,7 @@ else:
                             leakage_group_labels = _leakage_group_labels,
                             leakage_recommended_cv = _leakage_recommended_cv,
                             cv_groups_col = st.session_state.get("col_role_group"),
-                            exclude_cols = st.session_state.get("col_role_exclude", []),
+                            exclude_cols = list(set(st.session_state.get("col_role_exclude", []) + st.session_state.get("col_role_info", []))),
                             col_role_time = st.session_state.get("col_role_time"),
                             sample_weight_col = st.session_state.get("col_role_weight"),
                         )
@@ -1706,7 +1709,7 @@ else:
                         st.session_state["active_tab_idx"] = 2
                         st.rerun()
                 with cc2:
-                    if st.button("🔄 別データで再解析", use_container_width=True, key="reset"):
+                    if st.button("🔄 データを変えてやり直す", use_container_width=True, key="reset"):
                         for k in ["df","file_name","automl_result","pipeline_result",
                                   "target_col","detection_result","step_eda_done",
                                   "step_preprocess_done","_run_config"]:
