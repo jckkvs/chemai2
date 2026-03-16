@@ -131,7 +131,14 @@ class MolAIAdapter(BaseChemAdapter):
     前提: torch >= 2.0 がインストールされていること
     """
 
-    def __init__(self, n_components: int = 32, latent_dim: int = 256):
+    def __init__(self, n_components: int | str = "auto", latent_dim: int = 256):
+        """
+        Args:
+            n_components: PCA出力次元数。
+                - int: 固定次元数
+                - "auto": 累積寄与率95%超えの最小次元数を自動決定
+            latent_dim: エンコーダー出力次元
+        """
         self.n_components = n_components
         self.latent_dim = latent_dim
         self._encoder = None
@@ -210,18 +217,45 @@ class MolAIAdapter(BaseChemAdapter):
         # ── Step 2: PCA で次元削減 ──
         # Implements: 論文補足「高次元なのでPCAで圧縮して使用」
         valid_mask = ~np.isnan(latent_mat).any(axis=1)
-        n_comp = min(self.n_components, int(valid_mask.sum()), latent_mat.shape[1])
+        n_valid = int(valid_mask.sum())
 
-        pc_mat = np.full((len(smiles_list), n_comp), np.nan, dtype=np.float32)
-        if valid_mask.sum() >= 2:
+        if n_valid < 2:
+            # 十分なデータがない場合
+            n_comp = min(
+                self.n_components if isinstance(self.n_components, int) else 32,
+                latent_mat.shape[1],
+            )
+            pc_mat = np.full((len(smiles_list), n_comp), np.nan, dtype=np.float32)
+            col_names = [f"molai_pc{k + 1}" for k in range(n_comp)]
+            df = pd.DataFrame(pc_mat, columns=col_names)
+        else:
             scaler = StandardScaler()
-            pca = PCA(n_components=n_comp, random_state=42)
             X_valid = scaler.fit_transform(latent_mat[valid_mask])
+
+            if self.n_components == "auto":
+                # 自動最適化: 累積寄与率95%超えの最小次元を採用
+                max_comp = min(n_valid, latent_mat.shape[1])
+                pca_full = PCA(n_components=max_comp, random_state=42)
+                pca_full.fit(X_valid)
+                cum_ratio = np.cumsum(pca_full.explained_variance_ratio_)
+                n_95 = int(np.searchsorted(cum_ratio, 0.95) + 1)
+                n_comp = min(n_95, max_comp)
+                n_comp = max(n_comp, 2)  # 最低2次元
+                logger.info(
+                    f"MolAI PCA自動最適化: 累積寄与率95%%到達={n_95}次元, "
+                    f"最大={max_comp}次元 → 採用={n_comp}次元 "
+                    f"(累積寄与率={cum_ratio[n_comp - 1]:.1%})"
+                )
+            else:
+                n_comp = min(self.n_components, n_valid, latent_mat.shape[1])
+
+            pca = PCA(n_components=n_comp, random_state=42)
+            pc_mat = np.full((len(smiles_list), n_comp), np.nan, dtype=np.float32)
             pc_mat[valid_mask] = pca.fit_transform(X_valid).astype(np.float32)
             self._pca = pca  # 後から参照できるよう保持
 
-        col_names = [f"molai_pc{k + 1}" for k in range(n_comp)]
-        df = pd.DataFrame(pc_mat, columns=col_names)
+            col_names = [f"molai_pc{k + 1}" for k in range(n_comp)]
+            df = pd.DataFrame(pc_mat, columns=col_names)
 
         # selected_descriptors でフィルタリング
         if selected_descriptors:
@@ -242,10 +276,12 @@ class MolAIAdapter(BaseChemAdapter):
 
     def get_descriptor_names(self) -> list[str]:
         """利用可能な記述子名（molai_pc1 〜 molai_pcN）を返す。"""
-        return [f"molai_pc{k + 1}" for k in range(self.n_components)]
+        n = self.n_components if isinstance(self.n_components, int) else 32
+        return [f"molai_pc{k + 1}" for k in range(n)]
 
     def get_descriptors_metadata(self) -> list[DescriptorMetadata]:
         """各 PCA 成分のメタデータを返す。"""
+        n = self.n_components if isinstance(self.n_components, int) else 32
         return [
             DescriptorMetadata(
                 name=f"molai_pc{k + 1}",
@@ -257,5 +293,5 @@ class MolAIAdapter(BaseChemAdapter):
                     "論文: Mahdizadeh & Eriksson, JCIM 2025, DOI: 10.1021/acs.jcim.5c00491"
                 ),
             )
-            for k in range(self.n_components)
+            for k in range(n)
         ]
