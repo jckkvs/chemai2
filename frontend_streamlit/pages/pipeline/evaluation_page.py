@@ -96,23 +96,46 @@ def render() -> None:
                 except Exception as _ex:
                     st.caption(f"ℹ️ SMILES展開スキップ: {_ex}")
 
-            # --- 全データ予測（訓練データへの過適合を含む参考値）---
-            y_pred_full = None
-            try:
-                y_pred_full = result.best_pipeline.predict(X)
-            except Exception as e:
-                st.warning(f"⚠️ 全データ予測エラー: {e}")
+            # --- モデル切替UI ---
+            all_model_keys = list((result.model_scores or {}).keys()) if hasattr(result, "model_scores") and result.model_scores else [result.best_model_key]
+            if len(all_model_keys) > 1:
+                _sel_model = st.pills(
+                    "📊 表示モデルを選択",
+                    options=all_model_keys,
+                    default=result.best_model_key,
+                    key="eval_model_select",
+                )
+                if _sel_model is None:
+                    _sel_model = result.best_model_key
+            else:
+                _sel_model = result.best_model_key
 
-            # --- OOF (Cross-Validation) 予測 ---
+            # --- 選択モデルのpipelineを取得 ---
+            _selected_pipeline = None
+            if _sel_model == result.best_model_key:
+                _selected_pipeline = result.best_pipeline
+            elif hasattr(result, "all_pipelines") and result.all_pipelines:
+                _selected_pipeline = result.all_pipelines.get(_sel_model)
+
+            # --- 全データ予測 ---
+            y_pred_full = None
+            if _selected_pipeline is not None:
+                try:
+                    y_pred_full = _selected_pipeline.predict(X)
+                except Exception as e:
+                    st.warning(f"⚠️ 全データ予測エラー ({_sel_model}): {e}")
+
+            # --- OOF予測 ---
             y_oof = getattr(result, "oof_predictions", None)
             y_oof_true = getattr(result, "oof_true", None)
 
-            # --- Holdout 予測 ---
+            # --- Holdout予測 ---
             y_holdout = getattr(result, "holdout_predictions", None)
             y_holdout_true = getattr(result, "holdout_true", None)
 
             if result.task == "regression":
-                _show_regression_multi(
+                _show_regression_separated(
+                    model_name=_sel_model,
                     y_true=y_true,
                     y_pred_full=y_pred_full,
                     y_oof=y_oof,
@@ -126,7 +149,7 @@ def render() -> None:
                 _show_classification_metrics(
                     y_true,
                     y_pred_full if y_pred_full is not None else np.zeros_like(y_true),
-                    result.best_pipeline, X,
+                    _selected_pipeline, X,
                 )
                 if y_oof is not None:
                     st.markdown("#### CV (OOF) での分類結果")
@@ -381,8 +404,9 @@ def render() -> None:
 # 内部ヘルパー
 # ============================================================
 
-def _show_regression_multi(
-    y_true: np.ndarray,
+def _show_regression_separated(
+    model_name: str = "",
+    y_true: np.ndarray = None,
     y_pred_full: "np.ndarray | None" = None,
     y_oof: "np.ndarray | None" = None,
     y_oof_true: "np.ndarray | None" = None,
@@ -391,13 +415,11 @@ def _show_regression_multi(
     df: "pd.DataFrame | None" = None,
     target_col: "str | None" = None,
 ) -> None:
-    """全データ / CV-OOF / Holdout の3モードを統合した予測vs実測プロット。"""
+    """全データ / CV-OOF / Holdout を別々のサブタブで表示する。"""
     import streamlit as st
     from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
     import plotly.graph_objects as go
 
-    # ホバー時に表示する識別子列を決める
-    # 優先順: SMILES列 > index/id/name/cas/compound と名前にある列 > 行番号
     def _make_hover_ids(n: int, df: "pd.DataFrame | None" = None) -> list[str]:
         if df is not None:
             id_candidates = [c for c in df.columns
@@ -405,10 +427,8 @@ def _show_regression_multi(
             if id_candidates:
                 col = id_candidates[0]
                 return [f"{col}: {v}" for v in df[col].values[:n]]
-        # フォールバック: 連番インデックス
         base_idx = list(df.index[:n]) if df is not None else list(range(n))
         return [f"行 #{i}" for i in base_idx]
-
 
     def _metrics(yt, yp):
         rmse = float(np.sqrt(mean_squared_error(yt, yp)))
@@ -416,21 +436,59 @@ def _show_regression_multi(
         mae  = float(mean_absolute_error(yt, yp))
         return rmse, r2, mae
 
-    modes = [
-        ("🔵 全データ学習（参考）",    y_pred_full, y_true,      "rgba(0,180,255,0.5)"),
-        ("🟢 CV Out-of-Fold（推奨）",  y_oof,       y_oof_true,  "rgba(80,220,120,0.6)"),
-        ("🟠 Holdout テスト",          y_holdout,   y_holdout_true, "rgba(255,160,60,0.6)"),
-    ]
-    avail = [(lbl, yp, yt, col) for lbl, yp, yt, col in modes
-             if yp is not None and yt is not None]
+    def _pred_vs_actual_chart(yt, yp, color, title, df_ref=None):
+        """散布図 + 完全一致ラインを1つのグラフとして返す"""
+        n = len(yp)
+        hover_ids = _make_hover_ids(n, df_ref)
+        customdata = list(zip(
+            hover_ids,
+            [f"{v:.4f}" for v in yt],
+            [f"{v:.4f}" for v in yp],
+        ))
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=yt, y=yp, mode="markers",
+            name="データ", marker=dict(color=color, size=6),
+            customdata=customdata,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "実測値: %{customdata[1]}<br>"
+                "予測値: %{customdata[2]}<br>"
+                "<extra></extra>"
+            ),
+        ))
+        rng = [min(float(yt.min()), float(yp.min())), max(float(yt.max()), float(yp.max()))]
+        fig.add_trace(go.Scatter(
+            x=rng, y=rng, mode="lines",
+            line=dict(color="#fbbf24", dash="dash"), name="完全一致",
+        ))
+        fig.update_layout(
+            title=title,
+            xaxis_title="実測値", yaxis_title="予測値",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#e0e0f0"), template="plotly_dark",
+            legend=dict(bgcolor="rgba(0,0,0,0)"),
+        )
+        return fig
 
-    if not avail:
+    # 利用可能なモード一覧
+    modes = []
+    if y_oof is not None and y_oof_true is not None:
+        modes.append(("🟢 CV Out-of-Fold（推奨）", y_oof, y_oof_true, "rgba(80,220,120,0.6)"))
+    if y_pred_full is not None:
+        modes.append(("🔵 全データ学習（参考）", y_pred_full, y_true, "rgba(0,180,255,0.5)"))
+    if y_holdout is not None and y_holdout_true is not None:
+        modes.append(("🟠 Holdout テスト", y_holdout, y_holdout_true, "rgba(255,160,60,0.6)"))
+
+    if not modes:
         st.warning("予測値が取得できませんでした。")
         return
 
-    # ── メトリクス行 ──
-    metric_cols = st.columns(len(avail))
-    for mc, (lbl, yp, yt, _) in zip(metric_cols, avail):
+    _title_prefix = f"【{model_name}】" if model_name else ""
+
+    # メトリクス総覧
+    metric_cols = st.columns(len(modes))
+    for mc, (lbl, yp, yt, _) in zip(metric_cols, modes):
         rmse, r2, mae = _metrics(yt, yp)
         with mc:
             st.markdown(
@@ -444,53 +502,23 @@ def _show_regression_multi(
 
     st.markdown("---")
 
-    # ── 統合散布図 ──
-    fig = go.Figure()
-    all_vals: list[float] = []
-    for lbl, yp, yt, col in avail:
-        n = len(yp)
-        hover_ids = _make_hover_ids(n, df)
-        customdata = list(zip(
-            hover_ids,
-            [f"{v:.4f}" for v in yt],
-            [f"{v:.4f}" for v in yp],
-        ))
-        fig.add_trace(go.Scatter(
-            x=yt, y=yp, mode="markers",
-            name=lbl, marker=dict(color=col, size=6),
-            customdata=customdata,
-            hovertemplate=(
-                "<b>%{customdata[0]}</b><br>"
-                "実測値: %{customdata[1]}<br>"
-                "予測値: %{customdata[2]}<br>"
-                "<extra>" + lbl + "</extra>"
-            ),
-        ))
-        all_vals += [float(yt.min()), float(yt.max()), float(yp.min()), float(yp.max())]
+    # 各モードを別サブタブで表示
+    sub_labels = [lbl for lbl, _, _, _ in modes]
+    sub_tabs = st.tabs(sub_labels)
+    for stab, (lbl, yp, yt, col) in zip(sub_tabs, modes):
+        with stab:
+            fig = _pred_vs_actual_chart(yt, yp, col, f"{_title_prefix}{lbl} 実測 vs 予測", df)
+            st.plotly_chart(fig, use_container_width=True)
 
-    rng = [min(all_vals), max(all_vals)]
-    fig.add_trace(go.Scatter(
-        x=rng, y=rng, mode="lines",
-        line=dict(color="#fbbf24", dash="dash"), name="完全一致",
-    ))
-    fig.update_layout(
-        title="実測 vs 予測（評価モード比較）",
-        xaxis_title="実測値", yaxis_title="予測値",
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e0e0f0"), template="plotly_dark",
-        legend=dict(bgcolor="rgba(0,0,0,0)"),
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption(
-        "🔵 全データ学習: 訓練に使ったデータのため過楽観な数値。"
-        "　🟢 CV OOF: 最もリアルな汎化精度。"
-        "　🟠 Holdout: 事前分割したテストデータ（設定時のみ）。"
-    )
+            if "全データ" in lbl:
+                st.caption("ℹ️ 訓練データへの予測のため過楽観な数値です。CV OOFを優先してください。")
+            elif "OOF" in lbl:
+                st.caption("✅ 各Foldで未学習のデータに対する予測。最もリアルな汎化精度です。")
 
 
-def _show_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> None:
-    """後方互換性ラッパー。"""
-    _show_regression_multi(y_true=y_true, y_pred_full=y_pred)
+# 後方互換性ラッパー
+def _show_regression_multi(**kwargs):
+    _show_regression_separated(**kwargs)
 
 
 def _show_classification_metrics(
