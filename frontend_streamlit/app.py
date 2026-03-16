@@ -904,41 +904,60 @@ else:
                     )
                     st.caption("全エンジンで記述子は自動計算済みです。テーブルの✅で選択してください。")
 
-                    # 推奨パネル
-                    rec = _get_rec2(target_col_sf)
-                    if rec:
-                        with st.expander(f"💡 「{rec.target_name}」推奨記述子", expanded=True):
-                            st.caption(rec.summary)
-                            _rec_avail = [d for d in rec.descriptors if d.name in _precalc_df.columns]
-                            if _rec_avail:
-                                st.dataframe(pd.DataFrame([{
-                                    "記述子": d.name, "ライブラリ": d.library,
-                                    "意味": d.meaning, "根拠": d.source,
-                                } for d in _rec_avail]), use_container_width=True, hide_index=True)
-                                _not_yet = [d.name for d in _rec_avail if d.name not in _cur_sel]
-                                if _not_yet and st.button(f"🎯 推奨{len(_rec_avail)}件を全て選択", key="btn_rec_sel", type="primary"):
-                                    _cur_sel.update(d.name for d in _rec_avail)
-                                    st.session_state["adv_desc"] = list(_cur_sel)
-                                    st.rerun()
-                                elif not _not_yet:
-                                    st.success("✅ 推奨記述子は全て選択済みです")
-                    else:
-                        with st.expander("💡 推奨プリセットを選択", expanded=False):
-                            st.caption(f"「{target_col_sf}」に自動マッチするプリセットがありません。下から選んでください。")
-                            all_recs = _get_all_recs()
-                            _cats = {}
-                            for r in all_recs:
-                                _cats.setdefault(r.category, []).append(r)
-                            for cat_name, cat_recs in _cats.items():
-                                st.markdown(f"**{cat_name}**")
-                                _bcols = st.columns(min(4, len(cat_recs)))
-                                for i, r in enumerate(cat_recs):
-                                    with _bcols[i % len(_bcols)]:
-                                        if st.button(r.target_name, key=f"preset_{r.target_name}"):
-                                            _avail = [d.name for d in r.descriptors if d.name in _precalc_df.columns]
-                                            _cur_sel.update(_avail)
-                                            st.session_state["adv_desc"] = list(_cur_sel)
-                                            st.rerun()
+                    # 推奨パネル（カテゴリ別st.tabs）
+                    from backend.chem.recommender import (
+                        get_all_target_recommendations as _get_all_recs_p,
+                    )
+                    with st.expander("💡 推奨プリセットから選ぶ", expanded=True):
+                        all_recs = _get_all_recs_p()
+                        _cats = {}
+                        for r in all_recs:
+                            _cats.setdefault(r.category, []).append(r)
+                        # カテゴリ別タブ
+                        _cat_labels = list(_cats.keys())
+                        _cat_tabs = st.tabs(_cat_labels)
+                        for _ct, _ctab in zip(_cat_labels, _cat_tabs):
+                            with _ctab:
+                                for r in _cats[_ct]:
+                                    _match = r.target_name == (rec.target_name if rec else "")
+                                    _icon = "⭐ " if _match else ""
+                                    with st.expander(f"{_icon}{r.target_name}", expanded=_match):
+                                        st.caption(r.summary)
+                                        _avail = [d for d in r.descriptors if d.name in _precalc_df.columns]
+                                        if _avail:
+                                            # 全採用/全不採用ボタン
+                                            _bc1, _bc2 = st.columns(2)
+                                            with _bc1:
+                                                if st.button(f"✅ 全{len(_avail)}件採用", key=f"rec_all_{r.target_name}", use_container_width=True):
+                                                    _cur_sel.update(d.name for d in _avail)
+                                                    st.session_state["adv_desc"] = list(_cur_sel)
+                                                    st.rerun()
+                                            with _bc2:
+                                                if st.button(f"❌ 全{len(_avail)}件解除", key=f"rec_none_{r.target_name}", use_container_width=True):
+                                                    _cur_sel -= {d.name for d in _avail}
+                                                    st.session_state["adv_desc"] = list(_cur_sel)
+                                                    st.rerun()
+                                            # 個別チェックボックス（st.formで一括化）
+                                            with st.form(key=f"rec_form_{r.target_name}"):
+                                                _changed = False
+                                                for d in _avail:
+                                                    _is_sel = d.name in _cur_sel
+                                                    _val = st.checkbox(
+                                                        f"**{d.name}** ({d.library}) — {d.meaning}",
+                                                        value=_is_sel,
+                                                        key=f"rcb_{r.target_name}_{d.name}",
+                                                    )
+                                                if st.form_submit_button("💾 選択を反映", type="primary", use_container_width=True):
+                                                    for d in _avail:
+                                                        _val2 = st.session_state.get(f"rcb_{r.target_name}_{d.name}", False)
+                                                        if _val2:
+                                                            _cur_sel.add(d.name)
+                                                        else:
+                                                            _cur_sel.discard(d.name)
+                                                    st.session_state["adv_desc"] = list(_cur_sel)
+                                                    st.rerun()
+                                        else:
+                                            st.info("計算済み記述子に該当ありません")
 
                     # 相関係数計算
                     _corr = {}
@@ -1148,9 +1167,22 @@ else:
                         "複数セットを登録しておくと、パイプライン実行時に全セットを一括比較できます。"
                     )
 
-                    # セットの初期化
+                    # セットの初期化（デフォルトで汎用セット + MolAIを登録）
                     if "_desc_sets" not in st.session_state:
-                        st.session_state["_desc_sets"] = {}
+                        _universal = [d for d in [
+                            "MolWt","MolLogP","TPSA","NumHAcceptors","NumHDonors",
+                            "NumRotatableBonds","RingCount","NumAromaticRings",
+                            "FractionCSP3","HeavyAtomCount","MolMR","qed",
+                            "BertzCT","MaxPartialCharge","MinPartialCharge",
+                            "LabuteASA","TPSA",
+                        ] if d in (_precalc_df.columns if _precalc_df is not None else [])]
+                        _molai_cols = [c for c in (_precalc_df.columns if _precalc_df is not None else []) if c.startswith("MolAI_") or c.startswith("molai_")]
+                        _defaults = {}
+                        if _universal:
+                            _defaults["汎用基本セット"] = _universal
+                        if _molai_cols:
+                            _defaults["MolAI PCA"] = _molai_cols
+                        st.session_state["_desc_sets"] = _defaults
 
                     _desc_sets = st.session_state["_desc_sets"]
 
