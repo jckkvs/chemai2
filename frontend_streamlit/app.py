@@ -529,7 +529,7 @@ else:
                     # SMILES列（自動検出 + 確認）
                     _det_smiles = st.session_state.get("smiles_col")
                     if _det_smiles and _det_smiles in all_cols:
-                        st.markdown(f"**🧬 SMILES列**: `{_det_smiles}`（自動検出済み）")
+                        st.markdown(f"**🧬 SMILES列**: `{_det_smiles}`")
                         _change_smiles = st.checkbox("SMILES列を変更する", key="chg_sm", value=False)
                         if _change_smiles:
                             smiles_options = none_opt + all_cols
@@ -1752,7 +1752,7 @@ else:
             st.markdown("---")
 
             # ── 結果確認サブタブ ────────────────────────────────────────
-            res_tab1, res_tab2, res_tab_bo = st.tabs(["📈 モデル評価", "🔬 モデル解釈性", "🎯 実験計画(BO)"])
+            res_tab1, res_tab_data, res_tab2, res_tab_bo = st.tabs(["📈 モデル評価", "📊 前処理後データ", "🔬 モデル解釈性", "🎯 実験計画(BO)"])
 
             with res_tab1:
                 try:
@@ -1762,6 +1762,65 @@ else:
                     st.error(f"❌ 評価ページの読み込みエラー: {e}")
                     import traceback
                     st.code(traceback.format_exc())
+
+            with res_tab_data:
+                ar = st.session_state.get("automl_result")
+                if ar is None:
+                    st.info("解析を実行すると、前処理後のデータがここに表示されます。")
+                else:
+                    _proc_X = getattr(ar, "processed_X", None)
+                    if _proc_X is not None and hasattr(_proc_X, "shape"):
+                        st.markdown("### 📊 モデルに入力された最終データ")
+                        st.caption(
+                            "カテゴリエンコーディング・欠損補完・スケーリング・変数選択などが完了した後の、"
+                            "実際にモデルに渡された数値データです。"
+                        )
+
+                        # メトリクス
+                        _pc1, _pc2, _pc3, _pc4 = st.columns(4)
+                        _pc1.metric("サンプル数", f"{_proc_X.shape[0]:,}")
+                        _pc2.metric("特徴量数", f"{_proc_X.shape[1]:,}")
+                        _pc3.metric("欠損値", f"{int(_proc_X.isnull().sum().sum()):,}" if hasattr(_proc_X, "isnull") else "0")
+                        _pc4.metric("データ型", "全て数値" if _proc_X.select_dtypes(include="number").shape[1] == _proc_X.shape[1] else "混合")
+
+                        # データプレビュー
+                        st.markdown("#### データプレビュー（先頭100行）")
+                        st.dataframe(
+                            _proc_X.head(100),
+                            use_container_width=True,
+                            height=400,
+                        )
+
+                        # 基本統計量
+                        with st.expander("📐 基本統計量", expanded=False):
+                            st.dataframe(
+                                _proc_X.describe().T.round(4),
+                                use_container_width=True,
+                            )
+
+                        # 列一覧
+                        with st.expander(f"📋 列一覧（{_proc_X.shape[1]}列）", expanded=False):
+                            _col_info = pd.DataFrame({
+                                "列名": _proc_X.columns,
+                                "型": _proc_X.dtypes.astype(str).values,
+                                "欠損": _proc_X.isnull().sum().values if hasattr(_proc_X, "isnull") else 0,
+                                "最小": _proc_X.min().values,
+                                "最大": _proc_X.max().values,
+                                "平均": _proc_X.mean().values,
+                            })
+                            st.dataframe(_col_info, use_container_width=True, hide_index=True)
+
+                        # CSVダウンロード
+                        _csv = _proc_X.to_csv(index=False).encode("utf-8")
+                        st.download_button(
+                            "📥 前処理後データをCSVダウンロード",
+                            data=_csv,
+                            file_name="processed_features.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.warning("前処理後データが取得できませんでした。パイプライン実行後に利用可能になります。")
 
             with res_tab2:
                 try:
