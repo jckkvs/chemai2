@@ -921,41 +921,42 @@ else:
                                 for r in _cats[_ct]:
                                     _match = r.target_name == (rec.target_name if rec else "")
                                     _icon = "⭐ " if _match else ""
-                                    with st.expander(f"{_icon}{r.target_name}", expanded=_match):
+                                    _avail = [d for d in r.descriptors if d.name in _precalc_df.columns]
+                                    _n_adopted = sum(1 for d in _avail if d.name in _cur_sel) if _avail else 0
+                                    _status = f" ({_n_adopted}/{len(_avail)}採用中)" if _avail else ""
+                                    with st.expander(f"{_icon}{r.target_name}{_status}", expanded=_match):
                                         st.caption(r.summary)
-                                        _avail = [d for d in r.descriptors if d.name in _precalc_df.columns]
                                         if _avail:
-                                            # 全採用/全不採用ボタン
-                                            _bc1, _bc2 = st.columns(2)
+                                            # 記述子一覧（読み取り専用・一目で分かる）
+                                            st.dataframe(
+                                                pd.DataFrame([{
+                                                    "採用": "✅" if d.name in _cur_sel else "—",
+                                                    "記述子": d.name,
+                                                    "意味": d.meaning,
+                                                    "ソース": d.library,
+                                                } for d in _avail]),
+                                                use_container_width=True,
+                                                hide_index=True,
+                                                height=min(300, 35 + len(_avail) * 35),
+                                            )
+                                            # 全採用/全解除（この2つだけでOK。個別操作はメインテーブルで）
+                                            _bc1, _bc2, _bc3 = st.columns(3)
                                             with _bc1:
-                                                if st.button(f"✅ 全{len(_avail)}件採用", key=f"rec_all_{r.target_name}", use_container_width=True):
-                                                    _cur_sel.update(d.name for d in _avail)
-                                                    st.session_state["adv_desc"] = list(_cur_sel)
-                                                    st.rerun()
+                                                if _n_adopted < len(_avail):
+                                                    if st.button(f"✅ 全{len(_avail)}件採用", key=f"rec_all_{r.target_name}", type="primary", use_container_width=True):
+                                                        _cur_sel.update(d.name for d in _avail)
+                                                        st.session_state["adv_desc"] = list(_cur_sel)
+                                                        st.rerun()
+                                                else:
+                                                    st.success("全件採用済み", icon="✅")
                                             with _bc2:
-                                                if st.button(f"❌ 全{len(_avail)}件解除", key=f"rec_none_{r.target_name}", use_container_width=True):
-                                                    _cur_sel -= {d.name for d in _avail}
-                                                    st.session_state["adv_desc"] = list(_cur_sel)
-                                                    st.rerun()
-                                            # 個別チェックボックス（st.formで一括化）
-                                            with st.form(key=f"rec_form_{r.target_name}"):
-                                                _changed = False
-                                                for d in _avail:
-                                                    _is_sel = d.name in _cur_sel
-                                                    _val = st.checkbox(
-                                                        f"**{d.name}** ({d.library}) — {d.meaning}",
-                                                        value=_is_sel,
-                                                        key=f"rcb_{r.target_name}_{d.name}",
-                                                    )
-                                                if st.form_submit_button("💾 選択を反映", type="primary", use_container_width=True):
-                                                    for d in _avail:
-                                                        _val2 = st.session_state.get(f"rcb_{r.target_name}_{d.name}", False)
-                                                        if _val2:
-                                                            _cur_sel.add(d.name)
-                                                        else:
-                                                            _cur_sel.discard(d.name)
-                                                    st.session_state["adv_desc"] = list(_cur_sel)
-                                                    st.rerun()
+                                                if _n_adopted > 0:
+                                                    if st.button(f"解除", key=f"rec_none_{r.target_name}", use_container_width=True):
+                                                        _cur_sel -= {d.name for d in _avail}
+                                                        st.session_state["adv_desc"] = list(_cur_sel)
+                                                        st.rerun()
+                                            with _bc3:
+                                                st.caption("個別の採用/解除は下の記述子テーブルの✅で操作")
                                         else:
                                             st.info("計算済み記述子に該当ありません")
 
