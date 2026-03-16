@@ -265,7 +265,6 @@ else:
     step_html = ""
     step_defs = [
         ("📂 データ設定", has_data),
-        ("🚀 解析実行",   has_result),
         ("📊 結果確認",   has_result),
     ]
     for s_label, s_done in step_defs:
@@ -281,21 +280,106 @@ else:
         unsafe_allow_html=True,
     )
 
-    # ── タブラベル（未完了はグレー表示） ────────────────────
+    # ── 解析開始ボタン（タブの外・常時表示） ──────────────────
+    _df_btn = st.session_state.get("df")
+    if _df_btn is not None:
+        existing_result = st.session_state.get("pipeline_result")
+        if existing_result is None:
+            c_l, c_m, c_r = st.columns([1, 3, 1])
+            with c_m:
+                _run_clicked = st.button(
+                    "🚀 解析開始  （EDA → AutoML → 評価 → SHAP まで自動実行）",
+                    use_container_width=True,
+                    key="home_run",
+                    type="primary",
+                )
+        else:
+            _run_clicked = False
+            ar = st.session_state.get("automl_result")
+            if ar:
+                st.success(
+                    f"✅ 解析完了！ 最良モデル: **{ar.best_model_key}** | "
+                    f"スコア: `{ar.best_score:.4f}` | "
+                    f"所要時間: {existing_result.elapsed:.1f}秒"
+                )
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                if st.button("📊 結果タブへ", use_container_width=True, key="view_res"):
+                    st.session_state["active_tab_idx"] = 1
+                    st.rerun()
+            with cc2:
+                if st.button("🔄 データを変えてやり直す", use_container_width=True, key="reset"):
+                    for k in ["df","file_name","automl_result","pipeline_result",
+                              "target_col","detection_result","step_eda_done",
+                              "step_preprocess_done","_run_config"]:
+                        st.session_state[k] = None if k not in ("step_eda_done","step_preprocess_done") else False
+                    st.rerun()
+
+        # ボタンが押された場合にrun_configを構築
+        if _run_clicked:
+            adv = st.session_state.get("_adv", {})
+            _target_lk = st.session_state.get("target_col")
+            _smiles_lk = st.session_state.get("smiles_col")
+            _excl_lk = st.session_state.get("col_role_exclude", [])
+            _feat_lk = [c for c in _df_btn.columns if c not in [_target_lk, _smiles_lk] + _excl_lk]
+            _X_lk = _df_btn[_feat_lk].select_dtypes(include="number")
+            _leakage_group_labels = None
+            _leakage_recommended_cv = None
+            if _X_lk.shape[1] >= 2 and len(_df_btn) <= 5000:
+                try:
+                    from backend.data.leakage_detector import detect_leakage
+                    _lk_report = detect_leakage(_X_lk, _df_btn[_target_lk], method="auto")
+                    if _lk_report.risk_level in ("medium", "high") and _lk_report.group_labels is not None:
+                        _leakage_group_labels = _lk_report.group_labels
+                        _leakage_recommended_cv = _lk_report.recommended_cv
+                    st.session_state["leakage_report"] = _lk_report
+                except Exception:
+                    pass
+            st.session_state["_run_config"] = dict(
+                target_col=st.session_state["target_col"],
+                smiles_col=st.session_state.get("smiles_col"),
+                task=st.session_state.get("task", "auto"),
+                cv_folds=adv.get("cv_folds", 5),
+                models=adv.get("models", []),
+                model_params=st.session_state.get("model_params", {}),
+                timeout=adv.get("timeout", 300),
+                scaler=adv.get("scaler", "auto"),
+                do_eda=adv.get("do_eda", True),
+                do_prep=adv.get("do_prep", True),
+                do_eval=adv.get("do_eval", True),
+                do_pca=adv.get("do_pca", True),
+                do_shap=adv.get("do_shap", True),
+                selected_descriptors=adv.get("selected_descriptors", None),
+                monotonic_constraints_dict=st.session_state.get("_monotonic_constraints_dict", {}),
+                leakage_group_labels=_leakage_group_labels,
+                leakage_recommended_cv=_leakage_recommended_cv,
+                cv_groups_col=st.session_state.get("col_role_group"),
+                exclude_cols=list(set(st.session_state.get("col_role_exclude", []) + st.session_state.get("col_role_info", []))),
+                col_role_time=st.session_state.get("col_role_time"),
+                sample_weight_col=st.session_state.get("col_role_weight"),
+            )
+            st.rerun()
+    else:
+        _run_clicked = False
+
+    # ── 解析実行中（_run_configがあれば即座に実行） ───────────
+    _rc_pending = st.session_state.pop("_run_config", None)
+    if _rc_pending is not None:
+        from frontend_streamlit.pages import automl_page
+        automl_page.render(run_config=_rc_pending)
+        st.stop()
+
+    # ── タブラベル ────────────────────────────────────────────
     tab_labels = [
         "📂 ① データ設定",
-        "🚀 ② 解析実行",
-        "📊 ③ 結果確認",
+        "📊 ② 結果確認",
     ]
-    tab1, tab2, tab3 = st.tabs(tab_labels)
+    tab1, tab2 = st.tabs(tab_labels)
 
     # ──────────────────────────────────────────────────────────
     # TAB 1: データ設定（アップロード + 目的変数 + 詳細設定）
     # ──────────────────────────────────────────────────────────
     with tab1:
-        # セッションが解析済みなら再解析ボタンも表示
-        if has_result:
-            st.info("🔄 設定を変えて再解析したい場合は、各タブで設定を変更してから「② 解析実行」タブへ進んでください。")
 
         from backend.data.loader import load_from_bytes, get_supported_extensions
         from backend.data.type_detector import TypeDetector
@@ -1634,109 +1718,12 @@ else:
                     selected_descriptors=st.session_state.get("adv_desc", []),
                 )
 
-        # ── 実行ボタン（データがある場合に常時表示） ─────────────────
-        df = st.session_state.get("df")
-        if df is not None:
-            st.markdown("---")
-            existing_result = st.session_state.get("pipeline_result")
-
-            if existing_result is None:
-                c_l, c_m, c_r = st.columns([1, 3, 1])
-                with c_m:
-                    if st.button(
-                        "🚀 解析開始  （EDA → AutoML → 評価 → SHAP まで自動実行）",
-                        use_container_width=True,
-                        key="home_run",
-                        type="primary",
-                    ):
-                        adv = st.session_state.get("_adv", {})
-
-                        # リーケージチェック自動実行（数値列が2列以上ある場合）
-                        _target_lk = st.session_state.get("target_col")
-                        _smiles_lk = st.session_state.get("smiles_col")
-                        _excl_lk = st.session_state.get("col_role_exclude", [])
-                        _feat_lk = [c for c in df.columns if c not in [_target_lk, _smiles_lk] + _excl_lk]
-                        _X_lk = df[_feat_lk].select_dtypes(include="number")
-                        _leakage_group_labels = None
-                        _leakage_recommended_cv = None
-                        if _X_lk.shape[1] >= 2 and len(df) <= 5000:
-                            try:
-                                from backend.data.leakage_detector import detect_leakage
-                                _lk_report = detect_leakage(_X_lk, df[_target_lk], method="auto")
-                                if _lk_report.risk_level in ("medium", "high") and _lk_report.group_labels is not None:
-                                    _leakage_group_labels = _lk_report.group_labels
-                                    _leakage_recommended_cv = _lk_report.recommended_cv
-                                st.session_state["leakage_report"] = _lk_report
-                            except Exception:
-                                pass
-
-                        st.session_state["_run_config"] = dict(
-                            target_col = st.session_state["target_col"],
-                            smiles_col = st.session_state.get("smiles_col"),
-                            task       = st.session_state.get("task", "auto"),
-                            cv_folds   = adv.get("cv_folds", 5),
-                            models     = adv.get("models", []),
-                            model_params = st.session_state.get("model_params", {}),
-                            timeout    = adv.get("timeout", 300),
-                            scaler     = adv.get("scaler", "auto"),
-                            do_eda     = adv.get("do_eda", True),
-                            do_prep    = adv.get("do_prep", True),
-                            do_eval    = adv.get("do_eval", True),
-                            do_pca     = adv.get("do_pca", True),
-                            do_shap    = adv.get("do_shap", True),
-                            selected_descriptors = adv.get("selected_descriptors", None),
-                            monotonic_constraints_dict = st.session_state.get("_monotonic_constraints_dict", {}),
-                            leakage_group_labels = _leakage_group_labels,
-                            leakage_recommended_cv = _leakage_recommended_cv,
-                            cv_groups_col = st.session_state.get("col_role_group"),
-                            exclude_cols = list(set(st.session_state.get("col_role_exclude", []) + st.session_state.get("col_role_info", []))),
-                            col_role_time = st.session_state.get("col_role_time"),
-                            sample_weight_col = st.session_state.get("col_role_weight"),
-                        )
-                        st.session_state["active_tab_idx"] = 1
-                        st.rerun()
-            else:
-                ar = st.session_state.get("automl_result")
-                if ar:
-                    st.success(
-                        f"✅ 解析完了！ 最良モデル: **{ar.best_model_key}** | "
-                        f"スコア: `{ar.best_score:.4f}` | "
-                        f"所要時間: {existing_result.elapsed:.1f}秒"
-                    )
-                cc1, cc2 = st.columns(2)
-                with cc1:
-                    if st.button("📊 結果タブへ", use_container_width=True, key="view_res"):
-                        st.session_state["active_tab_idx"] = 2
-                        st.rerun()
-                with cc2:
-                    if st.button("🔄 データを変えてやり直す", use_container_width=True, key="reset"):
-                        for k in ["df","file_name","automl_result","pipeline_result",
-                                  "target_col","detection_result","step_eda_done",
-                                  "step_preprocess_done","_run_config"]:
-                            st.session_state[k] = None if k not in ("step_eda_done","step_preprocess_done") else False
-                        st.rerun()
-
-
     # ====================================================
-    # TAB 2: 解析実行
+    # TAB 2: 結果確認
     # ====================================================
     with tab2:
-        if not has_data:
-            st.warning("⚠️ まず「📂 ① データ設定」タブでデータをアップロードしてください。")
-        else:
-            from frontend_streamlit.pages import automl_page
-            rc = st.session_state.pop("_run_config", None)
-            if rc is not None:
-                automl_page.render(run_config=rc)
-            else:
-                automl_page.render()
-
-    # ====================================================
-    # TAB 3: 結果確認
-    # ====================================================
-    with tab3:
         if not has_result:
-            st.info("⏳ 「🚀 ② 解析実行」タブで解析を実行すると、結果がここに表示されます。")
+            st.info("⏳ 解析を実行すると、結果がここに表示されます。上部の「🚀 解析開始」ボタンを押してください。")
         else:
             c_re1, c_re2 = st.columns([2, 1])
             with c_re2:
