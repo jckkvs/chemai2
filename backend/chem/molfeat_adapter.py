@@ -124,10 +124,33 @@ class MolfeatAdapter(BaseChemAdapter):
         )
 
     def get_descriptors_metadata(self) -> list[DescriptorMetadata]:
+        _CALC_JP = {
+            "ecfp": "ECFP 円形フィンガープリント。原子環境の部分構造エンコード (Molfeat)",
+            "fcfp": "FCFP 薬理学的特徴ベース円形FP (Molfeat)",
+            "maccs": "MACCS構造キー。166種の部分構造パターン (Molfeat)",
+            "topological": "トポロジカルFP。分子グラフの位相的経路 (Molfeat)",
+            "avalon": "Avalon FP。部分構造パターンの高速エンコーディング (Molfeat)",
+            "atompair": "AtomPair FP。原子対間の距離と原子タイプ (Molfeat)",
+            "rdkit": "RDKit FP。経路ベースフィンガープリント (Molfeat)",
+            "desc2d": "RDKit 2D記述子。分子の2Dトポロジカル物性 (Molfeat)",
+            "desc3d": "RDKit 3D記述子。分子の3D形状・体積物性 (Molfeat)",
+            "cats": "CATS薬理学的特徴スペクトル (Molfeat)",
+            "scaffoldkeys": "Scaffold Key。分子骨格の分類キー (Molfeat)",
+            "skeys": "SMARTS Key。部分構造パターンキー (Molfeat)",
+            "electroshape": "ElectroShape。3D電弦形状記述子 (Molfeat)",
+            "usr": "USR。3D形状記述子 (Molfeat)",
+            "usrcat": "USRCAT。USR + 薬理学的特徴 (Molfeat)",
+            "pharm2d": "Pharmacophore 2D。薬理学的特徴の2Dパターン (Molfeat)",
+        }
+        calc_desc = _CALC_JP.get(self._calculator_type, f"{self._calculator_type} 特徴量 (Molfeat)")
+        # 実際のビット数は計算するまでわからないので代表メタデータで返す
+        config = _CALCULATOR_TYPES.get(self._calculator_type, {})
+        n_bits = config.get("n_bits", 2048)
         return [
             DescriptorMetadata(
-                name=f"molfeat_{self._calculator_type}_0",
-                meaning=f"Molfeat {self._calculator_type} feature 0",
+                name=f"molfeat_{self._calculator_type}_{j}",
+                meaning=f"{calc_desc} 次元{j}",
                 is_count=False,
-            ),
+            )
+            for j in range(n_bits)
         ]

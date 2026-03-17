@@ -182,6 +182,23 @@ class AutoMLEngine:
         else:
             cv_key = self.cv_key
 
+        # GroupKFold系の場合: グループ数 >= n_splits のバリデーション
+        if cv_key in ("group_kfold", "leave_one_group_out") and groups is not None:
+            n_unique_groups = len(np.unique(groups))
+            if n_unique_groups < self.cv_folds:
+                if n_unique_groups >= 2:
+                    logger.warning(
+                        f"GroupKFold: グループ数({n_unique_groups}) < n_splits({self.cv_folds})。"
+                        f"n_splitsを{n_unique_groups}に自動調整します。"
+                    )
+                    self.cv_folds = n_unique_groups
+                else:
+                    logger.warning(
+                        f"GroupKFold: グループ数({n_unique_groups})が不足。通常KFoldにフォールバックします。"
+                    )
+                    cv_key = "stratified_kfold" if task == "classification" else "kfold"
+                    groups = None
+
         model_scores: dict[str, float] = {}
         model_details: dict[str, dict[str, Any]] = {}
         best_key = ""
@@ -314,6 +331,29 @@ class AutoMLEngine:
             
         best_pipeline.fit(X_train, y)
 
+        # パイプラインの前処理部分(estimator以外)でtransformし、
+        # 「実際にモデルに入力された最終データ」を取得する
+        processed_X_final: pd.DataFrame | None = None
+        try:
+            # Pipeline[-1]がestimator。Pipeline[:-1]が前処理ステップ群。
+            preprocessor_steps = best_pipeline[:-1]
+            X_transformed = preprocessor_steps.transform(X_train)
+            # 特徴量名の取得
+            try:
+                feat_names = preprocessor_steps.get_feature_names_out().tolist()
+            except Exception:
+                n_cols = X_transformed.shape[1] if hasattr(X_transformed, "shape") else len(X_transformed[0])
+                feat_names = [f"feature_{i}" for i in range(n_cols)]
+            # sparse → dense変換
+            if hasattr(X_transformed, "toarray"):
+                X_transformed = X_transformed.toarray()
+            processed_X_final = pd.DataFrame(
+                X_transformed, columns=feat_names, index=X_train.index
+            )
+        except Exception as e:
+            logger.warning(f"前処理後データの取得に失敗: {e}")
+            processed_X_final = X_train  # フォールバック: 生データ
+
         # OOF (Out-Of-Fold) 予測を計算（最良モデルで cross_val_predict）
         oof_preds: np.ndarray | None = None
         try:
@@ -351,7 +391,7 @@ class AutoMLEngine:
             detection_result=detection_result,
             elapsed_seconds=elapsed,
             warnings=warnings,
-            processed_X=X,
+            processed_X=processed_X_final,
             X_train=X_train,
             y_train=y,
             oof_predictions=oof_preds,

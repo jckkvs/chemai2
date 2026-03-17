@@ -156,14 +156,27 @@ class SkfpAdapter(BaseChemAdapter):
         )
 
     def get_descriptors_metadata(self) -> list[DescriptorMetadata]:
+        _FP_JP = {
+            "ECFP": "ECFP (Extended-Connectivity FP)。原子の化学環境の円形探索で分子部分構造をエンコード。類似性検索・QSAR の標準",
+            "MACCS": "MACCS構造キー。166種の部分構造パターンの有無。医薬品化学で広く利用",
+            "AtomPair": "AtomPair FP。原子対間の距離と原子タイプをエンコード。構造類似性の検出",
+            "TopologicalTorsion": "トポロジカルトーション FP。4原子経路の結合パターン。コンフォメーション情報を捕捉",
+            "Morgan": "Morgan FP (円形FP)。ECFPの一般化。半径パラメータで部分構造の粒度を制御",
+            "RDKitFP": "RDKit FP。分子グラフの経路ベース フィンガープリント",
+            "Avalon": "Avalon FP。分子の部分構造パターンの高速エンコーディング",
+            "FCFP": "FCFP (Feature-Connectivity FP)。ECFPの拡張。原子の薬理学的特徴 (水素結合等) をエンコード",
+            "LayeredFP": "Layered FP。分子グラフの階層的パス情報",
+            "PharmacophoreECFP": "PharmacophoreECFP。薬理学的特徴 (HBA, HBD等) をECFP的にエンコード",
+        }
         meta = []
         for fp_name in self._fp_types:
             config = {**_FP_CONFIGS.get(fp_name, {}), **self._fp_configs.get(fp_name, {})}
             n_bits = config.get("fp_size", 167 if fp_name == "MACCS" else 2048)
-            for j in range(min(n_bits, 5)):
+            fp_desc = _FP_JP.get(fp_name, f"{fp_name} フィンガープリント")
+            for j in range(n_bits):
                 meta.append(DescriptorMetadata(
                     name=f"{fp_name}_{j}",
-                    meaning=f"{fp_name} fingerprint bit {j}",
+                    meaning=f"{fp_desc} ビット{j}",
                     is_count=False,
                 ))
         return meta

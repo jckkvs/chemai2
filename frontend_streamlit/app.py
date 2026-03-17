@@ -325,13 +325,24 @@ else:
             _X_lk = _df_btn[_feat_lk].select_dtypes(include="number")
             _leakage_group_labels = None
             _leakage_recommended_cv = None
-            if _X_lk.shape[1] >= 2 and len(_df_btn) <= 5000:
+            _n_cv_folds = adv.get("cv_folds", 5)
+            # 少量データ（50件未満）ではリーケージ検出の偽陽性率が高いためスキップ
+            if _X_lk.shape[1] >= 2 and len(_df_btn) >= 50 and len(_df_btn) <= 5000:
                 try:
                     from backend.data.leakage_detector import detect_leakage
                     _lk_report = detect_leakage(_X_lk, _df_btn[_target_lk], method="auto")
                     if _lk_report.risk_level in ("medium", "high") and _lk_report.group_labels is not None:
-                        _leakage_group_labels = _lk_report.group_labels
-                        _leakage_recommended_cv = _lk_report.recommended_cv
+                        # GroupKFold適用には、グループ数 >= n_splits が必須
+                        _n_groups = _lk_report.n_groups
+                        if _n_groups >= _n_cv_folds:
+                            _leakage_group_labels = _lk_report.group_labels
+                            _leakage_recommended_cv = _lk_report.recommended_cv
+                        else:
+                            import logging as _logging
+                            _logging.getLogger(__name__).info(
+                                f"リーケージ検出: グループ数({_n_groups}) < CV folds({_n_cv_folds})のため"
+                                f"GroupKFold適用をスキップ。通常のKFoldを使用します。"
+                            )
                     st.session_state["leakage_report"] = _lk_report
                 except Exception:
                     pass
@@ -436,7 +447,7 @@ else:
                     _DUMMY_SMILES = ["C", "CC", "CCC", "CCO", "CCN", "c1ccccc1", "c1ccccc1O", "CC(=O)O", "CC(C)C", "C1CCCCC1", "c1ccncc1", "c1ncncn1", "C1COCCO1"]
                     with c_r:
                         if st.button("🧪 回帰サンプル", use_container_width=True, key="demo_reg"):
-                            np.random.seed(42); n = 200
+                            np.random.seed(42); n = 25  # テスト高速化のたも25件
                             if use_smiles:
                                 base_df = pd.DataFrame({"SMILES": np.random.choice(_DUMMY_SMILES, n), "solubility_logS": np.random.randn(n) * 2 - 2})
                             else:
@@ -454,7 +465,7 @@ else:
                             st.rerun()
                     with c_c:
                         if st.button("🏷️ 分類サンプル", use_container_width=True, key="demo_cls"):
-                            np.random.seed(42); n = 200
+                            np.random.seed(42); n = 25  # テスト高速化のたも25件
                             if use_smiles:
                                 base_df = pd.DataFrame({"SMILES": np.random.choice(_DUMMY_SMILES, n), "is_toxic": np.random.randint(0, 2, n)})
                             else:
@@ -765,7 +776,6 @@ else:
                     st.session_state["precalc_smiles_df"] = None
 
                 if not st.session_state.get("precalc_done", False):
-                    from backend.chem.rdkit_adapter import RDKitAdapter
                     from backend.chem.recommender import get_target_recommendation_by_name as _get_rec
 
                     smiles_series = df[smiles_col_sf]
@@ -776,110 +786,63 @@ else:
 
                     st.info(f"⚙️ **{n} 件のSMILESに対し、利用可能な全エンジンで記述子を自動計算中...**")
 
-                    rdkit = RDKitAdapter(compute_fp=False)
                     df_result = pd.DataFrame(index=range(n))
                     _calc_summary = {}  # エンジン別の計算結果サマリ
 
-                    with st.spinner("全RDKit記述子を計算中..."):
-                        if rdkit.is_available():
-                            try:
-                                df_tmp = rdkit.compute(smiles_list).descriptors
-                                _calc_summary["RDKit"] = len(df_tmp.columns)
-                                df_tmp.index = range(n)  # インデックスを明示的に整合
-                                df_result = pd.concat([df_result, df_tmp], axis=1)
-                            except Exception as e:
-                                st.warning(f"⚠️ RDKit記述子の計算中にエラー: {e}")
+                    # ── 全エンジン定義（計算順: 高速→中程度→重い） ──
+                    _ALL_ENGINES: list[tuple[str, str, str, dict]] = [
+                        # (表示名, モジュールパス, クラス名, コンストラクタ引数)
+                        ("RDKit",          "backend.chem.rdkit_adapter",          "RDKitAdapter",          {"compute_fp": False}),
+                        ("Mordred",        "backend.chem.mordred_adapter",        "MordredAdapter",        {"selected_only": True}),
+                        ("GroupContrib",   "backend.chem.group_contrib_adapter",  "GroupContribAdapter",   {}),
+                        ("DescriptaStorus","backend.chem.descriptastorus_adapter","DescriptaStorusAdapter",{}),
+                        ("MolAI",          "backend.chem.molai_adapter",          "MolAIAdapter",          {"n_components": st.session_state.get("molai_n_components", 6)}),
+                        ("scikit-FP",      "backend.chem.skfp_adapter",           "SkfpAdapter",           {"fp_types": ["ECFP", "MACCS"]}),
+                        ("UMA",            "backend.chem.uma_adapter",            "UMAAdapter",            {}),
+                        ("Mol2Vec",        "backend.chem.mol2vec_adapter",        "Mol2VecAdapter",        {}),
+                        ("PaDEL",          "backend.chem.padel_adapter",          "PaDELAdapter",          {}),
+                        ("Molfeat",        "backend.chem.molfeat_adapter",        "MolfeatAdapter",        {}),
+                        ("XTB",            "backend.chem.xtb_adapter",            "XTBAdapter",            {}),
+                        ("UniPKa",         "backend.chem.unipka_adapter",         "UniPkaAdapter",         {}),
+                        ("COSMO-RS",       "backend.chem.cosmo_adapter",          "CosmoAdapter",          {}),
+                        ("Chemprop",       "backend.chem.chemprop_adapter",       "ChempropAdapter",       {}),
+                    ]
 
-                    with st.spinner("Mordred記述子を計算中..."):
+                    _progress_bar = st.progress(0, text="記述子計算を開始中...")
+                    _total_engines = len(_ALL_ENGINES)
+
+                    for _ei, (_ename, _emod, _ecls, _ekwargs) in enumerate(_ALL_ENGINES):
+                        _progress_bar.progress(
+                            (_ei + 1) / _total_engines,
+                            text=f"{_ename} を計算中... ({_ei + 1}/{_total_engines})"
+                        )
                         try:
-                            from backend.chem import MordredAdapter as _MordPre
-                            _mord = _MordPre(selected_only=True)
-                            if _mord.is_available():
-                                _mord_res = _mord.compute(smiles_list)
-                                if hasattr(_mord_res, 'descriptors') and _mord_res.descriptors is not None:
-                                    _new_cols = [c for c in _mord_res.descriptors.columns if c not in df_result.columns]
-                                    if _new_cols:
-                                        df_result = pd.concat([df_result, _mord_res.descriptors[_new_cols]], axis=1)
-                                        _calc_summary["Mordred"] = len(_new_cols)
+                            _mod = __import__(_emod, fromlist=[_ecls])
+                            _adapter = getattr(_mod, _ecls)(**_ekwargs)
+                            if not _adapter.is_available():
+                                continue
+                            _eres = _adapter.compute(smiles_list)
+                            if hasattr(_eres, 'descriptors') and _eres.descriptors is not None:
+                                _edf = _eres.descriptors
+                                _new_cols = [c for c in _edf.columns if c not in df_result.columns]
+                                if _new_cols:
+                                    _edf_new = _edf[_new_cols].copy()
+                                    _edf_new.index = range(n)
+                                    df_result = pd.concat([df_result, _edf_new], axis=1)
+                                    _calc_summary[_ename] = len(_new_cols)
+
+                            # MolAI PCA寄与率の保存
+                            if _ename == "MolAI" and hasattr(_adapter, '_pca') and _adapter._pca is not None:
+                                _evr = _adapter._pca.explained_variance_ratio_
+                                st.session_state["molai_explained_variance"] = {
+                                    "ratio": _evr.tolist(), "cumulative": _evr.cumsum().tolist(),
+                                    "n_components": _ekwargs.get("n_components", 6),
+                                }
                         except Exception as e:
-                            st.warning(f"⚠️ Mordred記述子の計算中にエラー: {e}")
+                            import logging as _log
+                            _log.getLogger(__name__).warning(f"{_ename} スキップ: {e}")
 
-                    with st.spinner("原子団寄与法記述子を計算中..."):
-                        try:
-                            from backend.chem import GroupContribAdapter as _GCAPre
-                            _gca = _GCAPre()
-                            if _gca.is_available():
-                                _gca_res = _gca.compute(smiles_list)
-                                if hasattr(_gca_res, 'descriptors') and _gca_res.descriptors is not None:
-                                    _new_cols = [c for c in _gca_res.descriptors.columns if c not in df_result.columns]
-                                    if _new_cols:
-                                        df_result = pd.concat([df_result, _gca_res.descriptors[_new_cols]], axis=1)
-                                        _calc_summary["GroupContrib"] = len(_new_cols)
-                        except Exception as e:
-                            st.warning(f"⚠️ GroupContrib記述子の計算中にエラー: {e}")
-
-                    # MolAI CNN (デフォルト PCA次元=6)
-                    try:
-                        from backend.chem.molai_adapter import MolAIAdapter as _MolAIAdapterPre
-                        _molai_n_pre = st.session_state.get("molai_n_components", 6)
-                        _molai_adp = _MolAIAdapterPre(n_components=_molai_n_pre)
-                        if _molai_adp.is_available():
-                            with st.spinner("MolAI CNN特徴量を計算中..."):
-                                _molai_result = _molai_adp.compute(smiles_list)
-                                if hasattr(_molai_result, 'descriptors') and _molai_result.descriptors is not None:
-                                    _new_cols = [c for c in _molai_result.descriptors.columns if c not in df_result.columns]
-                                    if _new_cols:
-                                        df_result = pd.concat([df_result, _molai_result.descriptors[_new_cols]], axis=1)
-                                if hasattr(_molai_adp, '_pca') and _molai_adp._pca is not None:
-                                    _evr = _molai_adp._pca.explained_variance_ratio_
-                                    st.session_state["molai_explained_variance"] = {
-                                        "ratio": _evr.tolist(), "cumulative": _evr.cumsum().tolist(),
-                                        "n_components": _molai_n_pre,
-                                    }
-                    except Exception as e:
-                        st.warning(f"⚠️ MolAI記述子の計算中にエラー: {e}")
-
-                    # XTB (利用可能なら)
-                    try:
-                        from backend.chem import XTBAdapter as _XTBPre
-                        _xtb = _XTBPre()
-                        if _xtb.is_available():
-                            with st.spinner("XTB量子化学記述子を計算中..."):
-                                _xtb_res = _xtb.compute(smiles_list)
-                                if hasattr(_xtb_res, 'descriptors') and _xtb_res.descriptors is not None:
-                                    _new_cols = [c for c in _xtb_res.descriptors.columns if c not in df_result.columns]
-                                    if _new_cols:
-                                        df_result = pd.concat([df_result, _xtb_res.descriptors[_new_cols]], axis=1)
-                    except Exception as e:
-                        st.warning(f"⚠️ XTB記述子の計算中にエラー: {e}")
-
-                    # UniPKa (利用可能なら)
-                    try:
-                        from backend.chem import UniPkaAdapter as _UniPre
-                        _upka = _UniPre()
-                        if _upka.is_available():
-                            with st.spinner("UniPKa pKa記述子を計算中..."):
-                                _upka_res = _upka.compute(smiles_list)
-                                if hasattr(_upka_res, 'descriptors') and _upka_res.descriptors is not None:
-                                    _new_cols = [c for c in _upka_res.descriptors.columns if c not in df_result.columns]
-                                    if _new_cols:
-                                        df_result = pd.concat([df_result, _upka_res.descriptors[_new_cols]], axis=1)
-                    except Exception as e:
-                        st.warning(f"⚠️ UniPKa記述子の計算中にエラー: {e}")
-
-                    # COSMO-RS (利用可能なら)
-                    try:
-                        from backend.chem import CosmoAdapter as _CosmoPre
-                        _cosmo = _CosmoPre()
-                        if _cosmo.is_available():
-                            with st.spinner("COSMO-RS溶媒和記述子を計算中..."):
-                                _cosmo_res = _cosmo.compute(smiles_list)
-                                if hasattr(_cosmo_res, 'descriptors') and _cosmo_res.descriptors is not None:
-                                    _new_cols = [c for c in _cosmo_res.descriptors.columns if c not in df_result.columns]
-                                    if _new_cols:
-                                        df_result = pd.concat([df_result, _cosmo_res.descriptors[_new_cols]], axis=1)
-                    except Exception as e:
-                        st.warning(f"⚠️ COSMO-RS記述子の計算中にエラー: {e}")
+                    _progress_bar.empty()
 
                     # クリーンアップ
                     df_result = df_result.loc[:, ~df_result.columns.duplicated()]
@@ -891,7 +854,7 @@ else:
 
                     # MolAI列のサマリ追加
                     _molai_cols = [c for c in df_result.columns if c.startswith("molai_") or c.startswith("MolAI_")]
-                    if _molai_cols:
+                    if _molai_cols and "MolAI" not in _calc_summary:
                         _calc_summary["MolAI"] = len(_molai_cols)
 
                     # 計算結果サマリ表示
@@ -953,13 +916,158 @@ else:
 
                     _rec_names = set(d.name for d in rec.descriptors) if rec else set()
 
+                    # 全アダプター定義（メタデータ取得・エンジンマップ共通）
+                    _ENGINE_MAP_DEFS = [
+                        ("RDKit",          "backend.chem.rdkit_adapter",           "RDKitAdapter",          {"compute_fp": False}),
+                        ("Mordred",        "backend.chem.mordred_adapter",         "MordredAdapter",        {"selected_only": True}),
+                        ("GroupContrib",   "backend.chem.group_contrib_adapter",   "GroupContribAdapter",   {}),
+                        ("DescriptaStorus","backend.chem.descriptastorus_adapter", "DescriptaStorusAdapter",{}),
+                        ("scikit-FP",      "backend.chem.skfp_adapter",            "SkfpAdapter",           {"fp_types": ["ECFP", "MACCS"]}),
+                        ("UMA",            "backend.chem.uma_adapter",             "UMAAdapter",            {}),
+                        ("Mol2Vec",        "backend.chem.mol2vec_adapter",         "Mol2VecAdapter",        {}),
+                        ("PaDEL",          "backend.chem.padel_adapter",           "PaDELAdapter",          {}),
+                        ("Molfeat",        "backend.chem.molfeat_adapter",         "MolfeatAdapter",        {}),
+                        ("XTB",            "backend.chem.xtb_adapter",             "XTBAdapter",            {}),
+                        ("COSMO-RS",       "backend.chem.cosmo_adapter",           "CosmoAdapter",          {}),
+                        ("UniPKa",         "backend.chem.unipka_adapter",          "UniPkaAdapter",         {}),
+                        ("Chemprop",       "backend.chem.chemprop_adapter",        "ChempropAdapter",       {}),
+                    ]
+
                     _meta = {}
-                    try:
-                        from backend.chem import RDKitAdapter as _RDA_m
-                        for m in _RDA_m(compute_fp=False).get_descriptors_metadata():
-                            _meta[m.name] = {"meaning": getattr(m, 'description', ''), "cat": getattr(m, 'category', '')}
-                    except Exception:
-                        pass
+                    # 全アダプターからメタデータ（化学的意味）を取得
+                    for _mm_name, _mm_mod, _mm_cls, _mm_kw in _ENGINE_MAP_DEFS:
+                        try:
+                            _mm_mod_obj = __import__(_mm_mod, fromlist=[_mm_cls])
+                            _mm_adp = getattr(_mm_mod_obj, _mm_cls)(**_mm_kw)
+                            if _mm_adp.is_available() and hasattr(_mm_adp, 'get_descriptors_metadata'):
+                                for _mm in _mm_adp.get_descriptors_metadata():
+                                    if _mm.name not in _meta:
+                                        _meta[_mm.name] = {
+                                            "meaning": getattr(_mm, 'meaning', '') or '',
+                                            "cat": getattr(_mm, 'category', '') or '',
+                                        }
+                        except Exception:
+                            pass
+                    # Mordred記述子のフォールバック辞書（importキャッシュに依存しない確実な意味付与）
+                    _MORDRED_MEANINGS = {
+                        "MW": "分子量 (Da)。沸点・粘度・蒸気圧に直結する基本物性",
+                        "nHeavyAtom": "水素以外の原子数。分子骨格の大きさの指標",
+                        "nAtom": "水素を含む全原子数",
+                        "nBonds": "全化学結合の数",
+                        "nBondsO": "酸素原子が関与する結合の数。エーテル・エステル等の極性結合",
+                        "nBondsS": "硫黄原子が関与する結合の数。チオール・スルホン等",
+                        "nRing": "環構造の総数。剛直性・安定性に寄与",
+                        "nHRing": "ヘテロ原子(N,O,S等)を含む環の数。生理活性・反応性に重要",
+                        "nARing": "芳香環の数。π電子共役による光吸収・熱安定性",
+                        "nBRing": "ベンゼン環(炭素のみの六員芳香環)の数",
+                        "nFARing": "縮環構造中の芳香環の数。ナフタレン・アントラセン等",
+                        "nFHRing": "縮環構造中のヘテロ環の数",
+                        "nFRing": "縮環(融合環)の数。二環以上が辺を共有する構造",
+                        "nSpiro": "スピロ環の数。2つの環が1原子を共有する特殊構造",
+                        "nBridgehead": "橋頭位原子の数。二環式以上の架橋構造",
+                        "nC": "炭素原子数。有機化合物の骨格元素",
+                        "nN": "窒素原子数。アミン・アミド・ヘテロ環の存在",
+                        "nO": "酸素原子数。ヒドロキシル・カルボニル・エーテルの存在",
+                        "nS": "硫黄原子数。チオール・スルフィド・スルホンの存在",
+                        "nF": "フッ素原子数。高い電気陰性度による極性・代謝安定性",
+                        "nCl": "塩素原子数。疎水性の増大・生理活性への影響",
+                        "nBr": "臭素原子数。重い置換基・反応性ハロゲン",
+                        "nI": "ヨウ素原子数。最も重いハロゲン・造影剤に利用",
+                        "nHet": "ヘテロ原子(C,H以外)の数。極性・反応性の指標",
+                        "nHetero": "ヘテロ原子数(別定義)。N,O,S等を含む",
+                        "nHBAcc": "水素結合受容体の数。O,N等の孤立電子対を持つ原子",
+                        "nHBDon": "水素結合供与体の数。-OH,-NH等",
+                        "nHBAcc_Lipin": "Lipinski定義の水素結合受容体数(N+O)",
+                        "nHBDon_Lipin": "Lipinski定義の水素結合供与体数(NH+OH)",
+                        "nRotB": "回転可能結合数。分子の柔軟性を反映",
+                        "RotRatio": "回転可能結合比率。全結合中の回転可能結合の割合",
+                        "TPSA": "位相的極性表面積 (Å²)。N,O由来の極性表面。水溶性・膜透過性の指標",
+                        "LogP": "LogP (Wildman-Crippen法)。油/水分配係数の対数。疎水性の基本指標",
+                        "SLogP": "SLogP (Wildman-Crippen法)。原子ベースLogP推定値",
+                        "LabuteASA": "Labute近似溶媒接触表面積。溶媒との相互作用面積",
+                        "BertzCT": "Bertz複雑度。分子グラフの構造的複雑さ。分岐・環が多いほど高い",
+                        "TopoPSA": "位相的極性表面積(2D版)。3D座標不要のPSA推定",
+                        "WPath": "Wiener Path Number。分子グラフの全頂点対間距離の合計。分子サイズの指標",
+                        "WPol": "Wiener Polarity Number。距離3の頂点対の数。分岐度を反映",
+                        "Lop": "Lopping Index。分子グラフの対称性を反映する指標",
+                        "PEOE_VSA1": "PEOE部分電荷ビン1の表面積。最も負に帯電した原子の表面積",
+                        "PEOE_VSA2": "PEOE部分電荷ビン2の表面積。負電荷領域",
+                        "PEOE_VSA3": "PEOE部分電荷ビン3の表面積。やや負の領域",
+                        "PEOE_VSA4": "PEOE部分電荷ビン4の表面積。中性付近の領域",
+                        "PEOE_VSA5": "PEOE部分電荷ビン5の表面積。やや正の領域",
+                        "PEOE_VSA6": "PEOE部分電荷ビン6の表面積。正電荷領域",
+                        "SMR_VSA1": "屈折率ビン1の表面積。最も分極しにくい原子の表面積",
+                        "SMR_VSA2": "屈折率ビン2の表面積。低分極率領域",
+                        "SMR_VSA3": "屈折率ビン3の表面積。高分極率領域",
+                        "SlogP_VSA1": "LogPビン1の表面積。最も親水的な原子の表面積",
+                        "SlogP_VSA2": "LogPビン2の表面積。親水的領域",
+                        "SlogP_VSA3": "LogPビン3の表面積。疎水的領域",
+                        "Kier1": "Kier κ1形状指数。分子の直線性を反映。直鎖に近いほど大きい",
+                        "Kier2": "Kier κ2形状指数。分子の分岐度を反映。分岐が多いほど大きい",
+                        "Kier3": "Kier κ3形状指数。分子の空間的広がりを反映",
+                        "KierFlex": "Kier柔軟性指数 (φ)。1次と2次κの比から柔軟性を推定",
+                        "IC0": "0次情報含量。原子種の多様性。Shannon情報エントロピーベース",
+                        "IC1": "1次情報含量。隣接原子の結合パターンの多様性",
+                        "IC2": "2次情報含量。2結合先までの環境の多様性",
+                        "TIC0": "0次全情報含量。IC0を原子数で重み付けした値",
+                        "SIC0": "0次構造情報含量。IC0を正規化した値",
+                        "SIC1": "1次構造情報含量。IC1を正規化した値",
+                        "CIC0": "0次相補情報含量。最大エントロピーとIC0の差",
+                        "CIC1": "1次相補情報含量。最大エントロピーとIC1の差",
+                        "EState_VSA1": "EState表面積ビン1。電子リッチな原子の表面積",
+                        "EState_VSA2": "EState表面積ビン2。やや電子リッチな原子の表面積",
+                        "EState_VSA3": "EState表面積ビン3。電子プアな原子の表面積",
+                        "MaxEStateIndex": "最大EState指数。最も電子受容しやすい原子の値",
+                        "MinEStateIndex": "最小EState指数。最も電子供与しやすい原子の値",
+                        "MaxAbsEStateIndex": "最大|EState|指数。電荷偏りが最大の原子",
+                        "BCUTc-1h": "BCUT電荷-高値。電荷分布の最大固有値。分子の電荷の偏りパターン",
+                        "BCUTc-1l": "BCUT電荷-低値。電荷分布の最小固有値。電荷の均一性",
+                        "BCUTdv-1h": "BCUT原子価-高値。原子価分布の最大固有値。結合パターンの偏り",
+                        "BCUTdv-1l": "BCUT原子価-低値。原子価分布の最小固有値",
+                        "AXp-0dv": "0次原子価連結性指数。原子の孤立した性質(原子価ベース)",
+                        "AXp-1dv": "1次原子価連結性指数。隣接原子との結合パターン(原子価ベース)",
+                        "AXp-2dv": "2次原子価連結性指数。2結合先までの経路(原子価ベース)",
+                        "Ipc": "Bonchev-Trinajstić情報含量。分子グラフの情報量",
+                        "BalabanJ": "Balaban J指数。分子グラフの均一性。高い→対称的構造",
+                        "FragCpx": "フラグメント複雑度。分子を構成するフラグメントの複雑さ",
+                    }
+                    # フォールバック辞書でMordred記述子を確実に意味付与
+                    for _mord_name, _mord_meaning in _MORDRED_MEANINGS.items():
+                        if _mord_name not in _meta or not _meta[_mord_name].get("meaning") or _meta[_mord_name]["meaning"] == _mord_name:
+                            _meta[_mord_name] = {"meaning": _mord_meaning, "cat": "Mordred"}
+
+                    # MolAI/Mol2Vec等のパターンベース意味付与（メタデータが登録されていない列向け）
+                    for c in _precalc_df.columns:
+                        if c not in _meta:
+                            if c.startswith("MolAI_") or c.startswith("molai_"):
+                                _idx = c.split("_")[-1]
+                                _meta[c] = {"meaning": f"MolAI CNN潜在表現のPCA第{_idx}主成分", "cat": "埋め込み"}
+                            elif c.startswith("Mol2Vec_"):
+                                _idx = c.split("_")[-1]
+                                _meta[c] = {"meaning": f"Mol2Vec潜在空間の第{_idx}次元", "cat": "埋め込み"}
+                            elif c.startswith("ECFP_"):
+                                _meta[c] = {"meaning": f"ECFP (Extended-Connectivity) フィンガープリント ビット{c.split('_')[-1]}", "cat": "FP"}
+                            elif c.startswith("MACCS_"):
+                                _meta[c] = {"meaning": f"MACCS構造キー ビット{c.split('_')[-1]}", "cat": "FP"}
+                            elif c.startswith("TopologicalTorsion_"):
+                                _meta[c] = {"meaning": f"トポロジカルトーション FP ビット{c.split('_')[-1]}", "cat": "FP"}
+                            elif c.startswith("Avalon_"):
+                                _meta[c] = {"meaning": f"Avalon FP ビット{c.split('_')[-1]}", "cat": "FP"}
+                            elif c.startswith("FCFP_"):
+                                _meta[c] = {"meaning": f"FCFP (Feature-Connectivity) FP ビット{c.split('_')[-1]}", "cat": "FP"}
+                            elif c.startswith("DS_"):
+                                _meta[c] = {"meaning": f"DescriptaStorus: {c[3:]}", "cat": "DescriptaStorus"}
+                            elif c.startswith("Molfeat_"):
+                                _meta[c] = {"meaning": f"Molfeat 分子特徴量 次元{c.split('_')[-1]}", "cat": "埋め込み"}
+                            elif c.startswith("gasteiger_"):
+                                _gast_map = {
+                                    "gasteiger_q_max": "Gasteiger最大部分電荷",
+                                    "gasteiger_q_min": "Gasteiger最小部分電荷",
+                                    "gasteiger_q_range": "Gasteiger電荷レンジ（最大-最小）",
+                                    "gasteiger_q_std": "Gasteiger電荷の標準偏差",
+                                    "gasteiger_q_abs_mean": "Gasteiger|電荷|の平均",
+                                }
+                                _meta[c] = {"meaning": _gast_map.get(c, f"Gasteiger電荷統計: {c}"), "cat": "電子状態"}
                     if rec:
                         for d in rec.descriptors:
                             _meta.setdefault(d.name, {})
@@ -969,21 +1077,25 @@ else:
                                 _meta[d.name]["cat"] = d.category
 
                     _engine_map = {}
-                    try:
-                        from backend.chem import RDKitAdapter as _EM_R, MordredAdapter as _EM_M
-                        from backend.chem import GroupContribAdapter as _EM_G
-                        from backend.chem import XTBAdapter as _EM_X, CosmoAdapter as _EM_C, UniPkaAdapter as _EM_U
-                        for _em_cls, _em_nm in [(_EM_R(compute_fp=False),"RDKit"), (_EM_M(selected_only=True),"Mordred"),
-                                                 (_EM_G(),"GroupContrib"), (_EM_X(),"XTB"),
-                                                 (_EM_C(),"COSMO-RS"), (_EM_U(),"UniPKa")]:
-                            if _em_cls.is_available():
-                                for _en in _em_cls.get_descriptor_names():
-                                    _engine_map.setdefault(_en, _em_nm)
-                        for c in _precalc_df.columns:
-                            if c.startswith("MolAI_") or c.startswith("molai_"):
-                                _engine_map.setdefault(c, "MolAI")
-                    except Exception:
-                        pass
+                    for _em_name, _em_mod, _em_cls, _em_kw in _ENGINE_MAP_DEFS:
+                        try:
+                            _mod_obj = __import__(_em_mod, fromlist=[_em_cls])
+                            _adp_obj = getattr(_mod_obj, _em_cls)(**_em_kw)
+                            if _adp_obj.is_available():
+                                for _dn in _adp_obj.get_descriptor_names():
+                                    _engine_map.setdefault(_dn, _em_name)
+                        except Exception:
+                            pass
+                    # MolAI列の推定（PCA列名パターンから）
+                    for c in _precalc_df.columns:
+                        if c.startswith("MolAI_") or c.startswith("molai_"):
+                            _engine_map.setdefault(c, "MolAI")
+                        elif c.startswith("ECFP_") or c.startswith("MACCS_") or c.startswith("TopologicalTorsion_") or c.startswith("Avalon_") or c.startswith("FCFP_"):
+                            _engine_map.setdefault(c, "scikit-FP")
+                        elif c.startswith("Mol2Vec_"):
+                            _engine_map.setdefault(c, "Mol2Vec")
+                        elif c.startswith("DS_"):
+                            _engine_map.setdefault(c, "DescriptaStorus")
 
                     # 数え上げ系記述子の判定
                     _count_descs = set()
@@ -1096,14 +1208,77 @@ else:
                     _valid_corr = {k: v for k, v in _corr.items() if pd.notna(v) and v > 0}
                     _top_corr = sorted(_valid_corr.items(), key=lambda x: -x[1])
 
+                    # ── クイック操作バー（常時表示） ──
+                    st.markdown("---")
+                    _qb1, _qb2, _qb3, _qb4 = st.columns(4)
+                    with _qb1:
+                        if st.button("✅ 全選択", key="quick_all", use_container_width=True):
+                            st.session_state["adv_desc"] = list(_precalc_df.columns)
+                            st.rerun()
+                    with _qb2:
+                        if st.button("❌ 全解除", key="quick_none", use_container_width=True):
+                            st.session_state["adv_desc"] = []
+                            st.rerun()
+                    with _qb3:
+                        if st.button("💡 推奨のみ", key="quick_rec", use_container_width=True):
+                            _rec_in_data = [n for n in _rec_names if n in _precalc_df.columns]
+                            st.session_state["adv_desc"] = _rec_in_data
+                            st.rerun()
+                    with _qb4:
+                        if st.button("📈 相関Top20", key="quick_top20", use_container_width=True):
+                            _top20 = [k for k, _ in _top_corr[:20]]
+                            st.session_state["adv_desc"] = _top20
+                            st.rerun()
+
+                    # カテゴリ別分類
+                    _CATEGORY_MAP = {
+                        "🧪 物理化学": ["MolWt", "MolLogP", "TPSA", "MolMR", "HeavyAtomCount",
+                                       "FractionCSP3", "LabuteASA", "BertzCT", "qed",
+                                       "MaxPartialCharge", "MinPartialCharge", "HallKierAlpha",
+                                       "ExactMolWt", "NumValenceElectrons"],
+                        "🔗 トポロジー": ["NumHAcceptors", "NumHDonors", "NumRotatableBonds",
+                                        "RingCount", "NumAromaticRings", "NumAliphaticRings",
+                                        "NumSaturatedRings", "NumHeteroatoms", "NumHeterocycles"],
+                        "🔬 フィンガープリント": [],  # ECFP_, MACCS_ 等のプレフィックスで動的割当
+                        "🧠 埋め込み・学習型": [],     # MolAI_, Mol2Vec_ 等
+                        "⚛️ 量子化学・物性": [],       # XTB/COSMO系
+                    }
+                    # 動的カテゴリ割当
+                    _col_category = {}
+                    for c in _precalc_df.columns:
+                        _assigned = False
+                        for _cat, _names in _CATEGORY_MAP.items():
+                            if c in _names:
+                                _col_category[c] = _cat
+                                _assigned = True
+                                break
+                        if not _assigned:
+                            if c.startswith("ECFP_") or c.startswith("MACCS_") or c.startswith("TopologicalTorsion_") or c.startswith("Avalon_") or c.startswith("FCFP_") or c.startswith("RDKit_") or c.startswith("AtomPair_") or c.startswith("MAP_") or c.startswith("ERG_") or c.startswith("Pattern_") or c.startswith("Layered_") or c.startswith("LINGO_"):
+                                _col_category[c] = "🔬 フィンガープリント"
+                            elif c.startswith("MolAI_") or c.startswith("molai_") or c.startswith("Mol2Vec_") or c.startswith("Molfeat_"):
+                                _col_category[c] = "🧠 埋め込み・学習型"
+                            elif _engine_map.get(c) in ("XTB", "COSMO-RS", "UniPKa"):
+                                _col_category[c] = "⚛️ 量子化学・物性"
+                            elif c in _count_descs:
+                                _col_category[c] = "🔗 トポロジー"
+                            else:
+                                _col_category[c] = "🧪 物理化学"
+
+                    _cat_counts = {}
+                    for _cat in _CATEGORY_MAP:
+                        _cat_cols = [c for c in _precalc_df.columns if _col_category.get(c) == _cat]
+                        _cat_sel = sum(1 for c in _cat_cols if c in _cur_sel)
+                        _cat_counts[_cat] = (len(_cat_cols), _cat_sel)
+
                     # タブ
                     from backend.chem.recommender import get_all_target_recommendations as _get_all_recs_p
                     all_recs = _get_all_recs_p()
                     _matched_rec = rec
 
-                    _tab_preset, _tab_engine, _tab_corr, _tab_count, _tab_all = st.tabs([
+                    _tab_preset, _tab_engine, _tab_cat, _tab_corr, _tab_count, _tab_all = st.tabs([
                         f"💡 推奨プリセット",
                         f"🏷️ エンジン別 ({len(_avail_engines)})",
+                        f"🧬 カテゴリ別 ({len([v for v in _cat_counts.values() if v[0] > 0])})",
                         f"📈 相関係数順 ({len(_top_corr)})",
                         f"🔢 数え上げ系 ({len(_cnt_in_precalc)})",
                         f"📋 全{n_total}記述子",
@@ -1197,25 +1372,54 @@ else:
                                                         st.rerun()
 
 
-                    # ── タブ2: エンジン別 ──
+                    # ── タブ2: エンジン別（個別記述子選択） ──
                     with _tab_engine:
+                        st.caption("各エンジンの記述子を個別に選択できます。化学的意味を参考に必要な記述子を選んでください。")
                         for _eng in _avail_engines:
                             _e_total, _e_sel = _eng_counts[_eng]
                             _e_cols = [c for c, e in _engine_map.items() if e == _eng and c in _precalc_df.columns]
-                            _ec1, _ec2, _ec3 = st.columns([3, 1, 1])
-                            with _ec1:
-                                st.markdown(f"**{_eng}** — {_e_sel}/{_e_total}個選択中")
-                            with _ec2:
-                                if _e_sel < _e_total and _e_total > 0:
-                                    _n_new_eng = _e_total - _e_sel
-                                    if st.button(f"{_eng} {_n_new_eng}個追加", key=f"eng_add_{_eng}", use_container_width=True):
-                                        _cur_sel.update(_e_cols)
-                                        st.session_state["adv_desc"] = list(_cur_sel)
-                                        st.rerun()
-                            with _ec3:
-                                if _e_sel > 0:
-                                    if st.button(f"{_eng} {_e_sel}個解除", key=f"eng_del_{_eng}", use_container_width=True):
-                                        _cur_sel -= set(_e_cols)
+                            if not _e_cols:
+                                continue
+
+                            with st.expander(f"**{_eng}** — {_e_sel}/{_e_total}個選択中", expanded=(_e_sel > 0 and _e_total <= 30)):
+                                # 記述子ごとのデータを構築（|r|降順ソート）
+                                _eng_rows = []
+                                for _ec in _e_cols:
+                                    _ec_corr = _corr.get(_ec, float('nan'))
+                                    _ec_corr_val = round(_ec_corr, 3) if pd.notna(_ec_corr) else None
+                                    _ec_meaning = _meta.get(_ec, {}).get("meaning", "")
+                                    _eng_rows.append({
+                                        "✅": _ec in _cur_sel,
+                                        "記述子名": _ec,
+                                        "|r|": _ec_corr_val,
+                                        "物理的意味": _ec_meaning,
+                                    })
+                                _eng_rows.sort(key=lambda x: x["|r|"] if x["|r|"] is not None else -1, reverse=True)
+                                _eng_df = pd.DataFrame(_eng_rows)
+
+                                _eng_edited = st.data_editor(
+                                    _eng_df,
+                                    column_config={
+                                        "✅": st.column_config.CheckboxColumn("選択", default=False),
+                                        "記述子名": st.column_config.TextColumn("記述子名", width="medium"),
+                                        "|r|": st.column_config.NumberColumn("|r|", format="%.3f", width="small"),
+                                        "物理的意味": st.column_config.TextColumn("化学的意味", width="large"),
+                                    },
+                                    disabled=["記述子名", "|r|", "物理的意味"],
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    key=f"eng_editor_{_eng}",
+                                    height=min(500, 40 + len(_eng_rows) * 35),
+                                )
+
+                                # チェックボックス変更を反映
+                                if _eng_edited is not None:
+                                    _eng_new_sel = set(_eng_edited[_eng_edited["✅"] == True]["記述子名"].tolist())
+                                    _eng_old_sel = set(c for c in _e_cols if c in _cur_sel)
+                                    if _eng_new_sel != _eng_old_sel:
+                                        # このエンジンの選択を更新
+                                        _cur_sel -= _eng_old_sel
+                                        _cur_sel |= _eng_new_sel
                                         st.session_state["adv_desc"] = list(_cur_sel)
                                         st.rerun()
 
@@ -1254,7 +1458,50 @@ else:
                         else:
                             st.info("相関係数を算出できません（目的変数が数値でない等）")
 
-                    # ── タブ4: 数え上げ系 ──
+                    # ── タブ3: カテゴリ別 ──
+                    with _tab_cat:
+                        st.caption("記述子を物理的意味で分類。カテゴリ単位で一括操作可能です。")
+                        for _cat_name in _CATEGORY_MAP:
+                            _cat_cols = [c for c in _precalc_df.columns if _col_category.get(c) == _cat_name]
+                            if not _cat_cols:
+                                continue
+                            _cat_total = len(_cat_cols)
+                            _cat_sel = sum(1 for c in _cat_cols if c in _cur_sel)
+
+                            with st.expander(f"**{_cat_name}** ({_cat_sel}/{_cat_total}個選択中)", expanded=(_cat_sel > 0)):
+                                # コンパクトなテーブル表示
+                                _cat_rows = [{
+                                    "✅": "✅" if c in _cur_sel else "—",
+                                    "記述子": c,
+                                    "ソース": _engine_map.get(c, ""),
+                                    "|r|": round(_corr.get(c, float('nan')), 3) if pd.notna(_corr.get(c, float('nan'))) else None,
+                                    "意味": _meta.get(c, {}).get("meaning", ""),
+                                } for c in _cat_cols]
+                                _cat_rows.sort(key=lambda x: x["|r|"] if x["|r|"] is not None else -1, reverse=True)
+                                st.dataframe(
+                                    pd.DataFrame(_cat_rows),
+                                    use_container_width=True, hide_index=True,
+                                    height=min(400, 35 + len(_cat_rows) * 35),
+                                )
+                                _cc1, _cc2 = st.columns(2)
+                                with _cc1:
+                                    if _cat_sel < _cat_total:
+                                        _n_new_cat = _cat_total - _cat_sel
+                                        if st.button(f"✅ {_n_new_cat}個追加", key=f"cat_add_{_cat_name}", type="primary", use_container_width=True):
+                                            _cur_sel.update(_cat_cols)
+                                            st.session_state["adv_desc"] = list(_cur_sel)
+                                            st.rerun()
+                                    else:
+                                        st.success("全件採用済み", icon="✅")
+                                with _cc2:
+                                    if _cat_sel > 0:
+                                        if st.button(f"❌ {_cat_sel}個解除", key=f"cat_del_{_cat_name}", use_container_width=True):
+                                            _cur_sel -= set(_cat_cols)
+                                            st.session_state["adv_desc"] = list(_cur_sel)
+                                            st.rerun()
+
+
+                    # ── タブ5: 数え上げ系 ──
                     with _tab_count:
                         if _cnt_in_precalc:
                             st.dataframe(
@@ -1262,6 +1509,7 @@ else:
                                     "✅": "✅" if c in _cur_sel else "—",
                                     "記述子": c,
                                     "ソース": _engine_map.get(c, ""),
+                                    "|r|": round(_corr.get(c, float('nan')), 3) if pd.notna(_corr.get(c, float('nan'))) else None,
                                     "意味": _meta.get(c, {}).get("meaning", ""),
                                 } for c in _cnt_in_precalc]),
                                 use_container_width=True, hide_index=True,
@@ -1286,7 +1534,7 @@ else:
                             st.info("数え上げ系記述子なし")
 
 
-                    # ── タブ5: 全記述子テーブル ──
+                    # ── タブ6: 全記述子テーブル ──
                     with _tab_all:
                         # フィルタ行
                         _ff1, _ff2, _ff3 = st.columns([2, 1, 3])
@@ -1345,34 +1593,46 @@ else:
                             "MolAI PCA次元の変更やエンジン個別の切替が必要な場合のみお使いください。"
                         )
 
-                        from backend.chem import RDKitAdapter as _RDKitAdp, XTBAdapter as _XTBAdp
-                        from backend.chem import CosmoAdapter as _CosmoAdp, UniPkaAdapter as _UniPkaAdp
-                        from backend.chem import GroupContribAdapter as _GCAAdp, MordredAdapter as _MordAdp
-                        from backend.chem import MolAIAdapter as _MolAIAdp
-
-                        _engine_list = [
-                            ("🧪 RDKit",        _RDKitAdp(),  "~200種",       "🟢 高速"),
-                            ("📐 Mordred",       _MordAdp(selected_only=True), "~1,800種", "🟡 中程度"),
-                            ("🤖 MolAI (CNN+PCA)", _MolAIAdp(n_components=st.session_state.get("molai_n_components", 6)), "n_comp", "🟡 中程度"),
-                            ("⚛️ XTB",           _XTBAdp(),    "~20種",        "🔴 重い"),
-                            ("💧 COSMO-RS",      _CosmoAdp(),  "~10種",        "🔴 重い"),
-                            ("⚗️ UniPKa",        _UniPkaAdp(), "~5種",         "🟡 中程度"),
-                            ("🔩 GroupContrib",  _GCAAdp(),    "~15種",        "🟢 高速"),
+                        _ADV_ENGINE_LIST = [
+                            ("🧪 RDKit",            "backend.chem.rdkit_adapter",          "RDKitAdapter",          {"compute_fp": False}, "~200種",       "🟢 高速"),
+                            ("📐 Mordred",           "backend.chem.mordred_adapter",        "MordredAdapter",        {"selected_only": True},"~1,800種",    "🟡 中程度"),
+                            ("🔩 GroupContrib",      "backend.chem.group_contrib_adapter",  "GroupContribAdapter",   {},                     "~15種",        "🟢 高速"),
+                            ("📊 DescriptaStorus",   "backend.chem.descriptastorus_adapter","DescriptaStorusAdapter",{},                     "~200種",       "🟢 高速"),
+                            ("🤖 MolAI (CNN+PCA)",   "backend.chem.molai_adapter",          "MolAIAdapter",          {"n_components": 6},    "n_comp",       "🟡 中程度"),
+                            ("🔑 scikit-FP",         "backend.chem.skfp_adapter",           "SkfpAdapter",           {"fp_types": ["ECFP","MACCS"]},"~4,000+種","🟢 高速"),
+                            ("🔀 UMA",               "backend.chem.uma_adapter",            "UMAAdapter",            {},                     "可変",          "🟡 中程度"),
+                            ("📝 Mol2Vec",           "backend.chem.mol2vec_adapter",        "Mol2VecAdapter",        {},                     "300次元",      "🟢 高速"),
+                            ("📁 PaDEL",             "backend.chem.padel_adapter",          "PaDELAdapter",          {},                     "~1,800種",     "🟡 中程度"),
+                            ("🧬 Molfeat",           "backend.chem.molfeat_adapter",        "MolfeatAdapter",        {},                     "可変",          "🟡 中程度"),
+                            ("⚛️ XTB",               "backend.chem.xtb_adapter",            "XTBAdapter",            {},                     "~20種",        "🔴 重い"),
+                            ("💧 COSMO-RS",          "backend.chem.cosmo_adapter",          "CosmoAdapter",          {},                     "~10種",        "🔴 重い"),
+                            ("⚗️ UniPKa",            "backend.chem.unipka_adapter",         "UniPkaAdapter",         {},                     "~5種",         "🟡 中程度"),
+                            ("🧪 Chemprop",          "backend.chem.chemprop_adapter",       "ChempropAdapter",       {},                     "可変",          "🔴 重い"),
                         ]
 
-                        for _ename, _eadp, _edims, _ecost in _engine_list:
-                            _eavail = _eadp.is_available()
-                            _estatus = "✅ 計算済み" if _eavail else "🚫 未インストール"
-                            _ecolor = "#4ade80" if _eavail else "#f87171"
+                        for _ae_name, _ae_mod, _ae_cls, _ae_kw, _ae_dims, _ae_cost in _ADV_ENGINE_LIST:
+                            try:
+                                _ae_mod_obj = __import__(_ae_mod, fromlist=[_ae_cls])
+                                _ae_adp = getattr(_ae_mod_obj, _ae_cls)(**_ae_kw)
+                                _ae_avail = _ae_adp.is_available()
+                            except Exception:
+                                _ae_avail = False
+                            _ae_status = "✅ 計算済み" if _ae_avail else "🚫 未インストール"
+                            _ae_color = "#4ade80" if _ae_avail else "#f87171"
                             st.markdown(
-                                f"- {_ename} <span style='color:{_ecolor}'>{_estatus}</span> | {_edims} | {_ecost}",
+                                f"- {_ae_name} <span style='color:{_ae_color}'>{_ae_status}</span> | {_ae_dims} | {_ae_cost}",
                                 unsafe_allow_html=True,
                             )
 
                         # MolAI PCA次元設定
                         st.markdown("---")
                         st.markdown("**MolAI CNN + PCA 設定**")
-                        _molai_avail = _MolAIAdp(n_components=6).is_available()
+                        try:
+                            _molai_mod = __import__("backend.chem.molai_adapter", fromlist=["MolAIAdapter"])
+                            _MolAIAdp_chk = getattr(_molai_mod, "MolAIAdapter")
+                            _molai_avail = _MolAIAdp_chk(n_components=6).is_available()
+                        except Exception:
+                            _molai_avail = False
                         if _molai_avail:
                             _molai_n = st.slider(
                                 "PCA次元数",
@@ -1946,10 +2206,14 @@ else:
                                 "列名": _proc_X.columns,
                                 "型": _proc_X.dtypes.astype(str).values,
                                 "欠損": _proc_X.isnull().sum().values if hasattr(_proc_X, "isnull") else 0,
-                                "最小": _proc_X.min().values,
-                                "最大": _proc_X.max().values,
-                                "平均": _proc_X.mean().values,
                             })
+                            # 数値列のみ統計量を計算（非数値列はNaN）
+                            _num_min = _proc_X.min(numeric_only=True)
+                            _num_max = _proc_X.max(numeric_only=True)
+                            _num_mean = _proc_X.mean(numeric_only=True)
+                            _col_info["最小"] = _col_info["列名"].map(lambda c: _num_min.get(c, "-"))
+                            _col_info["最大"] = _col_info["列名"].map(lambda c: _num_max.get(c, "-"))
+                            _col_info["平均"] = _col_info["列名"].map(lambda c: _num_mean.get(c, "-"))
                             st.dataframe(_col_info, use_container_width=True, hide_index=True)
 
                         # CSVダウンロード
@@ -1961,6 +2225,54 @@ else:
                             mime="text/csv",
                             use_container_width=True,
                         )
+
+                        # 前処理後データに対するリーケージ検出
+                        st.markdown("---")
+                        st.markdown("### 🔍 リーケージ検出（前処理後データ）")
+                        st.caption("前処理後の最終数値データに対してサンプル間類似度を評価し、リーケージリスクを検出します。")
+                        _proc_numeric = _proc_X.select_dtypes(include="number")
+                        if _proc_numeric.shape[1] >= 2 and len(_proc_numeric) >= 10:
+                            try:
+                                from backend.data.leakage_detector import detect_leakage as _detect_leakage_final
+                                _target_col_lk = st.session_state.get("target_col")
+                                _y_lk = st.session_state.get("df", pd.DataFrame()).get(_target_col_lk)
+                                if _y_lk is not None and len(_y_lk) == len(_proc_numeric):
+                                    _lk_final = _detect_leakage_final(
+                                        _proc_numeric, _y_lk.values, method="auto"
+                                    )
+                                else:
+                                    _lk_final = _detect_leakage_final(
+                                        _proc_numeric, method="auto"
+                                    )
+
+                                # リスクレベルに応じた表示
+                                _risk_colors = {"low": "🟢", "medium": "🟡", "high": "🔴"}
+                                _risk_icon = _risk_colors.get(_lk_final.risk_level, "⚪")
+                                st.markdown(
+                                    f"**リスクレベル**: {_risk_icon} **{_lk_final.risk_level.upper()}** "
+                                    f"(スコア: {_lk_final.risk_score:.3f})"
+                                )
+                                if _lk_final.risk_level == "low":
+                                    st.success(f"✅ {_lk_final.cv_reason}")
+                                elif _lk_final.risk_level == "medium":
+                                    st.warning(f"⚠️ {_lk_final.cv_reason}")
+                                else:
+                                    st.error(f"🚨 {_lk_final.cv_reason}")
+
+                                with st.expander("📋 検出詳細", expanded=False):
+                                    st.write(f"- 検出手法: `{_lk_final.method_used}`")
+                                    st.write(f"- 疑わしいペア数: {_lk_final.n_suspicious_pairs}")
+                                    st.write(f"- 推定グループ数: {_lk_final.n_groups}")
+                                    st.write(f"- 推奨CV: `{_lk_final.recommended_cv}`")
+                                    if _lk_final.details:
+                                        st.json(_lk_final.details)
+
+                                st.session_state["leakage_report_final"] = _lk_final
+                            except Exception as _lk_err:
+                                st.info(f"リーケージ検出スキップ: {_lk_err}")
+                        else:
+                            st.info("数値特徴量が2列未満またはサンプル数が少なすぎるため、リーケージ検出をスキップしました。")
+
                     else:
                         st.warning("前処理後データが取得できませんでした。パイプライン実行後に利用可能になります。")
 

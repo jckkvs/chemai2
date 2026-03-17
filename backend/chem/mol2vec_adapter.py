@@ -148,8 +148,8 @@ class Mol2VecAdapter(BaseChemAdapter):
         return [
             DescriptorMetadata(
                 name=f"Mol2Vec_{i}",
-                meaning=f"Mol2Vec 潜在次元 {i}",
+                meaning=f"Mol2Vec 分子埋め込みベクトル 第{i}次元。分子部分構造のWord2Vecベース分散表現 (Jaeger et al., JCIM 2018)",
                 is_count=False,
             )
-            for i in range(5)  # 代表5次元のみ
+            for i in range(300)  # Mol2Vecは300次元固定
         ]

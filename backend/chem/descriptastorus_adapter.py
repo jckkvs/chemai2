@@ -94,8 +94,28 @@ class DescriptaStorusAdapter(BaseChemAdapter):
         )
 
     def get_descriptors_metadata(self) -> list[DescriptorMetadata]:
+        """DescriptaStorusで計算される全記述子のメタデータを返す。"""
+        try:
+            if self.is_available():
+                from descriptastorus.descriptors import rdDescriptors, rdNormalizedDescriptors
+                if "normalized" in self._descriptor_type.lower():
+                    gen = rdNormalizedDescriptors.RDKit2DNormalized()
+                else:
+                    gen = rdDescriptors.RDKit2D()
+                col_names = gen.columns
+                meta = []
+                for col in col_names:
+                    meta.append(DescriptorMetadata(
+                        name=f"DS_{col}",
+                        meaning=f"DescriptaStorus (Merck) 標準化RDKit2D記述子: {col}",
+                        is_count=col.startswith("fr_") or col.startswith("Num") or col.startswith("n"),
+                    ))
+                return meta
+        except Exception:
+            pass
+        # フォールバック
         return [
-            DescriptorMetadata(name="DS_MolWt", meaning="分子量", is_count=False),
-            DescriptorMetadata(name="DS_TPSA", meaning="極性表面積", is_count=False),
-            DescriptorMetadata(name="DS_MolLogP", meaning="LogP", is_count=False),
+            DescriptorMetadata(name="DS_MolWt", meaning="分子量 (DescriptaStorus標準化)", is_count=False),
+            DescriptorMetadata(name="DS_TPSA", meaning="位相的極性表面積 (DescriptaStorus標準化)", is_count=False),
+            DescriptorMetadata(name="DS_MolLogP", meaning="LogP (DescriptaStorus標準化)", is_count=False),
         ]

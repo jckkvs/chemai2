@@ -98,15 +98,38 @@ def render(run_config: dict | None = None) -> None:
         # リーケージ推奨CV or 手動グループ列によるCV選択
         _leakage_cv = run_config.get("leakage_recommended_cv")
         _cv_key = "auto"
+        _cv_folds = run_config.get("cv_folds", 5)
         if _manual_group_col and _cv_groups_col:
-            _cv_key = "group_kfold"
-            st.info(f"📋 グループ列 `{_manual_group_col}` を使用して GroupKFold を適用します。")
-        elif _leakage_cv == "GroupKFold" and _cv_groups_col:
-            _cv_key = "group_kfold"
-            st.info("📋 **リーケージ検出** により GroupKFold を自動適用しました。同一グループがtrain/testに分割されることを防ぎます。")
-        elif _leakage_cv == "LeaveOneGroupOut" and _cv_groups_col:
-            _cv_key = "leave_one_group_out"
-            st.info("📋 **リーケージ検出** により LeaveOneGroupOut を自動適用しました。")
+            # グループ数チェック: GroupKFoldにはグループ数 >= n_splits が必須
+            _n_groups = _df_for_run[_cv_groups_col].nunique()
+            if _n_groups >= _cv_folds:
+                _cv_key = "group_kfold"
+                st.info(f"📋 グループ列 `{_manual_group_col}` を使用して GroupKFold を適用します。({_n_groups}グループ)")
+            else:
+                st.warning(
+                    f"⚠️ グループ列 `{_manual_group_col}` のグループ数({_n_groups})が "
+                    f"CV分割数({_cv_folds})未満のため、通常のKFoldを適用します。"
+                )
+                _cv_groups_col = None
+        elif _leakage_cv in ("GroupKFold", "LeaveOneGroupOut") and _cv_groups_col:
+            # リーケージ検出によるGroupKFold: グループ数チェック
+            _n_groups = _df_for_run[_cv_groups_col].nunique()
+            if _n_groups >= _cv_folds:
+                if _leakage_cv == "LeaveOneGroupOut":
+                    _cv_key = "leave_one_group_out"
+                    st.info(f"📋 **リーケージ検出** により LeaveOneGroupOut を自動適用しました。({_n_groups}グループ)")
+                else:
+                    _cv_key = "group_kfold"
+                    st.info(f"📋 **リーケージ検出** により GroupKFold を自動適用しました。({_n_groups}グループ)")
+            else:
+                st.warning(
+                    f"⚠️ リーケージ検出でGroupKFoldが推奨されましたが、グループ数({_n_groups})が "
+                    f"CV分割数({_cv_folds})未満のため、通常のKFoldを適用します。"
+                )
+                # リーケージグループ列を削除
+                if _cv_groups_col == "_leakage_group" and _cv_groups_col in _df_for_run.columns:
+                    _df_for_run = _df_for_run.drop(columns=[_cv_groups_col])
+                _cv_groups_col = None
 
         # P1-2: 時系列列の推奨
         _time_col = run_config.get("col_role_time")

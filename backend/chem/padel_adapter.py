@@ -90,8 +90,54 @@ class PaDELAdapter(BaseChemAdapter):
         )
 
     def get_descriptors_metadata(self) -> list[DescriptorMetadata]:
+        """PaDEL記述子のメタデータを返す。"""
+        _PADEL_KNOWN = {
+            "MW": "分子量 (Da)",
+            "nAtom": "全原子数",
+            "nHeavyAtom": "重原子数",
+            "nBonds": "全結合数",
+            "nRotB": "回転可能結合数。分子の柔軟性",
+            "TPSA": "位相的極性表面積 (Å²)。膜透過性の指標",
+            "ALogP": "Ghose-Crippen LogP。疎水性の指標",
+            "ALogp2": "ALogPの2乗",
+            "AMR": "Ghose-Crippen屈折率",
+            "nHBAcc": "水素結合受容体数",
+            "nHBDon": "水素結合供与体数",
+            "nRing": "環構造の数",
+            "nAromRing": "芳香環の数",
+            "nHeteroRing": "ヘテロ環の数",
+            "TopoPSA": "位相的極性表面積 (2D版)",
+            "WTPT-1": "Weighted Path 1。1結合経路の加重値",
+            "WTPT-2": "Weighted Path 2。2結合経路の加重値",
+            "WTPT-3": "Weighted Path 3。3結合経路の加重値",
+            "WTPT-4": "Weighted Path 4。4結合経路の加重値",
+            "WTPT-5": "Weighted Path 5。5結合経路の加重値",
+            "BCUTw-1h": "BCUT 重み最高固有値。分子の原子分布パターン",
+            "BCUTw-1l": "BCUT 重み最低固有値",
+            "BCUTc-1h": "BCUT 電荷最高固有値。電荷分布パターン",
+            "BCUTc-1l": "BCUT 電荷最低固有値",
+            "BCUTp-1h": "BCUT 分極率最高固有値",
+            "BCUTp-1l": "BCUT 分極率最低固有値",
+            "VP-0": "Van der Waals体積 0次",
+            "VP-1": "Van der Waals体積 1次",
+            "VP-2": "Van der Waals体積 2次",
+        }
+        try:
+            if self.is_available():
+                from padelpy import from_smiles
+                desc = from_smiles("C", fingerprints=self._compute_fp, timeout=30)
+                meta = []
+                for k in desc.keys():
+                    padel_name = f"PaDEL_{k}"
+                    known_meaning = _PADEL_KNOWN.get(k, "")
+                    meaning = f"PaDEL: {known_meaning}" if known_meaning else f"PaDEL 分子記述子: {k}"
+                    is_count = k.startswith("n") or k.startswith("Num")
+                    meta.append(DescriptorMetadata(name=padel_name, meaning=meaning, is_count=is_count))
+                return meta
+        except Exception:
+            pass
         return [
-            DescriptorMetadata(name="PaDEL_MW", meaning="分子量", is_count=False),
-            DescriptorMetadata(name="PaDEL_nAtom", meaning="原子数", is_count=True),
-            DescriptorMetadata(name="PaDEL_TPSA", meaning="極性表面積", is_count=False),
+            DescriptorMetadata(name="PaDEL_MW", meaning="分子量 (PaDEL)", is_count=False),
+            DescriptorMetadata(name="PaDEL_nAtom", meaning="原子数 (PaDEL)", is_count=True),
+            DescriptorMetadata(name="PaDEL_TPSA", meaning="極性表面積 (PaDEL)", is_count=False),
         ]
