@@ -750,6 +750,13 @@ else:
                 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 # 全記述子の自動計算（ボタンなし・全エンジン自動）
                 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                _PRECALC_VERSION = 2  # コード変更時にインクリメントして自動再計算
+                _stored_ver = st.session_state.get("_precalc_version", 0)
+                if _stored_ver != _PRECALC_VERSION:
+                    st.session_state["precalc_done"] = False
+                    st.session_state["precalc_smiles_df"] = None
+                    st.session_state["_precalc_version"] = _PRECALC_VERSION
+
                 if not st.session_state.get("precalc_done", False):
                     from backend.chem.rdkit_adapter import RDKitAdapter
                     from backend.chem.recommender import get_target_recommendation_by_name as _get_rec
@@ -980,9 +987,8 @@ else:
                             _count_descs.add(c)
 
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                    # 記述子セットの登録・比較（選択の前に配置）
+                    # 記述子セットの登録・比較（選択の前 — 保存は直接表示）
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                    # セットの初期化
                     if "_desc_sets" not in st.session_state:
                         _universal = [d for d in [
                             "MolWt","MolLogP","TPSA","NumHAcceptors","NumHDonors",
@@ -1000,34 +1006,30 @@ else:
                         st.session_state["_desc_sets"] = _defaults
                     _desc_sets = st.session_state["_desc_sets"]
 
-                    with st.expander(f"📋 記述子セットの登録・比較（{len(_desc_sets)}セット登録済み）", expanded=False):
-                        st.caption(
-                            "💡 **保存しなくても、下で選択した記述子でそのまま解析できます。**\n\n"
-                            "保存すると、複数の記述子セットを名前付きで管理でき、パイプライン実行時に全セットを一括比較できます。"
+                    # 保存ボタンは直接表示（expander不要）
+                    _sc1, _sc2 = st.columns([3, 1])
+                    with _sc1:
+                        _set_name = st.text_input(
+                            "💾 セット保存", value="", key="desc_set_name",
+                            placeholder="名前を入力して「保存」（空なら自動番号）",
+                            label_visibility="collapsed",
                         )
-                        # 現在のセットを保存
-                        _sc1, _sc2 = st.columns([3, 1])
-                        with _sc1:
-                            _set_name = st.text_input(
-                                "セット名", value="", key="desc_set_name",
-                                placeholder="例: 推奨+MolAI、XTBのみ、全記述子",
-                            )
-                        with _sc2:
-                            st.markdown("<br>", unsafe_allow_html=True)
-                            if st.button("💾 保存", key="btn_save_set", type="primary", use_container_width=True):
-                                _final_name = _set_name.strip()
-                                if not _final_name:
-                                    _n = len(_desc_sets) + 1
-                                    while f"セット{_n}" in _desc_sets:
-                                        _n += 1
-                                    _final_name = f"セット{_n}"
-                                _desc_sets[_final_name] = list(st.session_state.get("adv_desc", []))
-                                st.session_state["_desc_sets"] = _desc_sets
-                                st.success(f"✅ セット「{_final_name}」を保存しました（{len(st.session_state.get('adv_desc', []))}個）")
-                                st.rerun()
+                    with _sc2:
+                        if st.button(f"💾 現在の{n_sel}個を保存", key="btn_save_set", type="secondary", use_container_width=True):
+                            _final_name = _set_name.strip()
+                            if not _final_name:
+                                _n = len(_desc_sets) + 1
+                                while f"セット{_n}" in _desc_sets:
+                                    _n += 1
+                                _final_name = f"セット{_n}"
+                            _desc_sets[_final_name] = list(st.session_state.get("adv_desc", []))
+                            st.session_state["_desc_sets"] = _desc_sets
+                            st.success(f"✅ 「{_final_name}」保存（{len(st.session_state.get('adv_desc', []))}個）")
+                            st.rerun()
 
-                        # 登録済みセット一覧
-                        if _desc_sets:
+                    # 登録済みセット一覧（ある場合のみ表示）
+                    if _desc_sets:
+                        with st.expander(f"📋 登録済みセット（{len(_desc_sets)}件）", expanded=False):
                             for _sname, _sdescs in _desc_sets.items():
                                 _sc_a, _sc_b, _sc_c = st.columns([4, 1, 1])
                                 with _sc_a:
@@ -1042,12 +1044,11 @@ else:
                                         st.session_state["_desc_sets"] = _desc_sets
                                         st.rerun()
 
-                            # 一括比較フラグ
                             _use_multi = st.checkbox(
-                                "🔄 パイプライン実行時に全登録セットを一括比較する",
+                                "🔄 全セット一括比較",
                                 value=st.session_state.get("_use_multi_desc_sets", False),
                                 key="chk_multi_desc",
-                                help="ONにすると各記述子セットで個別にモデルを構築し比較。実行時間は約{len(_desc_sets)}倍。",
+                                help=f"ON: 各セットでモデルを構築し比較。実行時間約{len(_desc_sets)}倍。",
                             )
                             st.session_state["_use_multi_desc_sets"] = _use_multi
 
@@ -1120,12 +1121,13 @@ else:
                                 _rb1, _rb2 = st.columns(2)
                                 with _rb1:
                                     if _n_a < len(_avail_rec):
-                                        if st.button(f"✅ 全{len(_avail_rec)}件追加", key="radd_matched", type="primary", use_container_width=True):
+                                        _n_new = len(_avail_rec) - _n_a
+                                        if st.button(f"✅ {_matched_rec.target_name}の{len(_avail_rec)}件を追加（新規{_n_new}件）", key="radd_matched", type="primary", use_container_width=True):
                                             _cur_sel.update(d.name for d in _avail_rec)
                                             st.session_state["adv_desc"] = list(_cur_sel)
                                             st.rerun()
                                     else:
-                                        st.success("全件採用済み", icon="✅")
+                                        st.success(f"{_matched_rec.target_name}: 全件採用済み", icon="✅")
                                 with _rb2:
                                     if _n_a > 0:
                                         if st.button("解除", key="rdel_matched", use_container_width=True):
@@ -1169,14 +1171,15 @@ else:
                             with _ec1:
                                 st.markdown(f"**{_eng}** — {_e_sel}/{_e_total}個選択中")
                             with _ec2:
-                                if _e_sel < _e_total:
-                                    if st.button("全追加", key=f"eng_add_{_eng}", use_container_width=True):
+                                if _e_sel < _e_total and _e_total > 0:
+                                    _n_new_eng = _e_total - _e_sel
+                                    if st.button(f"{_eng} {_n_new_eng}個追加", key=f"eng_add_{_eng}", use_container_width=True):
                                         _cur_sel.update(_e_cols)
                                         st.session_state["adv_desc"] = list(_cur_sel)
                                         st.rerun()
                             with _ec3:
                                 if _e_sel > 0:
-                                    if st.button("全解除", key=f"eng_del_{_eng}", use_container_width=True):
+                                    if st.button(f"{_eng} {_e_sel}個解除", key=f"eng_del_{_eng}", use_container_width=True):
                                         _cur_sel -= set(_e_cols)
                                         st.session_state["adv_desc"] = list(_cur_sel)
                                         st.rerun()
@@ -1200,12 +1203,13 @@ else:
                             _cb1, _cb2 = st.columns(2)
                             with _cb1:
                                 if _n_already < _corr_n:
-                                    if st.button(f"✅ 上位{_corr_n}件追加", key="corr_add", type="primary", use_container_width=True):
+                                    _n_new_corr = _corr_n - _n_already
+                                    if st.button(f"✅ |r|上位{_corr_n}件を追加（新規{_n_new_corr}件）", key="corr_add", type="primary", use_container_width=True):
                                         _cur_sel.update(_top_n_names)
                                         st.session_state["adv_desc"] = list(_cur_sel)
                                         st.rerun()
                                 else:
-                                    st.success("全件採用済み", icon="✅")
+                                    st.success(f"上位{_corr_n}件は全て採用済み", icon="✅")
                             with _cb2:
                                 if _n_already > 0:
                                     if st.button("解除", key="corr_del", use_container_width=True):
