@@ -1137,30 +1137,36 @@ else:
                             else:
                                 st.info("計算済み記述子に該当なし")
 
-                        # 他のプリセット（カテゴリ別にグループ化）
+                        # 他のプリセット（カテゴリ別にグループ化 — expander可）
                         _other_recs = [r for r in all_recs if not _matched_rec or r.target_name != _matched_rec.target_name]
                         if _other_recs:
                             st.markdown("---")
-                            # カテゴリでグループ化
                             _cat_groups: dict[str, list] = {}
                             for _or in _other_recs:
                                 _cat = getattr(_or, 'category', 'その他')
                                 _cat_groups.setdefault(_cat, []).append(_or)
                             for _cat_name, _cat_recs in _cat_groups.items():
-                                st.markdown(f"**{_cat_name}**")
+                                # カテゴリ別の選択状況をサマリ表示
+                                _cat_total = 0; _cat_sel = 0
                                 for _or in _cat_recs:
-                                    _or_avail = [d for d in _or.descriptors if d.name in _precalc_df.columns]
-                                    _or_n = sum(1 for d in _or_avail if d.name in _cur_sel)
-                                    if _or_avail:
-                                        _oc1, _oc2 = st.columns([3, 1])
-                                        with _oc1:
-                                            st.caption(f"{_or.target_name} ({_or_n}/{len(_or_avail)})")
-                                        with _oc2:
-                                            if _or_n < len(_or_avail):
-                                                if st.button("追加", key=f"radd_{_or.target_name}", use_container_width=True):
-                                                    _cur_sel.update(d.name for d in _or_avail)
-                                                    st.session_state["adv_desc"] = list(_cur_sel)
-                                                    st.rerun()
+                                    _or_a = [d for d in _or.descriptors if d.name in _precalc_df.columns]
+                                    _cat_total += len(_or_a)
+                                    _cat_sel += sum(1 for d in _or_a if d.name in _cur_sel)
+                                with st.expander(f"**{_cat_name}** ({_cat_sel}/{_cat_total})", expanded=False):
+                                    for _or in _cat_recs:
+                                        _or_avail = [d for d in _or.descriptors if d.name in _precalc_df.columns]
+                                        _or_n = sum(1 for d in _or_avail if d.name in _cur_sel)
+                                        if _or_avail:
+                                            _oc1, _oc2 = st.columns([3, 1])
+                                            with _oc1:
+                                                st.caption(f"{_or.target_name} ({_or_n}/{len(_or_avail)})")
+                                            with _oc2:
+                                                if _or_n < len(_or_avail):
+                                                    _n_new_or = len(_or_avail) - _or_n
+                                                    if st.button(f"{_n_new_or}個追加", key=f"radd_{_or.target_name}", use_container_width=True):
+                                                        _cur_sel.update(d.name for d in _or_avail)
+                                                        st.session_state["adv_desc"] = list(_cur_sel)
+                                                        st.rerun()
 
                     # ── タブ2: エンジン別 ──
                     with _tab_engine:
