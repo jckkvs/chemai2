@@ -962,192 +962,16 @@ else:
                             _count_descs.add(c)
 
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                    # 記述子の追加方法（4パネル）
+                    # 記述子の選択（st.tabs: 推奨/エンジン/相関/数え上げ/全テーブル）
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                     st.markdown("---")
 
-                    _sel_p1, _sel_p2 = st.columns(2)
-
-                    # ── パネル1: 推奨プリセット ──
-                    with _sel_p1:
-                        from backend.chem.recommender import (
-                            get_all_target_recommendations as _get_all_recs_p,
-                        )
-                        all_recs = _get_all_recs_p()
-                        # 自動マッチしたプリセットを直接表示（クリック不要）
-                        _matched_rec = rec  # 目的変数名から自動マッチ済み
-                        if _matched_rec:
-                            _avail_rec = [d for d in _matched_rec.descriptors if d.name in _precalc_df.columns]
-                            _n_a = sum(1 for d in _avail_rec if d.name in _cur_sel)
-                            _n_rec_adopted = _n_a
-                            with st.expander(f"💡 推奨: {_matched_rec.target_name} ({_n_a}/{len(_avail_rec)}採用中)", expanded=True):
-                                st.caption(_matched_rec.summary)
-                                if _avail_rec:
-                                    st.dataframe(
-                                        pd.DataFrame([{
-                                            "✅": "✅" if d.name in _cur_sel else "—",
-                                            "記述子": d.name,
-                                            "意味": d.meaning,
-                                            "ソース": d.library,
-                                        } for d in _avail_rec]),
-                                        use_container_width=True, hide_index=True,
-                                        height=min(280, 35 + len(_avail_rec) * 35),
-                                    )
-                                    _rb1, _rb2 = st.columns(2)
-                                    with _rb1:
-                                        if _n_a < len(_avail_rec):
-                                            if st.button(f"✅ 全{len(_avail_rec)}件追加", key="radd_matched", type="primary", use_container_width=True):
-                                                _cur_sel.update(d.name for d in _avail_rec)
-                                                st.session_state["adv_desc"] = list(_cur_sel)
-                                                st.rerun()
-                                        else:
-                                            st.success("全件採用済み", icon="✅")
-                                    with _rb2:
-                                        if _n_a > 0:
-                                            if st.button("解除", key="rdel_matched", use_container_width=True):
-                                                _cur_sel -= {d.name for d in _avail_rec}
-                                                st.session_state["adv_desc"] = list(_cur_sel)
-                                                st.rerun()
-                                else:
-                                    st.info("計算済み記述子に該当なし")
-                            # 他のプリセット（必要な人だけ開く）
-                            _other_recs = [r for r in all_recs if r.target_name != _matched_rec.target_name]
-                            if _other_recs:
-                                with st.expander(f"他のプリセットを見る ({len(_other_recs)}件)", expanded=False):
-                                    for _or in _other_recs:
-                                        _or_avail = [d for d in _or.descriptors if d.name in _precalc_df.columns]
-                                        _or_n = sum(1 for d in _or_avail if d.name in _cur_sel)
-                                        if _or_avail and _or_n < len(_or_avail):
-                                            if st.button(f"＋ {_or.target_name} ({_or_n}/{len(_or_avail)})", key=f"radd_{_or.target_name}", use_container_width=True):
-                                                _cur_sel.update(d.name for d in _or_avail)
-                                                st.session_state["adv_desc"] = list(_cur_sel)
-                                                st.rerun()
-                                        elif _or_avail:
-                                            st.markdown(f"✅ {_or.target_name} ({_or_n}/{len(_or_avail)})")
-                        else:
-                            with st.expander("💡 推奨プリセット", expanded=False):
-                                for _or in all_recs:
-                                    _or_avail = [d for d in _or.descriptors if d.name in _precalc_df.columns]
-                                    _or_n = sum(1 for d in _or_avail if d.name in _cur_sel)
-                                    if _or_avail and _or_n < len(_or_avail):
-                                        if st.button(f"＋ {_or.target_name} ({_or_n}/{len(_or_avail)})", key=f"radd_{_or.target_name}", use_container_width=True):
-                                            _cur_sel.update(d.name for d in _or_avail)
-                                            st.session_state["adv_desc"] = list(_cur_sel)
-                                            st.rerun()
-
-                    # ── パネル2: エンジンで選ぶ ──
-                    with _sel_p2:
-                        _avail_engines = sorted(set(_engine_map.values()))
-                        _eng_counts = {}
-                        for _e in _avail_engines:
-                            _e_cols = [c for c, e in _engine_map.items() if e == _e and c in _precalc_df.columns]
-                            _eng_counts[_e] = (len(_e_cols), sum(1 for c in _e_cols if c in _cur_sel))
-                        with st.expander(f"🏷️ エンジンで選ぶ ({len(_avail_engines)}エンジン)", expanded=False):
-                            for _eng in _avail_engines:
-                                _e_total, _e_sel = _eng_counts[_eng]
-                                _e_cols = [c for c, e in _engine_map.items() if e == _eng and c in _precalc_df.columns]
-                                _ec1, _ec2, _ec3 = st.columns([2, 1, 1])
-                                with _ec1:
-                                    st.markdown(f"**{_eng}** ({_e_sel}/{_e_total})")
-                                with _ec2:
-                                    if _e_sel < _e_total:
-                                        if st.button("全追加", key=f"eng_add_{_eng}", use_container_width=True):
-                                            _cur_sel.update(_e_cols)
-                                            st.session_state["adv_desc"] = list(_cur_sel)
-                                            st.rerun()
-                                with _ec3:
-                                    if _e_sel > 0:
-                                        if st.button("全解除", key=f"eng_del_{_eng}", use_container_width=True):
-                                            _cur_sel -= set(_e_cols)
-                                            st.session_state["adv_desc"] = list(_cur_sel)
-                                            st.rerun()
-
-                    _sel_p3, _sel_p4 = st.columns(2)
-
-                    # ── パネル3: 相関係数で選ぶ ──
-                    with _sel_p3:
-                        _valid_corr = {k: v for k, v in _corr.items() if pd.notna(v) and v > 0}
-                        _top_corr = sorted(_valid_corr.items(), key=lambda x: -x[1])
-                        with st.expander(f"📈 相関係数で選ぶ (|r|上位)", expanded=False):
-                            if _top_corr:
-                                _corr_n = st.slider("上位N件を追加", 5, min(100, len(_top_corr)), 20, key="corr_top_n")
-                                _top_n_names = [k for k, _ in _top_corr[:_corr_n]]
-                                _n_already = sum(1 for n in _top_n_names if n in _cur_sel)
-                                st.dataframe(
-                                    pd.DataFrame([{
-                                        "✅": "✅" if n in _cur_sel else "—",
-                                        "記述子": n,
-                                        "|r|": round(v, 3),
-                                        "ソース": _engine_map.get(n, ""),
-                                    } for n, v in _top_corr[:_corr_n]]),
-                                    use_container_width=True, hide_index=True,
-                                    height=min(280, 35 + _corr_n * 35),
-                                )
-                                _cb1, _cb2 = st.columns(2)
-                                with _cb1:
-                                    if _n_already < _corr_n:
-                                        if st.button(f"✅ 上位{_corr_n}件追加", key="corr_add", type="primary", use_container_width=True):
-                                            _cur_sel.update(_top_n_names)
-                                            st.session_state["adv_desc"] = list(_cur_sel)
-                                            st.rerun()
-                                    else:
-                                        st.success("全件採用済み", icon="✅")
-                                with _cb2:
-                                    if _n_already > 0:
-                                        if st.button("解除", key="corr_del", use_container_width=True):
-                                            _cur_sel -= set(_top_n_names)
-                                            st.session_state["adv_desc"] = list(_cur_sel)
-                                            st.rerun()
-                            else:
-                                st.info("相関係数を算出できません（目的変数が数値でない等）")
-
-                    # ── パネル4: 数え上げ系で選ぶ ──
-                    with _sel_p4:
-                        _cnt_in_precalc = sorted(_count_descs & set(_precalc_df.columns))
-                        _n_cnt_sel = sum(1 for c in _cnt_in_precalc if c in _cur_sel)
-                        with st.expander(f"🔢 数え上げ系 ({_n_cnt_sel}/{len(_cnt_in_precalc)}採用中)", expanded=False):
-                            if _cnt_in_precalc:
-                                st.dataframe(
-                                    pd.DataFrame([{
-                                        "✅": "✅" if c in _cur_sel else "—",
-                                        "記述子": c,
-                                        "ソース": _engine_map.get(c, ""),
-                                        "意味": _meta.get(c, {}).get("meaning", ""),
-                                    } for c in _cnt_in_precalc]),
-                                    use_container_width=True, hide_index=True,
-                                    height=min(280, 35 + len(_cnt_in_precalc) * 35),
-                                )
-                                _cb1, _cb2 = st.columns(2)
-                                with _cb1:
-                                    if _n_cnt_sel < len(_cnt_in_precalc):
-                                        if st.button(f"✅ 全{len(_cnt_in_precalc)}件追加", key="cnt_add", type="primary", use_container_width=True):
-                                            _cur_sel.update(_cnt_in_precalc)
-                                            st.session_state["adv_desc"] = list(_cur_sel)
-                                            st.rerun()
-                                    else:
-                                        st.success("全件採用済み", icon="✅")
-                                with _cb2:
-                                    if _n_cnt_sel > 0:
-                                        if st.button("解除", key="cnt_del", use_container_width=True):
-                                            _cur_sel -= set(_cnt_in_precalc)
-                                            st.session_state["adv_desc"] = list(_cur_sel)
-                                            st.rerun()
-                            else:
-                                st.info("数え上げ系記述子なし")
-
-                    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                    # 統合テーブル（全記述子の一覧 + フィルタ）
-                    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                    st.markdown("---")
-                    st.markdown(f"### 📋 全記述子テーブル　"
-                                f"<span style='font-size:0.85em; color:#60a5fa'>{n_sel}個選択中 / 全{n_total}個</span>",
-                                unsafe_allow_html=True)
-
-                    _rows = []
+                    # 全記述子テーブルに使うデータを先に準備
+                    _rows_all = []
                     for c in _precalc_df.columns:
                         _r = _corr.get(c, float('nan'))
                         _m = _meta.get(c, {})
-                        _rows.append({
+                        _rows_all.append({
                             "✅": c in _cur_sel,
                             "★": "★" if c in _rec_names else "",
                             "記述子名": c,
@@ -1156,60 +980,225 @@ else:
                             "ユニーク数": int(_precalc_df[c].nunique(dropna=True)),
                             "意味": _m.get("meaning", ""),
                         })
-                    _rows.sort(key=lambda x: x["|r|"] if x["|r|"] is not None else -1, reverse=True)
+                    _rows_all.sort(key=lambda x: x["|r|"] if x["|r|"] is not None else -1, reverse=True)
 
-                    # フィルタ行（コンパクト）
-                    _ff1, _ff2, _ff3, _ff4 = st.columns([2, 1, 1, 2])
-                    with _ff1:
-                        _flt = st.pills("表示", ["全て", "選択中", "未選択", "推奨のみ"], default="全て", key="tbl_flt")
-                    with _ff2:
-                        _avail_engines_list = ["全て"] + sorted(set(_engine_map.values()))
-                        _flt_engine = st.selectbox("エンジン", _avail_engines_list, key="tbl_eng")
-                    with _ff3:
-                        _flt_corr = st.slider("|r|≥", 0.0, 1.0, 0.0, 0.01, key="tbl_corr")
-                    with _ff4:
-                        _srch = st.text_input("検索", key="tbl_srch", placeholder="記述子名で絞り込み")
+                    # 数え上げ系をprecalc_dfから検出
+                    _cnt_in_precalc = sorted(_count_descs & set(_precalc_df.columns))
+                    _n_cnt_sel = sum(1 for c in _cnt_in_precalc if c in _cur_sel)
 
-                    _tdf = pd.DataFrame(_rows)
-                    if _flt == "選択中":
-                        _tdf = _tdf[_tdf["✅"] == True]
-                    elif _flt == "未選択":
-                        _tdf = _tdf[_tdf["✅"] == False]
-                    elif _flt == "推奨のみ":
-                        _tdf = _tdf[_tdf["★"] == "★"]
-                    if _flt_engine != "全て":
-                        _tdf = _tdf[_tdf["ソース"] == _flt_engine]
-                    if _flt_corr > 0:
-                        _tdf = _tdf[_tdf["|r|"].fillna(0) >= _flt_corr]
-                    if _srch:
-                        _tdf = _tdf[_tdf["記述子名"].str.contains(_srch, case=False, na=False)]
+                    # エンジン別集計
+                    _avail_engines = sorted(set(_engine_map.values()))
+                    _eng_counts = {}
+                    for _e in _avail_engines:
+                        _e_cols = [c for c, e in _engine_map.items() if e == _e and c in _precalc_df.columns]
+                        _eng_counts[_e] = (len(_e_cols), sum(1 for c in _e_cols if c in _cur_sel))
 
-                    st.caption(f"表示中: {len(_tdf)}件")
+                    # 相関上位
+                    _valid_corr = {k: v for k, v in _corr.items() if pd.notna(v) and v > 0}
+                    _top_corr = sorted(_valid_corr.items(), key=lambda x: -x[1])
 
-                    _edited = st.data_editor(
-                        _tdf,
-                        column_config={
-                            "✅": st.column_config.CheckboxColumn("選択", default=False),
-                            "★": st.column_config.TextColumn("推奨", width="small"),
-                            "記述子名": st.column_config.TextColumn("記述子名", width="medium"),
-                            "ソース": st.column_config.TextColumn("エンジン", width="small"),
-                            "|r|": st.column_config.NumberColumn("|r|", format="%.3f", width="small"),
-                            "ユニーク数": st.column_config.NumberColumn("ユニーク", width="small"),
-                            "意味": st.column_config.TextColumn("物理的意味", width="large"),
-                        },
-                        disabled=["★", "記述子名", "ソース", "|r|", "ユニーク数", "意味"],
-                        use_container_width=True,
-                        hide_index=True,
-                        key="desc_editor_main",
-                        height=min(700, 40 + len(_tdf) * 35),
-                    )
+                    # タブ
+                    from backend.chem.recommender import get_all_target_recommendations as _get_all_recs_p
+                    all_recs = _get_all_recs_p()
+                    _matched_rec = rec
 
-                    if _edited is not None:
-                        _new_sel = set(_edited[_edited["✅"] == True]["記述子名"].tolist())
-                        _invisible = _cur_sel - set(_tdf["記述子名"].tolist())
-                        _final = _new_sel | _invisible
-                        if _final != _cur_sel:
-                            st.session_state["adv_desc"] = list(_final)
+                    _tab_preset, _tab_engine, _tab_corr, _tab_count, _tab_all = st.tabs([
+                        f"💡 推奨プリセット",
+                        f"🏷️ エンジン別 ({len(_avail_engines)})",
+                        f"📈 相関係数順 ({len(_top_corr)})",
+                        f"🔢 数え上げ系 ({len(_cnt_in_precalc)})",
+                        f"📋 全{n_total}記述子",
+                    ])
+
+                    # ── タブ1: 推奨プリセット ──
+                    with _tab_preset:
+                        if _matched_rec:
+                            _avail_rec = [d for d in _matched_rec.descriptors if d.name in _precalc_df.columns]
+                            _n_a = sum(1 for d in _avail_rec if d.name in _cur_sel)
+                            st.markdown(f"**{_matched_rec.target_name}** — {_matched_rec.summary}")
+                            if _avail_rec:
+                                st.dataframe(
+                                    pd.DataFrame([{
+                                        "✅": "✅" if d.name in _cur_sel else "—",
+                                        "記述子": d.name,
+                                        "意味": d.meaning,
+                                        "ソース": d.library,
+                                    } for d in _avail_rec]),
+                                    use_container_width=True, hide_index=True,
+                                    height=min(300, 35 + len(_avail_rec) * 35),
+                                )
+                                _rb1, _rb2 = st.columns(2)
+                                with _rb1:
+                                    if _n_a < len(_avail_rec):
+                                        if st.button(f"✅ 全{len(_avail_rec)}件追加", key="radd_matched", type="primary", use_container_width=True):
+                                            _cur_sel.update(d.name for d in _avail_rec)
+                                            st.session_state["adv_desc"] = list(_cur_sel)
+                                            st.rerun()
+                                    else:
+                                        st.success("全件採用済み", icon="✅")
+                                with _rb2:
+                                    if _n_a > 0:
+                                        if st.button("解除", key="rdel_matched", use_container_width=True):
+                                            _cur_sel -= {d.name for d in _avail_rec}
+                                            st.session_state["adv_desc"] = list(_cur_sel)
+                                            st.rerun()
+                            else:
+                                st.info("計算済み記述子に該当なし")
+
+                        # 他のプリセット
+                        _other_recs = [r for r in all_recs if not _matched_rec or r.target_name != _matched_rec.target_name]
+                        if _other_recs:
+                            st.markdown("---")
+                            for _or in _other_recs:
+                                _or_avail = [d for d in _or.descriptors if d.name in _precalc_df.columns]
+                                _or_n = sum(1 for d in _or_avail if d.name in _cur_sel)
+                                if _or_avail:
+                                    _oc1, _oc2 = st.columns([3, 1])
+                                    with _oc1:
+                                        st.markdown(f"**{_or.target_name}** ({_or_n}/{len(_or_avail)})")
+                                    with _oc2:
+                                        if _or_n < len(_or_avail):
+                                            if st.button("追加", key=f"radd_{_or.target_name}", use_container_width=True):
+                                                _cur_sel.update(d.name for d in _or_avail)
+                                                st.session_state["adv_desc"] = list(_cur_sel)
+                                                st.rerun()
+
+                    # ── タブ2: エンジン別 ──
+                    with _tab_engine:
+                        for _eng in _avail_engines:
+                            _e_total, _e_sel = _eng_counts[_eng]
+                            _e_cols = [c for c, e in _engine_map.items() if e == _eng and c in _precalc_df.columns]
+                            _ec1, _ec2, _ec3 = st.columns([3, 1, 1])
+                            with _ec1:
+                                st.markdown(f"**{_eng}** — {_e_sel}/{_e_total}個選択中")
+                            with _ec2:
+                                if _e_sel < _e_total:
+                                    if st.button("全追加", key=f"eng_add_{_eng}", use_container_width=True):
+                                        _cur_sel.update(_e_cols)
+                                        st.session_state["adv_desc"] = list(_cur_sel)
+                                        st.rerun()
+                            with _ec3:
+                                if _e_sel > 0:
+                                    if st.button("全解除", key=f"eng_del_{_eng}", use_container_width=True):
+                                        _cur_sel -= set(_e_cols)
+                                        st.session_state["adv_desc"] = list(_cur_sel)
+                                        st.rerun()
+
+                    # ── タブ3: 相関係数順 ──
+                    with _tab_corr:
+                        if _top_corr:
+                            _corr_n = st.slider("上位N件", 5, min(100, len(_top_corr)), 20, key="corr_top_n")
+                            _top_n_names = [k for k, _ in _top_corr[:_corr_n]]
+                            _n_already = sum(1 for n in _top_n_names if n in _cur_sel)
+                            st.dataframe(
+                                pd.DataFrame([{
+                                    "✅": "✅" if n in _cur_sel else "—",
+                                    "記述子": n,
+                                    "|r|": round(v, 3),
+                                    "ソース": _engine_map.get(n, ""),
+                                } for n, v in _top_corr[:_corr_n]]),
+                                use_container_width=True, hide_index=True,
+                                height=min(400, 35 + _corr_n * 35),
+                            )
+                            _cb1, _cb2 = st.columns(2)
+                            with _cb1:
+                                if _n_already < _corr_n:
+                                    if st.button(f"✅ 上位{_corr_n}件追加", key="corr_add", type="primary", use_container_width=True):
+                                        _cur_sel.update(_top_n_names)
+                                        st.session_state["adv_desc"] = list(_cur_sel)
+                                        st.rerun()
+                                else:
+                                    st.success("全件採用済み", icon="✅")
+                            with _cb2:
+                                if _n_already > 0:
+                                    if st.button("解除", key="corr_del", use_container_width=True):
+                                        _cur_sel -= set(_top_n_names)
+                                        st.session_state["adv_desc"] = list(_cur_sel)
+                                        st.rerun()
+                        else:
+                            st.info("相関係数を算出できません（目的変数が数値でない等）")
+
+                    # ── タブ4: 数え上げ系 ──
+                    with _tab_count:
+                        if _cnt_in_precalc:
+                            st.dataframe(
+                                pd.DataFrame([{
+                                    "✅": "✅" if c in _cur_sel else "—",
+                                    "記述子": c,
+                                    "ソース": _engine_map.get(c, ""),
+                                    "意味": _meta.get(c, {}).get("meaning", ""),
+                                } for c in _cnt_in_precalc]),
+                                use_container_width=True, hide_index=True,
+                                height=min(500, 35 + len(_cnt_in_precalc) * 35),
+                            )
+                            _cb1, _cb2 = st.columns(2)
+                            with _cb1:
+                                if _n_cnt_sel < len(_cnt_in_precalc):
+                                    if st.button(f"✅ 全{len(_cnt_in_precalc)}件追加", key="cnt_add", type="primary", use_container_width=True):
+                                        _cur_sel.update(_cnt_in_precalc)
+                                        st.session_state["adv_desc"] = list(_cur_sel)
+                                        st.rerun()
+                                else:
+                                    st.success("全件採用済み", icon="✅")
+                            with _cb2:
+                                if _n_cnt_sel > 0:
+                                    if st.button("解除", key="cnt_del", use_container_width=True):
+                                        _cur_sel -= set(_cnt_in_precalc)
+                                        st.session_state["adv_desc"] = list(_cur_sel)
+                                        st.rerun()
+                        else:
+                            st.info("数え上げ系記述子なし")
+
+
+                    # ── タブ5: 全記述子テーブル ──
+                    with _tab_all:
+                        # フィルタ行
+                        _ff1, _ff2, _ff3 = st.columns([2, 1, 3])
+                        with _ff1:
+                            _flt = st.pills("表示", ["全て", "選択中", "未選択", "推奨のみ"], default="全て", key="tbl_flt")
+                        with _ff2:
+                            _flt_corr = st.slider("|r|≥", 0.0, 1.0, 0.0, 0.01, key="tbl_corr")
+                        with _ff3:
+                            _srch = st.text_input("検索", key="tbl_srch", placeholder="記述子名で絞り込み")
+
+                        _tdf = pd.DataFrame(_rows_all)
+                        if _flt == "選択中":
+                            _tdf = _tdf[_tdf["✅"] == True]
+                        elif _flt == "未選択":
+                            _tdf = _tdf[_tdf["✅"] == False]
+                        elif _flt == "推奨のみ":
+                            _tdf = _tdf[_tdf["★"] == "★"]
+                        if _flt_corr > 0:
+                            _tdf = _tdf[_tdf["|r|"].fillna(0) >= _flt_corr]
+                        if _srch:
+                            _tdf = _tdf[_tdf["記述子名"].str.contains(_srch, case=False, na=False)]
+
+                        st.caption(f"表示中: {len(_tdf)}件 / 全{n_total}件（{n_sel}個選択中）")
+
+                        _edited = st.data_editor(
+                            _tdf,
+                            column_config={
+                                "✅": st.column_config.CheckboxColumn("選択", default=False),
+                                "★": st.column_config.TextColumn("推奨", width="small"),
+                                "記述子名": st.column_config.TextColumn("記述子名", width="medium"),
+                                "ソース": st.column_config.TextColumn("エンジン", width="small"),
+                                "|r|": st.column_config.NumberColumn("|r|", format="%.3f", width="small"),
+                                "ユニーク数": st.column_config.NumberColumn("ユニーク", width="small"),
+                                "意味": st.column_config.TextColumn("物理的意味", width="large"),
+                            },
+                            disabled=["★", "記述子名", "ソース", "|r|", "ユニーク数", "意味"],
+                            use_container_width=True,
+                            hide_index=True,
+                            key="desc_editor_main",
+                            height=min(700, 40 + len(_tdf) * 35),
+                        )
+
+                        if _edited is not None:
+                            _new_sel = set(_edited[_edited["✅"] == True]["記述子名"].tolist())
+                            _invisible = _cur_sel - set(_tdf["記述子名"].tolist())
+                            _final = _new_sel | _invisible
+                            if _final != _cur_sel:
+                                st.session_state["adv_desc"] = list(_final)
 
                     st.session_state.setdefault("adv_desc", list(_cur_sel))
 
