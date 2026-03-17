@@ -750,12 +750,19 @@ else:
                 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 # 全記述子の自動計算（ボタンなし・全エンジン自動）
                 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                _PRECALC_VERSION = 4  # プリセットUI全面修正
+                _PRECALC_VERSION = 5  # 列数チェック追加
                 _stored_ver = st.session_state.get("_precalc_version", 0)
                 if _stored_ver != _PRECALC_VERSION:
                     st.session_state["precalc_done"] = False
                     st.session_state["precalc_smiles_df"] = None
                     st.session_state["_precalc_version"] = _PRECALC_VERSION
+                    st.session_state["_desc_sets"] = None  # 古いセットもリセット
+
+                # 列数が少なすぎる場合も強制再計算（RDKit 222列なのに32列は異常）
+                _existing_df = st.session_state.get("precalc_smiles_df")
+                if _existing_df is not None and len(_existing_df.columns) < 50:
+                    st.session_state["precalc_done"] = False
+                    st.session_state["precalc_smiles_df"] = None
 
                 if not st.session_state.get("precalc_done", False):
                     from backend.chem.rdkit_adapter import RDKitAdapter
