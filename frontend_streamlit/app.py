@@ -750,7 +750,7 @@ else:
                 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 # 全記述子の自動計算（ボタンなし・全エンジン自動）
                 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                _PRECALC_VERSION = 3  # Mordred互換パッチ追加
+                _PRECALC_VERSION = 4  # プリセットUI全面修正
                 _stored_ver = st.session_state.get("_precalc_version", 0)
                 if _stored_ver != _PRECALC_VERSION:
                     st.session_state["precalc_done"] = False
@@ -778,6 +778,7 @@ else:
                             try:
                                 df_tmp = rdkit.compute(smiles_list).descriptors
                                 _calc_summary["RDKit"] = len(df_tmp.columns)
+                                df_tmp.index = range(n)  # インデックスを明示的に整合
                                 df_result = pd.concat([df_result, df_tmp], axis=1)
                             except Exception as e:
                                 st.warning(f"⚠️ RDKit記述子の計算中にエラー: {e}")
