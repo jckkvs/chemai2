@@ -764,15 +764,16 @@ else:
 
                     rdkit = RDKitAdapter(compute_fp=False)
                     df_result = pd.DataFrame(index=range(n))
+                    _calc_summary = {}  # エンジン別の計算結果サマリ
 
                     with st.spinner("全RDKit記述子を計算中..."):
                         if rdkit.is_available():
                             try:
-                                all_rdkit_names = rdkit.get_descriptor_names()
-                                df_tmp = rdkit.compute(smiles_list, selected_descriptors=all_rdkit_names).descriptors
+                                df_tmp = rdkit.compute(smiles_list).descriptors
+                                _calc_summary["RDKit"] = len(df_tmp.columns)
                                 df_result = pd.concat([df_result, df_tmp], axis=1)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                st.warning(f"⚠️ RDKit記述子の計算中にエラー: {e}")
 
                     with st.spinner("Mordred記述子を計算中..."):
                         try:
@@ -784,8 +785,9 @@ else:
                                     _new_cols = [c for c in _mord_res.descriptors.columns if c not in df_result.columns]
                                     if _new_cols:
                                         df_result = pd.concat([df_result, _mord_res.descriptors[_new_cols]], axis=1)
-                        except Exception:
-                            pass
+                                        _calc_summary["Mordred"] = len(_new_cols)
+                        except Exception as e:
+                            st.warning(f"⚠️ Mordred記述子の計算中にエラー: {e}")
 
                     with st.spinner("原子団寄与法記述子を計算中..."):
                         try:
@@ -797,8 +799,9 @@ else:
                                     _new_cols = [c for c in _gca_res.descriptors.columns if c not in df_result.columns]
                                     if _new_cols:
                                         df_result = pd.concat([df_result, _gca_res.descriptors[_new_cols]], axis=1)
-                        except Exception:
-                            pass
+                                        _calc_summary["GroupContrib"] = len(_new_cols)
+                        except Exception as e:
+                            st.warning(f"⚠️ GroupContrib記述子の計算中にエラー: {e}")
 
                     # MolAI CNN (デフォルト PCA次元=6)
                     try:
@@ -818,8 +821,8 @@ else:
                                         "ratio": _evr.tolist(), "cumulative": _evr.cumsum().tolist(),
                                         "n_components": _molai_n_pre,
                                     }
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        st.warning(f"⚠️ MolAI記述子の計算中にエラー: {e}")
 
                     # XTB (利用可能なら)
                     try:
@@ -832,8 +835,8 @@ else:
                                     _new_cols = [c for c in _xtb_res.descriptors.columns if c not in df_result.columns]
                                     if _new_cols:
                                         df_result = pd.concat([df_result, _xtb_res.descriptors[_new_cols]], axis=1)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        st.warning(f"⚠️ XTB記述子の計算中にエラー: {e}")
 
                     # UniPKa (利用可能なら)
                     try:
@@ -846,8 +849,8 @@ else:
                                     _new_cols = [c for c in _upka_res.descriptors.columns if c not in df_result.columns]
                                     if _new_cols:
                                         df_result = pd.concat([df_result, _upka_res.descriptors[_new_cols]], axis=1)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        st.warning(f"⚠️ UniPKa記述子の計算中にエラー: {e}")
 
                     # COSMO-RS (利用可能なら)
                     try:
@@ -860,14 +863,29 @@ else:
                                     _new_cols = [c for c in _cosmo_res.descriptors.columns if c not in df_result.columns]
                                     if _new_cols:
                                         df_result = pd.concat([df_result, _cosmo_res.descriptors[_new_cols]], axis=1)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        st.warning(f"⚠️ COSMO-RS記述子の計算中にエラー: {e}")
 
                     # クリーンアップ
                     df_result = df_result.loc[:, ~df_result.columns.duplicated()]
                     df_result.index = valid_idx
                     df_result = df_result.apply(pd.to_numeric, errors="coerce").convert_dtypes()
+                    _n_before_drop = len(df_result.columns)
                     df_result = df_result.dropna(axis=1, how="all")
+                    _n_dropped = _n_before_drop - len(df_result.columns)
+
+                    # MolAI列のサマリ追加
+                    _molai_cols = [c for c in df_result.columns if c.startswith("molai_") or c.startswith("MolAI_")]
+                    if _molai_cols:
+                        _calc_summary["MolAI"] = len(_molai_cols)
+
+                    # 計算結果サマリ表示
+                    _summary_parts = [f"{eng}: {cnt}個" for eng, cnt in _calc_summary.items()]
+                    st.success(
+                        f"✅ **{len(df_result.columns)}個**の記述子を計算完了"
+                        f"（{', '.join(_summary_parts)}）"
+                        + (f" — {_n_dropped}列をNaNにより除外" if _n_dropped > 0 else "")
+                    )
 
                     # 推奨記述子を初期選択に設定
                     rec = _get_rec(target_col_sf)
@@ -962,6 +980,78 @@ else:
                             _count_descs.add(c)
 
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    # 記述子セットの登録・比較（選択の前に配置）
+                    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    # セットの初期化
+                    if "_desc_sets" not in st.session_state:
+                        _universal = [d for d in [
+                            "MolWt","MolLogP","TPSA","NumHAcceptors","NumHDonors",
+                            "NumRotatableBonds","RingCount","NumAromaticRings",
+                            "FractionCSP3","HeavyAtomCount","MolMR","qed",
+                            "BertzCT","MaxPartialCharge","MinPartialCharge",
+                            "LabuteASA",
+                        ] if d in (_precalc_df.columns if _precalc_df is not None else [])]
+                        _molai_cols = [c for c in (_precalc_df.columns if _precalc_df is not None else []) if c.startswith("MolAI_") or c.startswith("molai_")]
+                        _defaults = {}
+                        if _universal:
+                            _defaults["汎用基本セット"] = _universal
+                        if _molai_cols:
+                            _defaults["MolAI PCA"] = _molai_cols
+                        st.session_state["_desc_sets"] = _defaults
+                    _desc_sets = st.session_state["_desc_sets"]
+
+                    with st.expander(f"📋 記述子セットの登録・比較（{len(_desc_sets)}セット登録済み）", expanded=False):
+                        st.caption(
+                            "💡 **保存しなくても、下で選択した記述子でそのまま解析できます。**\n\n"
+                            "保存すると、複数の記述子セットを名前付きで管理でき、パイプライン実行時に全セットを一括比較できます。"
+                        )
+                        # 現在のセットを保存
+                        _sc1, _sc2 = st.columns([3, 1])
+                        with _sc1:
+                            _set_name = st.text_input(
+                                "セット名", value="", key="desc_set_name",
+                                placeholder="例: 推奨+MolAI、XTBのみ、全記述子",
+                            )
+                        with _sc2:
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            if st.button("💾 保存", key="btn_save_set", type="primary", use_container_width=True):
+                                _final_name = _set_name.strip()
+                                if not _final_name:
+                                    _n = len(_desc_sets) + 1
+                                    while f"セット{_n}" in _desc_sets:
+                                        _n += 1
+                                    _final_name = f"セット{_n}"
+                                _desc_sets[_final_name] = list(st.session_state.get("adv_desc", []))
+                                st.session_state["_desc_sets"] = _desc_sets
+                                st.success(f"✅ セット「{_final_name}」を保存しました（{len(st.session_state.get('adv_desc', []))}個）")
+                                st.rerun()
+
+                        # 登録済みセット一覧
+                        if _desc_sets:
+                            for _sname, _sdescs in _desc_sets.items():
+                                _sc_a, _sc_b, _sc_c = st.columns([4, 1, 1])
+                                with _sc_a:
+                                    st.markdown(f"**{_sname}** — {len(_sdescs)}個")
+                                with _sc_b:
+                                    if st.button("読込", key=f"load_set_{_sname}", use_container_width=True):
+                                        st.session_state["adv_desc"] = _sdescs
+                                        st.rerun()
+                                with _sc_c:
+                                    if st.button("🗑️", key=f"del_set_{_sname}", use_container_width=True):
+                                        del _desc_sets[_sname]
+                                        st.session_state["_desc_sets"] = _desc_sets
+                                        st.rerun()
+
+                            # 一括比較フラグ
+                            _use_multi = st.checkbox(
+                                "🔄 パイプライン実行時に全登録セットを一括比較する",
+                                value=st.session_state.get("_use_multi_desc_sets", False),
+                                key="chk_multi_desc",
+                                help="ONにすると各記述子セットで個別にモデルを構築し比較。実行時間は約{len(_desc_sets)}倍。",
+                            )
+                            st.session_state["_use_multi_desc_sets"] = _use_multi
+
+                    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                     # 記述子の選択（st.tabs: 推奨/エンジン/相関/数え上げ/全テーブル）
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                     st.markdown("---")
@@ -1045,23 +1135,30 @@ else:
                             else:
                                 st.info("計算済み記述子に該当なし")
 
-                        # 他のプリセット
+                        # 他のプリセット（カテゴリ別にグループ化）
                         _other_recs = [r for r in all_recs if not _matched_rec or r.target_name != _matched_rec.target_name]
                         if _other_recs:
                             st.markdown("---")
+                            # カテゴリでグループ化
+                            _cat_groups: dict[str, list] = {}
                             for _or in _other_recs:
-                                _or_avail = [d for d in _or.descriptors if d.name in _precalc_df.columns]
-                                _or_n = sum(1 for d in _or_avail if d.name in _cur_sel)
-                                if _or_avail:
-                                    _oc1, _oc2 = st.columns([3, 1])
-                                    with _oc1:
-                                        st.markdown(f"**{_or.target_name}** ({_or_n}/{len(_or_avail)})")
-                                    with _oc2:
-                                        if _or_n < len(_or_avail):
-                                            if st.button("追加", key=f"radd_{_or.target_name}", use_container_width=True):
-                                                _cur_sel.update(d.name for d in _or_avail)
-                                                st.session_state["adv_desc"] = list(_cur_sel)
-                                                st.rerun()
+                                _cat = getattr(_or, 'category', 'その他')
+                                _cat_groups.setdefault(_cat, []).append(_or)
+                            for _cat_name, _cat_recs in _cat_groups.items():
+                                st.markdown(f"**{_cat_name}**")
+                                for _or in _cat_recs:
+                                    _or_avail = [d for d in _or.descriptors if d.name in _precalc_df.columns]
+                                    _or_n = sum(1 for d in _or_avail if d.name in _cur_sel)
+                                    if _or_avail:
+                                        _oc1, _oc2 = st.columns([3, 1])
+                                        with _oc1:
+                                            st.caption(f"{_or.target_name} ({_or_n}/{len(_or_avail)})")
+                                        with _oc2:
+                                            if _or_n < len(_or_avail):
+                                                if st.button("追加", key=f"radd_{_or.target_name}", use_container_width=True):
+                                                    _cur_sel.update(d.name for d in _or_avail)
+                                                    st.session_state["adv_desc"] = list(_cur_sel)
+                                                    st.rerun()
 
                     # ── タブ2: エンジン別 ──
                     with _tab_engine:
@@ -1281,145 +1378,7 @@ else:
                                 st.session_state["precalc_smiles_df"] = None
                                 st.rerun()
 
-                    # ── 記述子セット登録（複数セットを比較試行） ──
-                    st.markdown("---")
-                    st.markdown("### 📋 記述子セットの登録・比較")
-                    st.caption(
-                        "💡 **保存しなくても、上で選択した記述子でそのまま解析できます。**\n\n"
-                        "保存すると、複数の記述子セットを名前付きで管理でき、パイプライン実行時に全セットを一括比較できます。"
-                    )
 
-                    # セットの初期化（デフォルトで汎用セット + MolAIを登録）
-                    if "_desc_sets" not in st.session_state:
-                        _universal = [d for d in [
-                            "MolWt","MolLogP","TPSA","NumHAcceptors","NumHDonors",
-                            "NumRotatableBonds","RingCount","NumAromaticRings",
-                            "FractionCSP3","HeavyAtomCount","MolMR","qed",
-                            "BertzCT","MaxPartialCharge","MinPartialCharge",
-                            "LabuteASA","TPSA",
-                        ] if d in (_precalc_df.columns if _precalc_df is not None else [])]
-                        _molai_cols = [c for c in (_precalc_df.columns if _precalc_df is not None else []) if c.startswith("MolAI_") or c.startswith("molai_")]
-                        _defaults = {}
-                        if _universal:
-                            _defaults["汎用基本セット"] = _universal
-                        if _molai_cols:
-                            _defaults["MolAI PCA"] = _molai_cols
-                        st.session_state["_desc_sets"] = _defaults
-
-                    _desc_sets = st.session_state["_desc_sets"]
-
-                    # 現在の選択を保存
-                    _sc1, _sc2 = st.columns([3, 1])
-                    with _sc1:
-                        _set_name = st.text_input(
-                            "セット名", value="", key="desc_set_name",
-                            placeholder="例: 推奨+MolAI、XTBのみ、全記述子 等",
-                        )
-                    with _sc2:
-                        st.markdown("<br>", unsafe_allow_html=True)
-                        if st.button("💾 現在の選択を保存", key="btn_save_set", type="primary"):
-                            _final_name = _set_name.strip()
-                            if not _final_name:
-                                _n = len(_desc_sets) + 1
-                                while f"セット{_n}" in _desc_sets:
-                                    _n += 1
-                                _final_name = f"セット{_n}"
-                            _desc_sets[_final_name] = list(st.session_state.get("adv_desc", []))
-                            st.session_state["_desc_sets"] = _desc_sets
-                            st.success(f"✅ セット「{_final_name}」を保存しました（{len(st.session_state.get('adv_desc', []))}個）")
-                            st.rerun()
-
-                    # クイック登録ショートカット
-                    with st.expander("⚡ よく使うセットを一括登録", expanded=True):
-                        st.caption("エンジンやカテゴリに基づくセットをワンクリックで登録できます。")
-                        _qc1, _qc2, _qc3 = st.columns(3)
-
-                        # RDKit記述子のみ
-                        with _qc1:
-                            if st.button("RDKit記述子のみ", key="quick_rdkit"):
-                                try:
-                                    from backend.chem import RDKitAdapter as _QR
-                                    _qr = _QR(compute_fp=False)
-                                    _qr_names = [n for n in _qr.get_descriptor_names() if n in _precalc_df.columns] if _qr.is_available() else []
-                                    _desc_sets["RDKit記述子のみ"] = _qr_names
-                                    st.session_state["_desc_sets"] = _desc_sets
-                                    st.rerun()
-                                except Exception:
-                                    pass
-
-                        # MolAIのみ
-                        with _qc2:
-                            if st.button("MolAIのみ", key="quick_molai"):
-                                _molai_cols = [c for c in _precalc_df.columns if c.startswith("MolAI_") or c.startswith("molai_")]
-                                _desc_sets["MolAIのみ"] = _molai_cols
-                                st.session_state["_desc_sets"] = _desc_sets
-                                st.rerun()
-
-                        # 推奨記述子のみ
-                        with _qc3:
-                            if rec:
-                                if st.button(f"推奨（{rec.target_name}）", key="quick_rec"):
-                                    _rec_n = [d.name for d in rec.descriptors if d.name in _precalc_df.columns]
-                                    _desc_sets[f"推奨（{rec.target_name}）"] = _rec_n
-                                    st.session_state["_desc_sets"] = _desc_sets
-                                    st.rerun()
-
-                        _qc4, _qc5, _qc6 = st.columns(3)
-                        with _qc4:
-                            if st.button("推奨 + MolAI", key="quick_rec_molai"):
-                                _combined = list(set(
-                                    [d.name for d in rec.descriptors if d.name in _precalc_df.columns] if rec else []
-                                ) | set(c for c in _precalc_df.columns if c.startswith("MolAI_") or c.startswith("molai_")))
-                                _desc_sets["推奨 + MolAI"] = _combined
-                                st.session_state["_desc_sets"] = _desc_sets
-                                st.rerun()
-
-                        with _qc5:
-                            if st.button("全記述子", key="quick_all"):
-                                _desc_sets["全記述子"] = list(_precalc_df.columns)
-                                st.session_state["_desc_sets"] = _desc_sets
-                                st.rerun()
-
-                        with _qc6:
-                            if st.button("|r| 上位30件", key="quick_top30"):
-                                _sorted_by_r = sorted(
-                                    [(c, abs(_corr.get(c, 0)) if pd.notna(_corr.get(c, 0)) else 0) for c in _precalc_df.columns],
-                                    key=lambda x: x[1], reverse=True
-                                )
-                                _desc_sets["|r| 上位30件"] = [c for c, _ in _sorted_by_r[:30]]
-                                st.session_state["_desc_sets"] = _desc_sets
-                                st.rerun()
-
-                    # 登録済みセット一覧
-                    if _desc_sets:
-                        st.markdown("#### 登録済みセット")
-                        for _sname, _sdescs in _desc_sets.items():
-                            _sc_a, _sc_b, _sc_c = st.columns([4, 1, 1])
-                            with _sc_a:
-                                st.markdown(
-                                    f"**{_sname}** — {len(_sdescs)}個の記述子",
-                                )
-                            with _sc_b:
-                                if st.button("読込", key=f"load_set_{_sname}"):
-                                    st.session_state["adv_desc"] = _sdescs
-                                    st.rerun()
-                            with _sc_c:
-                                if st.button("🗑️", key=f"del_set_{_sname}"):
-                                    del _desc_sets[_sname]
-                                    st.session_state["_desc_sets"] = _desc_sets
-                                    st.rerun()
-
-                        # 一括比較フラグ
-                        st.markdown("---")
-                        _use_multi = st.checkbox(
-                            "🔄 パイプライン実行時に全登録セットを一括比較する",
-                            value=st.session_state.get("_use_multi_desc_sets", False),
-                            key="chk_multi_desc",
-                            help="ONにすると、パイプライン実行時に各記述子セットで個別にモデルを構築・評価し、結果を比較できます。",
-                        )
-                        st.session_state["_use_multi_desc_sets"] = _use_multi
-                        if _use_multi:
-                            st.info(f"✅ {len(_desc_sets)}セットを一括比較します。パイプライン実行時間は約{len(_desc_sets)}倍になります。")
 
         # ══════════════════════════════════════════════════════════════
         # サブタブ3: SMILES特徴量設計
