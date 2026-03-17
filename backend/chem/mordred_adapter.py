@@ -16,11 +16,25 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+# ── NumPy 2.0 互換パッチ ──
+# mordredはnumpy.product等(NumPy 1.x系エイリアス)を使用しているが、
+# NumPy 2.0でこれらが削除されたため、モンキーパッチで復元する。
+_NP_COMPAT_ALIASES = {
+    "product": "prod",
+    "cumproduct": "cumprod",
+    "sometrue": "any",
+    "alltrue": "all",
+}
+for _alias, _real in _NP_COMPAT_ALIASES.items():
+    if not hasattr(np, _alias):
+        setattr(np, _alias, getattr(np, _real))
+
 from backend.chem.base import BaseChemAdapter, DescriptorResult
 from backend.utils.optional_import import safe_import
 
 _rdkit = safe_import("rdkit", "rdkit")
 logger = logging.getLogger(__name__)
+
 
 
 class MordredAdapter(BaseChemAdapter):
@@ -160,8 +174,9 @@ class MordredAdapter(BaseChemAdapter):
                 mols.append(mol)
 
         try:
-            # Mordredは失敗分子をNaNとして処理できる
-            df_all = calc.pandas([m for m in mols if m is not None])
+            # nproc=1: NumPy 2.0互換パッチがサブプロセスに届かないため、
+            # シングルプロセスで計算する
+            df_all = calc.pandas([m for m in mols if m is not None], nproc=1)
         except Exception as e:
             logger.error(f"MordredAdapter: 計算中にエラーが発生しました: {e}")
             # フォールバック: 全てNaN

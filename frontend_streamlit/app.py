@@ -750,7 +750,7 @@ else:
                 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 # 全記述子の自動計算（ボタンなし・全エンジン自動）
                 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                _PRECALC_VERSION = 2  # コード変更時にインクリメントして自動再計算
+                _PRECALC_VERSION = 3  # Mordred互換パッチ追加
                 _stored_ver = st.session_state.get("_precalc_version", 0)
                 if _stored_ver != _PRECALC_VERSION:
                     st.session_state["precalc_done"] = False
