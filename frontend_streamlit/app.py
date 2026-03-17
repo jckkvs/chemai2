@@ -962,35 +962,26 @@ else:
                             _count_descs.add(c)
 
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                    # 4つの並列・独立・非排他的な選択パネル
+                    # 記述子の追加方法（4パネル）
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                     st.markdown("---")
-                    st.markdown(
-                        "以下の4つの方法は**独立かつ非排他的**です。"
-                        "複数の方法で同時に記述子を追加できます。"
-                    )
 
                     _sel_p1, _sel_p2 = st.columns(2)
 
-                    # ── パネル1: 推奨プリセットから選ぶ ──
+                    # ── パネル1: 推奨プリセット ──
                     with _sel_p1:
                         from backend.chem.recommender import (
                             get_all_target_recommendations as _get_all_recs_p,
                         )
-                        _n_rec_adopted = sum(1 for d in _rec_names if d in _cur_sel)
-                        with st.expander(f"💡 推奨プリセット ({_n_rec_adopted}/{len(_rec_names)}採用中)", expanded=bool(rec)):
-                            all_recs = _get_all_recs_p()
-                            _rec_target = st.selectbox(
-                                "目的変数のプリセットを選択",
-                                [r.target_name for r in all_recs],
-                                index=next((i for i, r in enumerate(all_recs) if r.target_name == (rec.target_name if rec else "")), 0),
-                                key="sel_rec_preset",
-                            )
-                            _sel_rec = next((r for r in all_recs if r.target_name == _rec_target), None)
-                            if _sel_rec:
-                                st.caption(_sel_rec.summary)
-                                _avail_rec = [d for d in _sel_rec.descriptors if d.name in _precalc_df.columns]
-                                _n_a = sum(1 for d in _avail_rec if d.name in _cur_sel)
+                        all_recs = _get_all_recs_p()
+                        # 自動マッチしたプリセットを直接表示（クリック不要）
+                        _matched_rec = rec  # 目的変数名から自動マッチ済み
+                        if _matched_rec:
+                            _avail_rec = [d for d in _matched_rec.descriptors if d.name in _precalc_df.columns]
+                            _n_a = sum(1 for d in _avail_rec if d.name in _cur_sel)
+                            _n_rec_adopted = _n_a
+                            with st.expander(f"💡 推奨: {_matched_rec.target_name} ({_n_a}/{len(_avail_rec)}採用中)", expanded=True):
+                                st.caption(_matched_rec.summary)
                                 if _avail_rec:
                                     st.dataframe(
                                         pd.DataFrame([{
@@ -1005,7 +996,7 @@ else:
                                     _rb1, _rb2 = st.columns(2)
                                     with _rb1:
                                         if _n_a < len(_avail_rec):
-                                            if st.button(f"✅ 全{len(_avail_rec)}件追加", key=f"radd_{_rec_target}", type="primary", use_container_width=True):
+                                            if st.button(f"✅ 全{len(_avail_rec)}件追加", key="radd_matched", type="primary", use_container_width=True):
                                                 _cur_sel.update(d.name for d in _avail_rec)
                                                 st.session_state["adv_desc"] = list(_cur_sel)
                                                 st.rerun()
@@ -1013,12 +1004,36 @@ else:
                                             st.success("全件採用済み", icon="✅")
                                     with _rb2:
                                         if _n_a > 0:
-                                            if st.button("解除", key=f"rdel_{_rec_target}", use_container_width=True):
+                                            if st.button("解除", key="rdel_matched", use_container_width=True):
                                                 _cur_sel -= {d.name for d in _avail_rec}
                                                 st.session_state["adv_desc"] = list(_cur_sel)
                                                 st.rerun()
                                 else:
                                     st.info("計算済み記述子に該当なし")
+                            # 他のプリセット（必要な人だけ開く）
+                            _other_recs = [r for r in all_recs if r.target_name != _matched_rec.target_name]
+                            if _other_recs:
+                                with st.expander(f"他のプリセットを見る ({len(_other_recs)}件)", expanded=False):
+                                    for _or in _other_recs:
+                                        _or_avail = [d for d in _or.descriptors if d.name in _precalc_df.columns]
+                                        _or_n = sum(1 for d in _or_avail if d.name in _cur_sel)
+                                        if _or_avail and _or_n < len(_or_avail):
+                                            if st.button(f"＋ {_or.target_name} ({_or_n}/{len(_or_avail)})", key=f"radd_{_or.target_name}", use_container_width=True):
+                                                _cur_sel.update(d.name for d in _or_avail)
+                                                st.session_state["adv_desc"] = list(_cur_sel)
+                                                st.rerun()
+                                        elif _or_avail:
+                                            st.markdown(f"✅ {_or.target_name} ({_or_n}/{len(_or_avail)})")
+                        else:
+                            with st.expander("💡 推奨プリセット", expanded=False):
+                                for _or in all_recs:
+                                    _or_avail = [d for d in _or.descriptors if d.name in _precalc_df.columns]
+                                    _or_n = sum(1 for d in _or_avail if d.name in _cur_sel)
+                                    if _or_avail and _or_n < len(_or_avail):
+                                        if st.button(f"＋ {_or.target_name} ({_or_n}/{len(_or_avail)})", key=f"radd_{_or.target_name}", use_container_width=True):
+                                            _cur_sel.update(d.name for d in _or_avail)
+                                            st.session_state["adv_desc"] = list(_cur_sel)
+                                            st.rerun()
 
                     # ── パネル2: エンジンで選ぶ ──
                     with _sel_p2:
