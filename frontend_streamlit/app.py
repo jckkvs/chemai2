@@ -1103,41 +1103,51 @@ else:
 
                     # ── タブ1: 推奨プリセット ──
                     with _tab_preset:
+                        # マッチした推奨プリセット（目的変数に対応）
                         if _matched_rec:
                             _avail_rec = [d for d in _matched_rec.descriptors if d.name in _precalc_df.columns]
+                            _unavail_rec = [d for d in _matched_rec.descriptors if d.name not in _precalc_df.columns]
                             _n_a = sum(1 for d in _avail_rec if d.name in _cur_sel)
-                            st.markdown(f"**{_matched_rec.target_name}** — {_matched_rec.summary}")
+                            st.markdown(f"**🎯 {_matched_rec.target_name}**（目的変数に対応）")
+                            st.caption(_matched_rec.summary)
                             if _avail_rec:
                                 st.dataframe(
                                     pd.DataFrame([{
-                                        "✅": "✅" if d.name in _cur_sel else "—",
-                                        "記述子": d.name,
-                                        "意味": d.meaning,
+                                        "選択": "✅" if d.name in _cur_sel else "—",
+                                        "記述子名": d.name,
+                                        "物理的意味": d.meaning,
                                         "ソース": d.library,
+                                        "分類": d.category,
                                     } for d in _avail_rec]),
                                     use_container_width=True, hide_index=True,
                                     height=min(300, 35 + len(_avail_rec) * 35),
                                 )
+                                if _unavail_rec:
+                                    _unames = ", ".join(f"{d.name}({d.library})" for d in _unavail_rec)
+                                    st.caption(f"⚠️ 未計算のため未表示: {_unames}")
                                 _rb1, _rb2 = st.columns(2)
                                 with _rb1:
                                     if _n_a < len(_avail_rec):
-                                        _n_new = len(_avail_rec) - _n_a
-                                        if st.button(f"✅ {_matched_rec.target_name}の{len(_avail_rec)}件を追加（新規{_n_new}件）", key="radd_matched", type="primary", use_container_width=True):
+                                        _missing = [d.name for d in _avail_rec if d.name not in _cur_sel]
+                                        _btn_label = f"✅ {len(_missing)}個を追加: {', '.join(_missing)}"
+                                        if st.button(_btn_label, key="radd_matched", type="primary", use_container_width=True):
                                             _cur_sel.update(d.name for d in _avail_rec)
                                             st.session_state["adv_desc"] = list(_cur_sel)
                                             st.rerun()
                                     else:
-                                        st.success(f"{_matched_rec.target_name}: 全件採用済み", icon="✅")
+                                        st.success(f"{_matched_rec.target_name}: 全{len(_avail_rec)}件採用済み", icon="✅")
                                 with _rb2:
                                     if _n_a > 0:
-                                        if st.button("解除", key="rdel_matched", use_container_width=True):
+                                        _sel_names = [d.name for d in _avail_rec if d.name in _cur_sel]
+                                        _del_label = f"❌ {len(_sel_names)}個を解除: {', '.join(_sel_names)}"
+                                        if st.button(_del_label, key="rdel_matched", use_container_width=True):
                                             _cur_sel -= {d.name for d in _avail_rec}
                                             st.session_state["adv_desc"] = list(_cur_sel)
                                             st.rerun()
                             else:
                                 st.info("計算済み記述子に該当なし")
 
-                        # 他のプリセット（カテゴリ別にグループ化 — expander可）
+                        # 他のプリセット（カテゴリ別 — expander可）
                         _other_recs = [r for r in all_recs if not _matched_rec or r.target_name != _matched_rec.target_name]
                         if _other_recs:
                             st.markdown("---")
@@ -1146,7 +1156,6 @@ else:
                                 _cat = getattr(_or, 'category', 'その他')
                                 _cat_groups.setdefault(_cat, []).append(_or)
                             for _cat_name, _cat_recs in _cat_groups.items():
-                                # カテゴリ別の選択状況をサマリ表示
                                 _cat_total = 0; _cat_sel = 0
                                 for _or in _cat_recs:
                                     _or_a = [d for d in _or.descriptors if d.name in _precalc_df.columns]
@@ -1157,16 +1166,28 @@ else:
                                         _or_avail = [d for d in _or.descriptors if d.name in _precalc_df.columns]
                                         _or_n = sum(1 for d in _or_avail if d.name in _cur_sel)
                                         if _or_avail:
-                                            _oc1, _oc2 = st.columns([3, 1])
+                                            _desc_names_str = ", ".join(d.name for d in _or_avail)
+                                            st.markdown(f"**{_or.target_name}** ({_or_n}/{len(_or_avail)})")
+                                            st.caption(f"記述子: {_desc_names_str}")
+                                            _oc1, _oc2 = st.columns(2)
                                             with _oc1:
-                                                st.caption(f"{_or.target_name} ({_or_n}/{len(_or_avail)})")
-                                            with _oc2:
                                                 if _or_n < len(_or_avail):
-                                                    _n_new_or = len(_or_avail) - _or_n
-                                                    if st.button(f"{_n_new_or}個追加", key=f"radd_{_or.target_name}", use_container_width=True):
+                                                    _or_missing = [d.name for d in _or_avail if d.name not in _cur_sel]
+                                                    _or_btn = f"✅ {len(_or_missing)}個追加: {', '.join(_or_missing[:4])}"
+                                                    if len(_or_missing) > 4:
+                                                        _or_btn += "..."
+                                                    if st.button(_or_btn, key=f"radd_{_or.target_name}", use_container_width=True):
                                                         _cur_sel.update(d.name for d in _or_avail)
                                                         st.session_state["adv_desc"] = list(_cur_sel)
                                                         st.rerun()
+                                            with _oc2:
+                                                if _or_n > 0:
+                                                    _or_sel = [d.name for d in _or_avail if d.name in _cur_sel]
+                                                    if st.button(f"❌ {len(_or_sel)}個解除", key=f"rdel_{_or.target_name}", use_container_width=True):
+                                                        _cur_sel -= {d.name for d in _or_avail}
+                                                        st.session_state["adv_desc"] = list(_cur_sel)
+                                                        st.rerun()
+
 
                     # ── タブ2: エンジン別 ──
                     with _tab_engine:
