@@ -109,4 +109,49 @@ __all__ = [
     "Mol2VecAdapter",
     "MolfeatAdapter",
     "ChempropAdapter",
+    "get_available_adapters",
+    "ADAPTER_REGISTRY",
 ]
+
+
+# ── アダプターレジストリ ─────────────────────────
+ADAPTER_REGISTRY: dict[str, type] = {
+    "RDKit": RDKitAdapter,
+    "Mordred": MordredAdapter,
+    "scikit-FP": SkfpAdapter,
+    "Mol2Vec": Mol2VecAdapter,
+    "GroupContrib": GroupContribAdapter,
+    "MolAI": MolAIAdapter,
+    "UMA": UMAAdapter,
+    "PaDEL": PaDELAdapter,
+    "DescriptaStorus": DescriptaStorusAdapter,
+    "Molfeat": MolfeatAdapter,
+    "Chemprop": ChempropAdapter,
+    "XTB": XTBAdapter,
+    "COSMO": CosmoAdapter,
+    "UniPKa": UniPkaAdapter,
+}
+
+
+def get_available_adapters() -> dict[str, type]:
+    """インストール済みで利用可能なアダプターのみを返す。
+
+    Returns
+    -------
+    dict[str, type]
+        {エンジン名: アダプタークラス} の辞書。
+        is_available() が True を返すもののみ含む。
+    """
+    result = {}
+    for name, cls in ADAPTER_REGISTRY.items():
+        try:
+            instance = cls()
+            if hasattr(instance, "is_available") and instance.is_available():
+                result[name] = cls
+            elif not hasattr(instance, "is_available"):
+                # is_available メソッドがない → 利用可能とみなす
+                result[name] = cls
+        except Exception:
+            pass
+    return result
+

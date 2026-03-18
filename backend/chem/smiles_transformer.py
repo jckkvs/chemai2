@@ -123,6 +123,8 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
             return pd.DataFrame()
             
         X_chem = pd.concat(desc_dfs, axis=1)
+        # 重複列名を除去（RDKitとMordredの両方で計算される記述子があるため）
+        X_chem = X_chem.loc[:, ~X_chem.columns.duplicated()]
         
         # 選択されている場合はフィルタリング (PSMILES時はスキップ)
         if self.selected_descriptors and not has_psmiles:
@@ -225,9 +227,9 @@ def progressive_precalculate(smiles_list: list[str], target_col_name: str = ""):
 
     # --- ステップ3: 意味のある主要記述子 (厳選12個) ---
     CURATED_DESCRIPTORS = [
-        "MolWt", "LogP", "TPSA", "HBA", "HBD",
-        "RotBonds", "RingCount", "AromaticRingCount",
-        "FractionCSP3", "HeavyAtoms", "MolMR", "HallKierAlpha",
+        "MolWt", "MolLogP", "TPSA", "NumHAcceptors", "NumHDonors",
+        "NumRotatableBonds", "RingCount", "NumAromaticRings",
+        "FractionCSP3", "HeavyAtomCount", "MolMR", "HallKierAlpha",
     ]
     yield 0.9, "主要な物理化学記述子（分子量・LogP・TPSA等）を計算中...", df_result
 
@@ -304,9 +306,9 @@ def precalculate_all_descriptors(
             pass
 
     CURATED = [
-        "MolWt", "LogP", "TPSA", "HBA", "HBD", "RotBonds",
-        "RingCount", "AromaticRingCount", "FractionCSP3",
-        "HeavyAtoms", "MolMR", "HallKierAlpha",
+        "MolWt", "MolLogP", "TPSA", "NumHAcceptors", "NumHDonors", "NumRotatableBonds",
+        "RingCount", "NumAromaticRings", "FractionCSP3",
+        "HeavyAtomCount", "MolMR", "HallKierAlpha",
     ]
     _progress(3, 5, "主要物理化学記述子を計算中...")
     curated = [c for c in CURATED if c not in df_result.columns]

@@ -527,180 +527,106 @@ def _tab_selector() -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _tab_estimator(task: str = "regression") -> dict:
+    """
+    Estimatorタブ — 自動パラメータUI生成版。
+
+    factory.pyのモデルレジストリからモデルクラスを取得し、
+    introspect_params()で__init__パラメータを自動検出、
+    auto_params_ui.render_param_editorで自動UIを生成する。
+
+    新モデル追加時にUIコード変更は不要。
+    """
     result = {"estimators": []}
     REG = (task == "regression")
     _section_header("🤖", f"Estimator（{'回帰' if REG else '分類'}）",
-                    "選択した全推定器を評価。各推定器のパラメータを個別に設定できます。")
+                    "使用するモデルを選択し、パラメータを設定してください。\n"
+                    "各モデルの引数はクラスから自動検出されるため、新モデル追加時にUI変更は不要です。")
 
-    if REG:
-        # タブで線形 / アンサンブル / その他に整理
-        t_lin, t_ens, t_oth = st.tabs(["📐 線形モデル", "🌲 アンサンブル", "🧩 その他"])
+    try:
+        from backend.models.factory import list_models, get_default_automl_models
+        from backend.ui.param_schema import introspect_params, apply_params
+        from frontend_streamlit.components.auto_params_ui import render_param_editor
 
-        with t_lin:
-            if _cb("LinearRegression", _k("est","linreg"), default=False):
-                result["estimators"].append(("linear", {}))
+        available = list_models(task=task, available_only=True)
+        defaults = get_default_automl_models(task=task)
 
-            if _cb("Ridge", _k("est","ridge"), default=False):
-                with st.container(border=True):
-                    c1, c2 = st.columns(2)
-                    a  = float(c1.number_input("alpha", min_value=1e-6, value=_get(_k("est","ridge","a"), 1.0), format="%.6f", key=_k("est","ridge","a")))
-                    fi = c2.checkbox("fit_intercept", key=_k("est","ridge","fi"), value=_get(_k("est","ridge","fi"), True))
-                result["estimators"].append(("ridge", {"alpha": a, "fit_intercept": fi}))
+        # カテゴリ分類
+        categories: dict[str, list] = {"線形系": [], "決定木/アンサンブル": [], "カーネル/その他": []}
+        for m in available:
+            k = m["key"].lower() + m["name"].lower()
+            if any(x in k for x in ["linear", "ridge", "lasso", "elastic", "logistic", "ard", "huber", "pls", "bayesian"]):
+                categories["線形系"].append(m)
+            elif any(x in k for x in ["tree", "forest", "boost", "gbm", "gradient", "rgf", "figs", "rule", "hist", "catboost"]):
+                categories["決定木/アンサンブル"].append(m)
+            else:
+                categories["カーネル/その他"].append(m)
 
-            if _cb("Lasso", _k("est","lasso_r"), default=False):
-                with st.container(border=True):
-                    c1, c2 = st.columns(2)
-                    a  = float(c1.number_input("alpha", min_value=1e-6, value=_get(_k("est","lasso_r","a"), 0.01), format="%.6f", key=_k("est","lasso_r","a")))
-                    mi = int(c2.number_input("max_iter", min_value=100, max_value=10000, value=_get(_k("est","lasso_r","mi"), 1000), step=100, key=_k("est","lasso_r","mi")))
-                result["estimators"].append(("lasso_r", {"alpha": a, "max_iter": mi}))
+        # タブで表示
+        tab_labels = [f"📐 {cat} ({len(models)})" for cat, models in categories.items() if models]
+        tab_data = [(cat, models) for cat, models in categories.items() if models]
 
-            if _cb("ElasticNet", _k("est","en"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns(3)
-                    a  = float(c1.number_input("alpha",     min_value=1e-6, value=_get(_k("est","en","a"), 0.01), format="%.6f", key=_k("est","en","a")))
-                    l1 = float(c2.number_input("l1_ratio",  min_value=0.0, max_value=1.0, value=_get(_k("est","en","l1"), 0.5), step=0.05, key=_k("est","en","l1")))
-                    mi = int(c3.number_input("max_iter",    min_value=100, max_value=10000, value=_get(_k("est","en","mi"), 1000), step=100, key=_k("est","en","mi")))
-                result["estimators"].append(("elasticnet", {"alpha": a, "l1_ratio": l1, "max_iter": mi}))
+        if tab_labels:
+            tabs = st.tabs(tab_labels)
+            for tab, (cat_name, models) in zip(tabs, tab_data):
+                with tab:
+                    for m in models:
+                        mkey = m["key"]
+                        is_default = mkey in defaults
+                        checked = _cb(
+                            m["name"],
+                            _k("est", mkey),
+                            default=is_default,
+                        )
+                        if checked:
+                            model_cls = m.get("class")
+                            if model_cls is not None:
+                                with st.expander(f"⚙️ {m['name']} パラメータ", expanded=False):
+                                    specs = introspect_params(model_cls)
+                                    if specs:
+                                        user_vals = render_param_editor(
+                                            specs,
+                                            title=m["name"],
+                                            key_prefix=f"est_{mkey}_",
+                                        )
+                                        params = apply_params(specs, user_vals)
+                                    else:
+                                        params = {}
+                                        st.caption("ℹ️ パラメータ設定なし")
+                            else:
+                                params = {}
+                            result["estimators"].append((mkey, params))
 
-        with t_ens:
-            if _cb("RandomForest", _k("est","rf"), default=True):
-                with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns(4)
-                    n  = int(c1.number_input("n_estimators", min_value=10, max_value=2000, value=_get(_k("est","rf","n"), 100), step=10, key=_k("est","rf","n")))
-                    md = c2.text_input("max_depth (空=None)", value=_get(_k("est","rf","md"), ""), key=_k("est","rf","md"), placeholder="None")
-                    ms = int(c3.number_input("min_samples_leaf", min_value=1, max_value=50, value=_get(_k("est","rf","msl"), 1), step=1, key=_k("est","rf","msl")))
-                    mf = c4.selectbox("max_features", ["sqrt","log2","None","0.5","0.3"], key=_k("est","rf","mf"))
-                p = {"n_estimators": n, "min_samples_leaf": ms}
-                try: p["max_depth"] = int(md)
-                except: pass
-                if mf not in ("None",): p["max_features"] = mf if mf in ("sqrt","log2") else float(mf)
-                result["estimators"].append(("rf", p))
-
-            if _cb("XGBoost", _k("est","xgb"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns(3)
-                    n  = int(c1.number_input("n_estimators",  min_value=10, max_value=2000, value=_get(_k("est","xgb","n"), 100), step=10, key=_k("est","xgb","n")))
-                    lr = float(c2.number_input("learning_rate", min_value=0.001, max_value=1.0, value=_get(_k("est","xgb","lr"), 0.1), step=0.01, format="%.4f", key=_k("est","xgb","lr")))
-                    md = int(c3.number_input("max_depth",      min_value=1, max_value=20, value=_get(_k("est","xgb","md"), 6), step=1, key=_k("est","xgb","md")))
-                    c4, c5, c6, c7 = st.columns(4)
-                    sub = float(c4.number_input("subsample",        min_value=0.1, max_value=1.0, value=_get(_k("est","xgb","sub"), 1.0), step=0.05, key=_k("est","xgb","sub")))
-                    cbt = float(c5.number_input("colsample_bytree", min_value=0.1, max_value=1.0, value=_get(_k("est","xgb","cbt"), 1.0), step=0.05, key=_k("est","xgb","cbt")))
-                    ra  = float(c6.number_input("reg_alpha (L1)",   min_value=0.0, value=_get(_k("est","xgb","ra"), 0.0), step=0.01, format="%.4f", key=_k("est","xgb","ra")))
-                    rl  = float(c7.number_input("reg_lambda (L2)",  min_value=0.0, value=_get(_k("est","xgb","rl"), 1.0), step=0.1, key=_k("est","xgb","rl")))
-                result["estimators"].append(("xgb", {"n_estimators": n, "learning_rate": lr, "max_depth": md, "subsample": sub, "colsample_bytree": cbt, "reg_alpha": ra, "reg_lambda": rl}))
-
-            if _cb("LightGBM", _k("est","lgbm"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns(3)
-                    n  = int(c1.number_input("n_estimators",  min_value=10, max_value=2000, value=_get(_k("est","lgbm","n"), 100), step=10, key=_k("est","lgbm","n")))
-                    lr = float(c2.number_input("learning_rate", min_value=0.001, max_value=1.0, value=_get(_k("est","lgbm","lr"), 0.1), step=0.01, format="%.4f", key=_k("est","lgbm","lr")))
-                    nl = int(c3.number_input("num_leaves",    min_value=2, max_value=300, value=_get(_k("est","lgbm","nl"), 31), step=1, key=_k("est","lgbm","nl")))
-                    c4, c5, c6, c7 = st.columns(4)
-                    md  = int(c4.number_input("max_depth (-1=無制限)", min_value=-1, max_value=30, value=_get(_k("est","lgbm","md"), -1), step=1, key=_k("est","lgbm","md")))
-                    sub = float(c5.number_input("subsample",  min_value=0.1, max_value=1.0, value=_get(_k("est","lgbm","sub"), 1.0), step=0.05, key=_k("est","lgbm","sub")))
-                    ra  = float(c6.number_input("reg_alpha",  min_value=0.0, value=_get(_k("est","lgbm","ra"), 0.0), step=0.01, format="%.4f", key=_k("est","lgbm","ra")))
-                    rl  = float(c7.number_input("reg_lambda", min_value=0.0, value=_get(_k("est","lgbm","rl"), 1.0), step=0.01, key=_k("est","lgbm","rl")))
-                result["estimators"].append(("lgbm", {"n_estimators": n, "learning_rate": lr, "num_leaves": nl, "max_depth": md, "subsample": sub, "reg_alpha": ra, "reg_lambda": rl}))
-
-            if _cb("CatBoost", _k("est","cat"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns(4)
-                    it = int(c1.number_input("iterations",    min_value=10, max_value=2000, value=_get(_k("est","cat","it"), 100), step=10, key=_k("est","cat","it")))
-                    d  = int(c2.number_input("depth",         min_value=1, max_value=16, value=_get(_k("est","cat","d"), 6), step=1, key=_k("est","cat","d")))
-                    lr = float(c3.number_input("learning_rate", min_value=0.001, max_value=1.0, value=_get(_k("est","cat","lr"), 0.03), step=0.01, format="%.4f", key=_k("est","cat","lr")))
-                    l2 = float(c4.number_input("l2_leaf_reg", min_value=0.0, value=_get(_k("est","cat","l2"), 3.0), step=0.5, key=_k("est","cat","l2")))
-                result["estimators"].append(("catboost", {"iterations": it, "depth": d, "learning_rate": lr, "l2_leaf_reg": l2}))
-
-            if _cb("GBM (sklearn)", _k("est","gbm"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns(4)
-                    n   = int(c1.number_input("n_estimators", min_value=10, max_value=2000, value=_get(_k("est","gbm","n"), 100), step=10, key=_k("est","gbm","n")))
-                    lr  = float(c2.number_input("learning_rate", min_value=0.001, max_value=1.0, value=_get(_k("est","gbm","lr"), 0.1), step=0.01, format="%.4f", key=_k("est","gbm","lr")))
-                    md  = int(c3.number_input("max_depth", min_value=1, max_value=20, value=_get(_k("est","gbm","md"), 3), step=1, key=_k("est","gbm","md")))
-                    sub = float(c4.number_input("subsample", min_value=0.1, max_value=1.0, value=_get(_k("est","gbm","sub"), 1.0), step=0.05, key=_k("est","gbm","sub")))
-                result["estimators"].append(("gbm", {"n_estimators": n, "learning_rate": lr, "max_depth": md, "subsample": sub}))
-
-        with t_oth:
-            if _cb("SVR", _k("est","svr"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns(4)
-                    C   = float(c1.number_input("C",       min_value=0.001, value=_get(_k("est","svr","C"), 1.0), step=0.1, format="%.4f", key=_k("est","svr","C")))
-                    ker = c2.selectbox("kernel", ["rbf","linear","poly","sigmoid"], key=_k("est","svr","k"))
-                    eps = float(c3.number_input("epsilon", min_value=0.0, value=_get(_k("est","svr","eps"), 0.1), step=0.05, key=_k("est","svr","eps")))
-                    gam = c4.selectbox("gamma", ["scale","auto"], key=_k("est","svr","g"))
-                result["estimators"].append(("svr", {"C": C, "kernel": ker, "epsilon": eps, "gamma": gam}))
-
-            if _cb("KNN Regressor", _k("est","knnr"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns(3)
-                    n = int(c1.number_input("n_neighbors", min_value=1, max_value=100, value=_get(_k("est","knnr","n"), 5), step=1, key=_k("est","knnr","n")))
-                    w = c2.selectbox("weights", ["uniform","distance"], key=_k("est","knnr","w"))
-                    p = int(c3.number_input("p (1=Manhattan, 2=Euclidean)", min_value=1, max_value=5, value=_get(_k("est","knnr","p"), 2), step=1, key=_k("est","knnr","p")))
-                result["estimators"].append(("knn_r", {"n_neighbors": n, "weights": w, "p": p}))
-
-            if _cb("MLP Regressor", _k("est","mlpr"), default=False):
-                with st.container(border=True):
-                    c1, c2 = st.columns(2)
-                    hls_s = c1.text_input("hidden_layers (例: 100,50)", value=_get(_k("est","mlpr","hls"), "100"), key=_k("est","mlpr","hls"), placeholder="100,50")
-                    act   = c2.selectbox("activation", ["relu","tanh","logistic"], key=_k("est","mlpr","act"))
-                    c3, c4 = st.columns(2)
-                    alp   = float(c3.number_input("alpha (L2 正則化)", min_value=0.0, value=_get(_k("est","mlpr","al"), 0.0001), step=0.0001, format="%.6f", key=_k("est","mlpr","al")))
-                    lri   = float(c4.number_input("learning_rate_init", min_value=0.0001, value=_get(_k("est","mlpr","lri"), 0.001), step=0.0001, format="%.6f", key=_k("est","mlpr","lri")))
+    except Exception as ex:
+        st.error(f"モデル一覧取得エラー: {ex}")
+        st.info("フォールバック: factoryの代わりに基本モデルを表示")
+        # フォールバック: 基本的なモデルのみ
+        _FALLBACK = [
+            ("RandomForestRegressor", "rf", "sklearn.ensemble", True),
+            ("Ridge", "ridge", "sklearn.linear_model", False),
+            ("SVR", "svr", "sklearn.svm", False),
+        ] if REG else [
+            ("RandomForestClassifier", "rf_c", "sklearn.ensemble", True),
+            ("LogisticRegression", "logistic", "sklearn.linear_model", False),
+        ]
+        for cls_name, mkey, mod_path, is_default in _FALLBACK:
+            checked = _cb(cls_name, _k("est", mkey), default=is_default)
+            if checked:
                 try:
-                    hls = tuple(int(x.strip()) for x in hls_s.split(",") if x.strip())
-                except:
-                    hls = (100,)
-                result["estimators"].append(("mlp", {"hidden_layer_sizes": hls, "activation": act, "alpha": alp, "learning_rate_init": lri}))
-
-    else:
-        # 分類タスク
-        t_clf, t_ens_c = st.tabs(["📐 確率モデル", "🌲 アンサンブル"])
-
-        with t_clf:
-            if _cb("LogisticRegression", _k("clf","log"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns(4)
-                    C   = float(c1.number_input("C", min_value=0.001, value=_get(_k("clf","log","C"), 1.0), step=0.1, format="%.4f", key=_k("clf","log","C")))
-                    pen = c2.selectbox("penalty", ["l2","l1","elasticnet","None"], key=_k("clf","log","pen"))
-                    slv = c3.selectbox("solver", ["lbfgs","liblinear","saga","sag"], key=_k("clf","log","slv"))
-                    mi  = int(c4.number_input("max_iter", min_value=100, max_value=10000, value=_get(_k("clf","log","mi"), 1000), step=100, key=_k("clf","log","mi")))
-                result["estimators"].append(("logistic", {"C": C, "penalty": pen, "solver": slv, "max_iter": mi}))
-
-            if _cb("SVM (SVC)", _k("clf","svc"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns(3)
-                    C     = float(c1.number_input("C",      min_value=0.001, value=_get(_k("clf","svc","C"), 1.0), step=0.1, format="%.4f", key=_k("clf","svc","C")))
-                    ker   = c2.selectbox("kernel", ["rbf","linear","poly","sigmoid"], key=_k("clf","svc","k"))
-                    prob  = c3.checkbox("probability", key=_k("clf","svc","prob"), value=_get(_k("clf","svc","prob"), False))
-                result["estimators"].append(("svc", {"C": C, "kernel": ker, "probability": prob}))
-
-        with t_ens_c:
-            if _cb("RandomForest", _k("clf","rf"), default=True):
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns(3)
-                    n  = int(c1.number_input("n_estimators", min_value=10, max_value=2000, value=_get(_k("clf","rf","n"), 100), step=10, key=_k("clf","rf","n")))
-                    md = c2.text_input("max_depth (空=None)", value=_get(_k("clf","rf","md"), ""), key=_k("clf","rf","md"), placeholder="None")
-                    ms = int(c3.number_input("min_samples_leaf", min_value=1, max_value=50, value=_get(_k("clf","rf","msl"), 1), step=1, key=_k("clf","rf","msl")))
-                p = {"n_estimators": n, "min_samples_leaf": ms}
-                try: p["max_depth"] = int(md)
-                except: pass
-                result["estimators"].append(("rf_c", p))
-
-            if _cb("XGBoost", _k("clf","xgb"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns(3)
-                    n  = int(c1.number_input("n_estimators", min_value=10, max_value=2000, value=_get(_k("clf","xgb","n"), 100), step=10, key=_k("clf","xgb","n")))
-                    lr = float(c2.number_input("learning_rate", min_value=0.001, max_value=1.0, value=_get(_k("clf","xgb","lr"), 0.1), step=0.01, format="%.4f", key=_k("clf","xgb","lr")))
-                    md = int(c3.number_input("max_depth", min_value=1, max_value=20, value=_get(_k("clf","xgb","md"), 6), step=1, key=_k("clf","xgb","md")))
-                result["estimators"].append(("xgb_c", {"n_estimators": n, "learning_rate": lr, "max_depth": md}))
-
-            if _cb("LightGBM", _k("clf","lgbm"), default=False):
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns(3)
-                    n  = int(c1.number_input("n_estimators", min_value=10, max_value=2000, value=_get(_k("clf","lgbm","n"), 100), step=10, key=_k("clf","lgbm","n")))
-                    lr = float(c2.number_input("learning_rate", min_value=0.001, max_value=1.0, value=_get(_k("clf","lgbm","lr"), 0.1), step=0.01, format="%.4f", key=_k("clf","lgbm","lr")))
-                    nl = int(c3.number_input("num_leaves", min_value=2, max_value=300, value=_get(_k("clf","lgbm","nl"), 31), step=1, key=_k("clf","lgbm","nl")))
-                result["estimators"].append(("lgbm_c", {"n_estimators": n, "learning_rate": lr, "num_leaves": nl}))
+                    import importlib
+                    mod = importlib.import_module(mod_path)
+                    cls = getattr(mod, cls_name)
+                    from backend.ui.param_schema import introspect_params, apply_params
+                    from frontend_streamlit.components.auto_params_ui import render_param_editor
+                    specs = introspect_params(cls)
+                    if specs:
+                        with st.expander(f"⚙️ {cls_name} パラメータ"):
+                            user_vals = render_param_editor(specs, title=cls_name, key_prefix=f"est_{mkey}_")
+                            params = apply_params(specs, user_vals)
+                    else:
+                        params = {}
+                except Exception:
+                    params = {}
+                result["estimators"].append((mkey, params))
 
     if not result["estimators"]:
         st.caption("→ デフォルト: RandomForest")

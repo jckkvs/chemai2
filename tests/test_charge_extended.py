@@ -346,7 +346,7 @@ class TestRDKitAdapterGasteigerCharges:
         adp = RDKitAdapter(compute_fp=False)
         result = adp.compute(["CCO"])
         cols = result.descriptors.columns.tolist()
-        for expected in ["MolWt", "LogP", "HBA", "HBD", "TPSA"]:
+        for expected in ["MolWt", "MolLogP", "NumHAcceptors", "NumHDonors", "TPSA"]:
             assert expected in cols
 
 

@@ -211,7 +211,7 @@ class TestSpecificTargets:
         """毒性にLogPが含まれる"""
         rec = get_target_recommendation_by_name("毒性")
         names = [d.name for d in rec.descriptors]
-        assert "LogP" in names
+        assert "MolLogP" in names
 
     def test_viscosity_has_molwt(self):
         """粘度にMolWtが含まれる"""

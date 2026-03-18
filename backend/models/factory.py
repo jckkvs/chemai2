@@ -767,6 +767,7 @@ def list_models(
         results.append({
             "key": key,
             "name": entry["name"],
+            "class": entry.get("class"),
             "tags": entry.get("tags", []),
             "available": entry.get("available", True),
         })

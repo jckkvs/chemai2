@@ -67,8 +67,8 @@ def test_descriptor_metadata_rdkit(rdkit_adapter: RDKitAdapter) -> None:
     
     # 特定の数え上げ記述子のチェック
     name_to_meta = {m.name: m for m in mdata}
-    assert "HBA" in name_to_meta
-    assert name_to_meta["HBA"].is_count is True
+    assert "NumHAcceptors" in name_to_meta
+    assert name_to_meta["NumHAcceptors"].is_count is True
     assert "MolWt" in name_to_meta
     assert name_to_meta["MolWt"].is_count is False
 

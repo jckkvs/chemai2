@@ -241,3 +241,80 @@ def calculate_descriptors(request, session_id):
 def help_page(request):
     """ヘルプページ"""
     return render(request, "core/help.html")
+
+
+# ─────────────────────────────────────────────
+# API: パラメータ自動UI用エンドポイント
+# ─────────────────────────────────────────────
+
+def get_model_params_schema(request, model_key: str):
+    """
+    モデルのパラメータスキーマをJSONで返す。
+
+    フロントエンドJSが動的にUIフォームを構築するために使用。
+    """
+    try:
+        from backend.models.factory import list_models
+        from backend.ui.param_schema import introspect_params
+
+        # レジストリからモデルクラスを取得
+        for task in ("regression", "classification"):
+            for m in list_models(task=task, available_only=False):
+                if m["key"] == model_key:
+                    model_cls = m.get("class")
+                    if model_cls is None:
+                        return JsonResponse({"error": f"モデル '{model_key}' のクラスが見つかりません"}, status=404)
+                    specs = introspect_params(model_cls)
+                    return JsonResponse({
+                        "model_key": model_key,
+                        "model_name": m["name"],
+                        "class_name": model_cls.__name__,
+                        "params": [s.to_dict() for s in specs],
+                    })
+
+        return JsonResponse({"error": f"モデル '{model_key}' が見つかりません"}, status=404)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+def get_adapter_params_schema(request, adapter_name: str):
+    """
+    アダプタのパラメータスキーマをJSONで返す。
+
+    フロントエンドJSが動的にUIフォームを構築するために使用。
+    """
+    try:
+        import importlib
+        from backend.ui.param_schema import introspect_params
+
+        # アダプタ名→モジュール/クラスのマッピング
+        ADAPTERS = {
+            "rdkit":          ("backend.chem.rdkit_adapter",           "RDKitAdapter"),
+            "mordred":        ("backend.chem.mordred_adapter",         "MordredAdapter"),
+            "group_contrib":  ("backend.chem.group_contrib_adapter",   "GroupContribAdapter"),
+            "descriptastorus": ("backend.chem.descriptastorus_adapter", "DescriptaStorusAdapter"),
+            "molai":          ("backend.chem.molai_adapter",           "MolAIAdapter"),
+            "skfp":           ("backend.chem.skfp_adapter",            "SkfpAdapter"),
+            "xtb":            ("backend.chem.xtb_adapter",             "XTBAdapter"),
+            "unipka":         ("backend.chem.unipka_adapter",          "UniPkaAdapter"),
+        }
+
+        adapter_key = adapter_name.lower()
+        if adapter_key not in ADAPTERS:
+            return JsonResponse({"error": f"アダプタ '{adapter_name}' が見つかりません"}, status=404)
+
+        mod_path, cls_name = ADAPTERS[adapter_key]
+        mod = importlib.import_module(mod_path)
+        adapter_cls = getattr(mod, cls_name)
+        specs = introspect_params(adapter_cls)
+
+        return JsonResponse({
+            "adapter_name": adapter_name,
+            "class_name": cls_name,
+            "params": [s.to_dict() for s in specs],
+        })
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+

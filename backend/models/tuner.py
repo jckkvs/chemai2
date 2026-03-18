@@ -33,6 +33,43 @@ except ImportError:
     _halving_available = False
 
 
+def _convert_optuna_grid_for_random(param_grid: dict[str, Any]) -> dict[str, Any]:
+    """Optuna用のdict形式param_gridをRandomizedSearchCV用に変換する。
+
+    Optuna形式: {"alpha": {"type": "float", "low": 0.01, "high": 10.0, "log": True}}
+    → RandomSearch形式: {"alpha": loguniform(0.01, 10.0)}
+    """
+    from scipy.stats import uniform, randint
+
+    converted: dict[str, Any] = {}
+    for name, spec in param_grid.items():
+        if isinstance(spec, dict):
+            suggest_type = spec.get("type", "float")
+            low = spec.get("low", 0)
+            high = spec.get("high", 1)
+            if suggest_type == "float":
+                if spec.get("log", False):
+                    try:
+                        from scipy.stats import loguniform
+                        converted[name] = loguniform(low, high)
+                    except ImportError:
+                        # scipy < 1.6: loguniform unavailable
+                        converted[name] = uniform(low, high - low)
+                else:
+                    converted[name] = uniform(low, high - low)
+            elif suggest_type == "int":
+                step = spec.get("step", 1)
+                converted[name] = randint(low, high + 1)
+            elif suggest_type == "categorical":
+                converted[name] = spec.get("choices", [])
+            else:
+                converted[name] = spec
+        else:
+            # すでにリストや分布の場合はそのまま
+            converted[name] = spec
+    return converted
+
+
 @dataclass
 class TunerConfig:
     """チューニング設定。"""
@@ -171,7 +208,20 @@ def _run_optuna(model: Any, X: Any, y: Any, cfg: TunerConfig, groups: Any) -> di
     """Optuna によるベイズ最適化。param_grid は optuna の suggest形式で指定。"""
     if not _optuna:
         logger.warning("optuna 未インストール → RandomizedSearchCVで代替")
-        return _run_random(model, X, y, cfg, groups)
+        # Optuna用dict形式のparam_gridをscipy.stats分布に変換
+        converted_grid = _convert_optuna_grid_for_random(cfg.param_grid)
+        fallback_cfg = TunerConfig(
+            method="random",
+            param_grid=converted_grid,
+            n_iter=cfg.n_iter,
+            cv=cfg.cv,
+            scoring=cfg.scoring,
+            n_jobs=cfg.n_jobs,
+            refit=cfg.refit,
+            verbose=cfg.verbose,
+            random_state=cfg.random_state,
+        )
+        return _run_random(model, X, y, fallback_cfg, groups)
 
     import optuna  # type: ignore
     from sklearn.model_selection import cross_val_score

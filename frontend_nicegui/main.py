@@ -2,27 +2,26 @@
 ChemAI ML Studio - NiceGUI Edition
 ===================================
 Pure Python UI using NiceGUI framework.
-Shares the same backend as the Streamlit and Django editions.
+ステッパーUI → タブベース + サイドバーのレイアウト。
+初心者はワンクリック解析、上級者は詳細設定パネルで両立。
 
 Usage:
-    python main.py
+    python frontend_nicegui/main.py
     → http://localhost:8080
 """
 from __future__ import annotations
 
-import io
 import sys
 from pathlib import Path
 
 # backendへのパスを追加
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import numpy as np
 import pandas as pd
 from nicegui import ui, app
 
 # ─────────────────────────────────────────────
-# ダークテーマCSS
+# プレミアム ダークテーマ CSS
 # ─────────────────────────────────────────────
 CUSTOM_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -37,6 +36,7 @@ CUSTOM_CSS = """
     --accent-blue: #00d4ff;
     --accent-purple: #7b2ff7;
     --accent-green: #4ade80;
+    --accent-amber: #fbbf24;
 }
 
 body {
@@ -44,7 +44,7 @@ body {
     background: linear-gradient(135deg, var(--bg-primary), var(--bg-secondary), #16213e) !important;
 }
 
-.nicegui-content { max-width: 1400px; margin: 0 auto; }
+.nicegui-content { max-width: 1600px; margin: 0 auto; }
 
 .hero-gradient {
     background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple), #ff6b9d);
@@ -59,17 +59,46 @@ body {
     border-radius: 12px !important;
     backdrop-filter: blur(10px) !important;
 }
-"""
 
-# サンプルSMILES
-SAMPLE_SMILES = [
-    "CCO", "CC(=O)O", "c1ccccc1", "CC(C)O", "CCCO", "CC=O",
-    "c1ccc(O)cc1", "CC(=O)OC", "CCOC", "CCN",
-    "CC(C)(C)O", "c1ccc(N)cc1", "OC(=O)c1ccccc1", "CCOCC",
-    "CC(O)CC", "c1ccc(Cl)cc1", "CC(=O)N", "CCCCCO",
-    "c1ccc(F)cc1", "CC(C)=O", "OCCO", "c1ccncc1",
-    "CC(=O)CC", "CCCCO", "c1ccc(C)cc1",
-]
+/* Primary ボタン: グラデーション */
+.btn-primary {
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)) !important;
+    color: white !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    transition: all 0.3s ease !important;
+}
+.btn-primary:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 25px rgba(0,212,255,0.3) !important;
+}
+
+/* サイドバー ステップインジケーター */
+.step-indicator {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    margin: 4px 0;
+    border-radius: 8px;
+    transition: background 0.2s;
+}
+.step-indicator:hover {
+    background: rgba(255,255,255,0.05);
+}
+.step-done { color: var(--accent-green); }
+.step-pending { color: #555577; }
+
+/* メインタブのアンダーライン */
+.q-tabs__content { border-bottom: 1px solid var(--border); }
+
+/* ダークスクロールバー */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+/* 展開パネルのスタイル */
+.q-expansion-item { border-radius: 8px !important; margin-bottom: 4px; }
+"""
 
 
 # ─────────────────────────────────────────────
@@ -77,323 +106,163 @@ SAMPLE_SMILES = [
 # ─────────────────────────────────────────────
 @ui.page("/")
 def main_page():
-    # --- ページスコープの状態（storage不使用） ---
+
+    # ── ページスコープの共有ステート ──
     state = {
+        # データ
         "df": None,
         "filename": "",
+        # 列役割
         "target_col": "",
         "smiles_col": "",
-        "task_type": "regression",
+        "task_type": "auto",
+        "exclude_cols": [],
+        "group_col": None,
+        "time_col": None,
+        "weight_col": None,
+        # SMILES記述子
         "precalc_df": None,
+        "precalc_done": False,
         "selected_descriptors": [],
+        "calc_summary": {},
+        # パイプライン
+        "cv_folds": 5,
+        "timeout": 300,
+        "scaler": "auto",
+        "selected_models": [],
+        "do_eda": True,
+        "do_prep": True,
+        "do_eval": True,
+        "do_pca": True,
+        "do_shap": True,
+        # 結果
+        "automl_result": None,
+        "pipeline_result": None,
     }
 
     ui.add_head_html(f"<style>{CUSTOM_CSS}</style>")
 
-    # ── ヘッダー ──
-    with ui.header().classes("items-center justify-between"):
-        ui.label("⚗️ ChemAI ML Studio").classes("text-h5 text-bold hero-gradient")
-        ui.label("NiceGUI Edition").classes("text-caption text-grey-6")
+    # ═══════════════════════════════════════════════════════════
+    # ヘッダー
+    # ═══════════════════════════════════════════════════════════
+    with ui.header().classes("items-center justify-between q-px-lg"):
+        with ui.row().classes("items-center q-gutter-sm"):
+            ui.label("⚗️").classes("text-h5")
+            ui.label("ChemAI ML Studio").classes("text-h5 text-bold hero-gradient")
+            ui.badge("NiceGUI", color="purple").props("floating")
 
-    # ── サイドバー ──
-    with ui.left_drawer(value=True).classes("bg-dark"):
-        ui.label("⚗️ ChemAI").classes("text-h6 q-mb-md hero-gradient")
+        # ── ワンクリック解析ボタン（ヘッダー常設） ──
+        analysis_status_container = ui.column().classes("full-width")
 
-        with ui.column().classes("q-gutter-sm"):
-            ui.button("📁 データ読込", on_click=lambda: stepper.set_value("data")).props(
-                "flat color=white align=left"
-            ).classes("full-width")
-            ui.button("🎯 列の設定", on_click=lambda: stepper.set_value("columns")).props(
-                "flat color=white align=left"
-            ).classes("full-width")
-            ui.button("⚗️ SMILES特徴量", on_click=lambda: stepper.set_value("smiles")).props(
-                "flat color=white align=left"
-            ).classes("full-width")
-            ui.button("🚀 解析実行", on_click=lambda: stepper.set_value("analysis")).props(
-                "flat color=white align=left"
-            ).classes("full-width")
-            ui.button("📊 結果", on_click=lambda: stepper.set_value("results")).props(
-                "flat color=white align=left"
-            ).classes("full-width")
+        async def _run_analysis():
+            if state["df"] is None:
+                ui.notify("📂 まずデータを読み込んでください", type="warning")
+                return
+            if not state["target_col"]:
+                ui.notify("🎯 目的変数を設定してください", type="warning")
+                return
 
+            from frontend_nicegui.components.analysis_runner import run_analysis
+            await run_analysis(
+                state,
+                analysis_status_container,
+                on_complete=lambda: main_tabs.set_value("results"),
+            )
+
+        run_btn = ui.button(
+            "🚀 解析開始", on_click=_run_analysis,
+        ).classes("btn-primary").props("size=md icon=rocket_launch no-caps")
+        run_btn.tooltip("EDA → 前処理 → AutoML → 評価 → SHAP まで自動実行")
+
+    # ═══════════════════════════════════════════════════════════
+    # サイドバー — ステップインジケーター + ジャンプ
+    # ═══════════════════════════════════════════════════════════
+    with ui.left_drawer(value=True).classes("bg-dark q-pa-md").props("width=220"):
+        ui.label("⚗️ ChemAI").classes("text-h6 q-mb-sm hero-gradient")
         ui.separator()
-        ui.link("❓ ヘルプ", "/help").classes("text-white q-mt-md")
-        ui.space()
-        ui.label("NiceGUI Edition").classes("text-caption text-grey-7")
 
-    # ── メインコンテンツ ──
-    with ui.stepper().classes("full-width").props("vertical") as stepper:
+        # ステップインジケーター
+        step_container = ui.column().classes("full-width q-mt-sm")
 
-        # ═══════════ Step 1: データ読込 ═══════════
-        with ui.step("data", title="📁 データ読込"):
-            ui.label("CSVファイルをアップロード、またはサンプルデータを使用").classes("text-grey-5")
+        def _update_sidebar():
+            step_container.clear()
+            has_data = state["df"] is not None
+            has_target = bool(state.get("target_col"))
+            has_smiles = bool(state.get("smiles_col"))
+            has_result = state.get("automl_result") is not None
 
-            upload_status = ui.label("").classes("text-grey-5 q-mt-sm")
-            preview_container = ui.column().classes("full-width q-mt-md")
+            steps = [
+                ("📂 データ読込", has_data),
+                ("🎯 目的変数設定", has_target),
+                ("🧬 SMILES検出", has_smiles),
+                ("🚀 解析完了", has_result),
+            ]
+            with step_container:
+                for label, done in steps:
+                    icon = "✅" if done else "⬜"
+                    color = "step-done" if done else "step-pending"
+                    ui.html(
+                        f'<div class="step-indicator">'
+                        f'<span class="{color}" style="font-size:0.85rem;">'
+                        f'{icon} {label}</span></div>'
+                    )
 
-            async def handle_upload(e):
-                content = e.content.read()
-                name = e.name
-                try:
-                    if name.endswith(".csv"):
-                        state["df"] = pd.read_csv(io.BytesIO(content))
-                    elif name.endswith((".xlsx", ".xls")):
-                        state["df"] = pd.read_excel(io.BytesIO(content))
-                    else:
-                        upload_status.text = "❌ CSV/Excelファイルのみ対応"
-                        return
-                    state["filename"] = name
+                # データサマリー
+                if has_data:
                     df = state["df"]
-                    upload_status.text = f"✅ {name} 読み込み完了 ({len(df)}行 × {len(df.columns)}列)"
-                    upload_status.classes(remove="text-red", add="text-green")
-                    _show_preview(df, preview_container)
-                    _update_column_selects()
-                    ui.notify(f"✅ {name} を読み込みました", type="positive")
-                except Exception as ex:
-                    upload_status.text = f"❌ エラー: {ex}"
-                    upload_status.classes(remove="text-green", add="text-red")
+                    ui.separator()
+                    ui.label(state.get("filename", "")).classes("text-caption text-grey-6")
+                    ui.label(f"{df.shape[0]:,}行 × {df.shape[1]}列").classes("text-caption text-grey-6")
 
-            ui.upload(
-                on_upload=handle_upload,
-                label="CSV / Excel をドラッグ&ドロップ",
-                auto_upload=True,
-            ).props('accept=".csv,.xlsx,.xls" color="purple"').classes("full-width")
+                if has_result:
+                    ar = state["automl_result"]
+                    ui.separator()
+                    ui.label(f"🏆 {ar.best_model_key}").classes("text-caption text-cyan")
+                    ui.label(f"スコア: {ar.best_score:.4f}").classes("text-caption text-grey-6")
 
-            ui.separator()
-            ui.label("🧪 サンプルデータ").classes("text-subtitle1 q-mt-md")
+        _update_sidebar()
+        # タイマーで定期更新
+        ui.timer(2.0, _update_sidebar)
 
-            def load_sample_regression():
-                np.random.seed(42)
-                state["df"] = pd.DataFrame({
-                    "SMILES": SAMPLE_SMILES,
-                    "target_value": np.random.randn(25) * 2 + 5,
-                })
-                state["filename"] = "sample_regression.csv"
-                state["target_col"] = "target_value"
-                state["smiles_col"] = "SMILES"
-                upload_status.text = "✅ サンプルデータ読み込み完了 (25行 × 2列)"
-                upload_status.classes(remove="text-red", add="text-green")
-                _show_preview(state["df"], preview_container)
-                _update_column_selects()
-                ui.notify("サンプルデータを読み込みました", type="positive")
+        # ジャンプボタン
+        ui.separator()
+        ui.button(
+            "📂 データ設定", on_click=lambda: main_tabs.set_value("data")
+        ).props("flat color=white align=left size=sm no-caps").classes("full-width")
+        ui.button(
+            "📊 結果確認", on_click=lambda: main_tabs.set_value("results")
+        ).props("flat color=white align=left size=sm no-caps").classes("full-width")
 
-            def load_sample_numeric():
-                np.random.seed(42)
-                n = 30
-                state["df"] = pd.DataFrame({
-                    "feature1": np.random.randn(n),
-                    "feature2": np.random.randn(n) * 2,
-                    "feature3": np.random.uniform(0, 10, n),
-                    "target_value": np.random.randn(n) * 2 + 5,
-                })
-                state["filename"] = "sample_numeric.csv"
-                state["target_col"] = "target_value"
-                state["smiles_col"] = ""
-                upload_status.text = f"✅ 数値サンプル読み込み完了 ({n}行 × 4列)"
-                upload_status.classes(remove="text-red", add="text-green")
-                _show_preview(state["df"], preview_container)
-                _update_column_selects()
-                ui.notify("数値サンプルを読み込みました", type="positive")
+        ui.space()
+        ui.separator()
+        ui.link("❓ ヘルプ", "/help").classes("text-white")
+        ui.label("v2.0 — NiceGUI Edition").classes("text-caption text-grey-7 q-mt-sm")
 
-            with ui.row().classes("q-gutter-sm"):
-                ui.button("🧪 回帰サンプル (SMILES)", on_click=load_sample_regression).props("color=purple outline")
-                ui.button("📊 回帰サンプル (数値)", on_click=load_sample_numeric).props("color=blue outline")
+    # ═══════════════════════════════════════════════════════════
+    # メインコンテンツ — 2タブ構造
+    # ═══════════════════════════════════════════════════════════
 
-            with ui.stepper_navigation():
-                ui.button("次へ →", on_click=stepper.next).props("color=primary")
+    # 解析状態表示エリア（タブの上）
+    with analysis_status_container:
+        pass  # analysis_runnerが動的に書き込む
 
-        # ═══════════ Step 2: 列の設定 ═══════════
-        with ui.step("columns", title="🎯 列の設定"):
-            ui.label("目的変数とSMILES列を選択してください").classes("text-grey-5")
+    with ui.tabs().classes("full-width q-mt-sm").props(
+        "active-color=cyan indicator-color=cyan align=left"
+    ) as main_tabs:
+        data_tab = ui.tab("data", label="📂 データ設定", icon="settings")
+        results_tab = ui.tab("results", label="📊 結果確認", icon="analytics")
 
-            target_select = ui.select(
-                options=[],
-                label="目的変数",
-                on_change=lambda e: state.update({"target_col": e.value or ""}),
-            ).classes("full-width q-mb-md")
+    with ui.tab_panels(main_tabs, value=data_tab).classes("full-width"):
 
-            smiles_select = ui.select(
-                options=[],
-                label="SMILES列（任意・なしでもOK）",
-                on_change=lambda e: state.update({"smiles_col": e.value or ""}),
-            ).classes("full-width q-mb-md").props("clearable")
+        # ── データ設定タブ ──
+        with ui.tab_panel(data_tab):
+            from frontend_nicegui.components.data_tab import render_data_tab
+            render_data_tab(state)
 
-            task_select = ui.select(
-                options={"regression": "回帰", "classification": "分類"},
-                label="タスクタイプ",
-                value="regression",
-                on_change=lambda e: state.update({"task_type": e.value}),
-            ).classes("full-width q-mb-md")
-
-            column_info = ui.label("").classes("text-grey-5 q-mt-sm")
-
-            def _update_column_selects():
-                """データ読み込み後にセレクターのオプションを更新"""
-                if state["df"] is not None:
-                    cols = list(state["df"].columns)
-                    target_select.options = cols
-                    target_select.update()
-                    smiles_select.options = cols
-                    smiles_select.update()
-                    if state["target_col"] and state["target_col"] in cols:
-                        target_select.value = state["target_col"]
-                    if state["smiles_col"] and state["smiles_col"] in cols:
-                        smiles_select.value = state["smiles_col"]
-                    column_info.text = f"📋 {len(cols)}列: {', '.join(cols[:8])}{'...' if len(cols) > 8 else ''}"
-
-            with ui.stepper_navigation():
-                ui.button("← 戻る", on_click=stepper.previous).props("flat")
-                ui.button("次へ →", on_click=stepper.next).props("color=primary")
-
-        # ═══════════ Step 3: SMILES特徴量 ═══════════
-        with ui.step("smiles", title="⚗️ SMILES特徴量設計"):
-            ui.label("14エンジンで分子記述子を自動計算").classes("text-grey-5")
-
-            desc_status = ui.label("").classes("q-mt-md")
-            desc_progress = ui.linear_progress(value=0, show_value=False).classes("q-mt-sm")
-            desc_progress.visible = False
-            desc_results_container = ui.column().classes("full-width q-mt-md")
-
-            async def calc_descriptors():
-                if state["df"] is None:
-                    ui.notify("まずデータを読み込んでください", type="warning")
-                    return
-                if not state["smiles_col"]:
-                    ui.notify("SMILES列を設定してください。SMILES列がない場合はこのステップをスキップできます。", type="warning")
-                    return
-
-                desc_status.text = "⏳ 計算中..."
-                desc_progress.visible = True
-                desc_progress.value = 0.1
-
-                try:
-                    from backend.chem import get_available_adapters
-                    available = get_available_adapters()
-                    smiles_list = state["df"][state["smiles_col"]].tolist()
-
-                    all_dfs = []
-                    engine_results = {}
-                    total = len(available)
-
-                    for i, (name, adapter_cls) in enumerate(available.items()):
-                        desc_status.text = f"⏳ {name} を計算中... ({i+1}/{total})"
-                        desc_progress.value = (i + 1) / total
-                        try:
-                            adapter = adapter_cls()
-                            desc_df = adapter.compute(smiles_list)
-                            if desc_df is not None and len(desc_df.columns) > 0:
-                                all_dfs.append(desc_df)
-                                engine_results[name] = len(desc_df.columns)
-                        except Exception as e:
-                            engine_results[name] = f"エラー: {e}"
-
-                    if all_dfs:
-                        combined = pd.concat(all_dfs, axis=1).dropna(axis=1, how="all")
-                        state["precalc_df"] = combined
-                        state["selected_descriptors"] = list(combined.columns)
-                        n = len(combined.columns)
-                        desc_status.text = f"✅ {n}個の記述子を計算完了"
-                        desc_progress.value = 1.0
-                        ui.notify(f"✅ {n}個の記述子を計算完了", type="positive")
-
-                        # 結果表示
-                        desc_results_container.clear()
-                        with desc_results_container:
-                            with ui.row().classes("q-gutter-md"):
-                                with ui.card().classes("glass-card"):
-                                    ui.label(str(n)).classes("text-h4 text-bold hero-gradient")
-                                    ui.label("記述子数").classes("text-caption text-grey-5")
-                                with ui.card().classes("glass-card"):
-                                    ok_count = sum(1 for v in engine_results.values() if isinstance(v, int))
-                                    ui.label(str(ok_count)).classes("text-h4 text-bold hero-gradient")
-                                    ui.label("成功エンジン").classes("text-caption text-grey-5")
-
-                            ui.separator()
-                            ui.label("エンジン別結果").classes("text-subtitle1 q-mt-md")
-                            rows = []
-                            for eng, val in engine_results.items():
-                                if isinstance(val, int):
-                                    rows.append({"エンジン": eng, "記述子数": val, "状態": "✅ 成功"})
-                                else:
-                                    rows.append({"エンジン": eng, "記述子数": 0, "状態": f"❌ {val}"})
-                            ui.table(
-                                columns=[
-                                    {"name": "エンジン", "label": "エンジン", "field": "エンジン", "align": "left"},
-                                    {"name": "記述子数", "label": "記述子数", "field": "記述子数"},
-                                    {"name": "状態", "label": "状態", "field": "状態", "align": "left"},
-                                ],
-                                rows=rows,
-                            ).classes("full-width")
-                    else:
-                        desc_status.text = "❌ 計算可能な記述子がありませんでした"
-                        ui.notify("記述子を計算できませんでした", type="negative")
-
-                except Exception as e:
-                    desc_status.text = f"❌ エラー: {e}"
-                    ui.notify(f"計算エラー: {e}", type="negative")
-                finally:
-                    desc_progress.visible = False
-
-            ui.button(
-                "⚗️ 全エンジンで記述子を計算", on_click=calc_descriptors
-            ).props("color=purple size=lg").classes("q-mt-md")
-
-            with ui.stepper_navigation():
-                ui.button("← 戻る", on_click=stepper.previous).props("flat")
-                ui.button("次へ →", on_click=stepper.next).props("color=primary")
-
-        # ═══════════ Step 4: 解析実行 ═══════════
-        with ui.step("analysis", title="🚀 解析実行"):
-            ui.label("モデル設定と解析実行").classes("text-grey-5")
-
-            with ui.card().classes("glass-card q-mt-md"):
-                ui.label("⏳ 解析実行機能は次のフェーズで実装予定です").classes("text-amber")
-                ui.label("AutoML設定、CV分割、モデル選択、ハイパーパラメータチューニングが利用できるようになります。").classes(
-                    "text-grey-5 q-mt-sm"
-                )
-
-            with ui.stepper_navigation():
-                ui.button("← 戻る", on_click=stepper.previous).props("flat")
-                ui.button("次へ →", on_click=stepper.next).props("color=primary")
-
-        # ═══════════ Step 5: 結果 ═══════════
-        with ui.step("results", title="📊 結果"):
-            ui.label("解析結果とモデル解釈").classes("text-grey-5")
-
-            with ui.card().classes("glass-card q-mt-md"):
-                ui.label("⏳ 結果表示機能は次のフェーズで実装予定です").classes("text-amber")
-                ui.label("メトリクス表示、Plotlyチャート、SHAP解釈性が利用できるようになります。").classes(
-                    "text-grey-5 q-mt-sm"
-                )
-
-            with ui.stepper_navigation():
-                ui.button("← 戻る", on_click=stepper.previous).props("flat")
-
-
-def _show_preview(df: pd.DataFrame, container):
-    """DataFrameのプレビューをテーブルとして表示"""
-    container.clear()
-    with container:
-        preview = df.head(8)
-        columns = [
-            {"name": col, "label": col, "field": col, "align": "left", "sortable": True}
-            for col in preview.columns
-        ]
-        rows = []
-        for _, row in preview.iterrows():
-            row_dict = {}
-            for col in preview.columns:
-                v = row[col]
-                if pd.isna(v):
-                    row_dict[col] = "—"
-                elif isinstance(v, float):
-                    row_dict[col] = f"{v:.4f}"
-                else:
-                    row_dict[col] = str(v)
-            rows.append(row_dict)
-
-        ui.table(columns=columns, rows=rows).classes("full-width").props("dense flat bordered")
-        ui.label(f"({len(df)}行 × {len(df.columns)}列)").classes("text-caption text-grey-5 q-mt-xs")
+        # ── 結果確認タブ ──
+        with ui.tab_panel(results_tab):
+            from frontend_nicegui.components.results_tab import render_results_tab
+            render_results_tab(state)
 
 
 # ─────────────────────────────────────────────
@@ -412,34 +281,52 @@ def help_page():
         ui.markdown("""
 ## 使い方
 
-1. **📁 データ読込**: CSV/Excelファイルをアップロード
-2. **🎯 列の設定**: 目的変数とSMILES列を選択
-3. **⚗️ SMILES特徴量**: 14エンジンで分子記述子を自動計算
-4. **🚀 解析実行**: モデル設定・学習・評価
-5. **📊 結果**: 予測精度・SHAP解釈・可視化
+### 初心者向け（最短2クリック）
+1. **📂 データ読込**: CSV/Excelをアップロード（またはサンプル/ベンチマークを選択）
+2. **🚀 解析開始**: ヘッダーの「解析開始」ボタンを押す → 自動でEDA・AutoML・評価・SHAP
+3. **📊 結果確認**: 自動的に結果タブに切り替わります
 
-## 対応エンジン
+### 上級者向け（詳細設定）
+- **🏷️ 列の役割**: 目的変数・SMILES列の手動変更、除外列・グループ列・時系列列の設定
+- **⚗️ SMILES特徴量**: 14エンジンの記述子を個別に選択
+- **📊 EDA**: データ品質チェック・統計量サマリー
+- **⚙️ パイプライン**: CV分割数、使用モデル、スケーラー、単調性制約
 
-| エンジン | 記述子数 | 特徴 |
-|---|---|---|
-| RDKit | 200+ | 標準的な分子記述子 |
-| Mordred | 73 | 1800+から厳選 |
-| scikit-FP | 10+ FP | ECFP, MACCS等 |
-| Mol2Vec | 300 | Word2Vec埋め込み |
-| GroupContrib | 9 | Joback基団寄与法 |
-| MolAI (UMA) | PCA可変 | Meta Universal Model |
-| DescriptaStorus | 200+ | Merck高速記述子 |
-| PaDEL | 1800+ | Java記述子(オプション) |
-| Molfeat | 多数 | Datamol統合FP |
-| Gasteiger | 4 | 部分電荷統計量 |
+## UI設計思想
+
+| 原則 | 説明 |
+|---|---|
+| **Progressive Disclosure** | 初心者は自動設定で即実行。上級者は折りたたみ展開で詳細設定 |
+| **ワンクリック解析** | データ読込 → 解析開始 = 最短2クリック |
+| **Smart Defaults** | 目的変数・タスク種別・SMILES列を自動判定 |
+| **ボタン階層** | 塗り=必須操作、Outline=オプション、Flat=詳細用 |
+
+## 対応記述子エンジン (14種)
+
+| エンジン | 特徴 |
+|---|---|
+| RDKit | 標準分子記述子 200+ |
+| Mordred | 1800+から厳選 73 |
+| GroupContrib | Joback基団寄与法 9 |
+| DescriptaStorus | Merck高速記述子 200+ |
+| MolAI | Meta Universal Model (PCA) |
+| scikit-FP | ECFP, MACCS等フィンガープリント |
+| UMA | Universal Molecular Adapter |
+| Mol2Vec | Word2Vec分子埋め込み 300 |
+| PaDEL | Java記述子 1800+ |
+| Molfeat | Datamol統合FP |
+| XTB | 半経験的量子化学 |
+| UniPKa | pKa推定 |
+| COSMO-RS | 溶媒和特性 |
+| Chemprop | GNNベース記述子 |
 
 ## 3つのフロントエンド
 
 | 版 | コマンド | ポート |
 |---|---|---|
+| **NiceGUI** | `python frontend_nicegui/main.py` | **8080** |
 | Streamlit | `streamlit run frontend_streamlit/app.py` | 8501 |
 | Django | `python frontend_django/manage.py runserver` | 8000 |
-| NiceGUI | `python frontend_nicegui/main.py` | 8080 |
 """)
 
 
