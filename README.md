@@ -142,12 +142,29 @@ xtb --version  # 動作確認
 
 ### 4. アプリ起動
 
+3 つのフロントエンドが利用可能です:
+
+| 版 | コマンド | ポート | 特徴 |
+|---|---------|-------|------|
+| **NiceGUI** ⭐ | `python frontend_nicegui/main.py` | **8080** | Pure Python UI、2クリック解析 |
+| Streamlit | `streamlit run frontend_streamlit/app.py` | 8501 | データ分析向け |
+| Django | `python frontend_django/manage.py runserver` | 8000 | REST API、ユーザー認証 |
+
 ```bash
+# NiceGUI 版（推奨）
+python frontend_nicegui/main.py
+# → http://localhost:8080
+
+# Streamlit 版
 cd frontend_streamlit
 streamlit run app.py
+# → http://localhost:8501
 ```
 
-ブラウザで http://localhost:8501 を開きます。
+> [!TIP]
+> 各フロントエンドの詳細は以下を参照:
+> - [NiceGUI 版 README](frontend_nicegui/README.md) — 起動・設定・デプロイガイド
+> - [バックエンド README](backend/README.md) — API ドキュメント
 
 ---
 
