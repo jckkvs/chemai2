@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+
+{% block title %}{{ session.name }} - ChemAI ML Studio{% endblock %}
+
+{% block content %}
+<div data-session-id="{{ session.id }}">
+
+<!-- ステップインジケーター -->
+<div style="display:flex;gap:0.5rem;margin-bottom:2rem;overflow-x:auto;">
+    {% with steps="data:📁 データ読込,columns:🎯 列の設定,smiles:⚗️ SMILES特徴量,analysis:🚀 解析実行,results:📊 結果" %}
+    {% for s in steps|cut:" "|make_list %}
+    {% endfor %}
+    {% endwith %}
+    <a href="?step=data" class="btn btn-sm {% if step == 'data' %}btn-primary{% else %}btn-secondary{% endif %}">
+        📁 データ読込
+    </a>
+    <a href="?step=columns" class="btn btn-sm {% if step == 'columns' %}btn-primary{% else %}btn-secondary{% endif %}">
+        🎯 列の設定
+    </a>
+    <a href="?step=smiles" class="btn btn-sm {% if step == 'smiles' %}btn-primary{% else %}btn-secondary{% endif %}">
+        ⚗️ SMILES特徴量
+    </a>
+    <a href="?step=analysis" class="btn btn-sm {% if step == 'analysis' %}btn-primary{% else %}btn-secondary{% endif %}">
+        🚀 解析実行
+    </a>
+    <a href="?step=results" class="btn btn-sm {% if step == 'results' %}btn-primary{% else %}btn-secondary{% endif %}">
+        📊 結果
+    </a>
+</div>
+
+{% if step == 'data' %}
+<!-- ════════════════════════════════════════════ -->
+<!-- データ読込ステップ                           -->
+<!-- ════════════════════════════════════════════ -->
+<h2 style="margin-bottom:1.5rem;">📁 データ読込</h2>
+
+{% if session.status == 'created' %}
+<div class="card">
+    <div class="dropzone" id="dropzone">
+        <input type="file" accept=".csv,.xlsx,.xls" style="display:none">
+        <div class="dropzone-icon">📂</div>
+        <div class="dropzone-text">
+            CSV / Excel ファイルをドラッグ&ドロップ<br>
+            またはクリックして選択
+        </div>
+    </div>
+    <div id="upload-status" style="display:none;margin-top:1rem;"></div>
+</div>
+
+<div class="card">
+    <h3 style="margin-bottom: 1rem;">🧪 サンプルデータで試す</h3>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+        <button class="btn btn-secondary"
+                onclick="loadSample('{{ session.id }}', 'regression', true)">
+            🧪 回帰サンプル（SMILES付き）
+        </button>
+        <button class="btn btn-secondary"
+                onclick="loadSample('{{ session.id }}', 'regression', false)">
+            📊 回帰サンプル（数値のみ）
+        </button>
+        <button class="btn btn-secondary"
+                onclick="loadSample('{{ session.id }}', 'classification', false)">
+            🏷️ 分類サンプル
+        </button>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-success">
+    ✅ {{ session.original_filename }} を読み込み済み（{{ session.n_rows }}行 × {{ session.n_cols }}列）
+</div>
+<div class="card">
+    <div id="data-preview">データプレビューはここに表示されます</div>
+</div>
+<a href="?step=columns" class="btn btn-primary">次へ: 列の設定 →</a>
+{% endif %}
+
+{% elif step == 'columns' %}
+<!-- ════════════════════════════════════════════ -->
+<!-- 列の設定ステップ                             -->
+<!-- ════════════════════════════════════════════ -->
+<h2 style="margin-bottom:1.5rem;">🎯 列の設定</h2>
+
+{% if session.status == 'created' %}
+<div class="alert alert-warning">⚠️ まずデータを読み込んでください。</div>
+<a href="?step=data" class="btn btn-secondary">← データ読込に戻る</a>
+{% else %}
+<div class="card">
+    <div class="grid grid-2">
+        <div class="form-group">
+            <label class="form-label">目的変数</label>
+            <select class="form-select" id="target-col">
+                <option value="">選択してください</option>
+                <!-- JS で動的に追加 -->
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">SMILES列（任意）</label>
+            <select class="form-select" id="smiles-col">
+                <option value="">なし</option>
+            </select>
+        </div>
+    </div>
+    <div class="form-group">
+        <label class="form-label">タスクタイプ</label>
+        <select class="form-select" id="task-type">
+            <option value="regression" {% if session.task_type == 'regression' %}selected{% endif %}>回帰</option>
+            <option value="classification" {% if session.task_type == 'classification' %}selected{% endif %}>分類</option>
+        </select>
+    </div>
+    <button class="btn btn-primary" onclick="setColumns('{{ session.id }}')">
+        ✅ 設定を保存
+    </button>
+</div>
+{% endif %}
+
+{% elif step == 'smiles' %}
+<!-- ════════════════════════════════════════════ -->
+<!-- SMILES特徴量ステップ                         -->
+<!-- ════════════════════════════════════════════ -->
+<h2 style="margin-bottom:1.5rem;">⚗️ SMILES特徴量設計</h2>
+
+{% if not session.smiles_col %}
+<div class="alert alert-info">💡 SMILES列が設定されていません。「列の設定」でSMILES列を選択してください。</div>
+<a href="?step=columns" class="btn btn-secondary">← 列の設定に戻る</a>
+{% else %}
+<div class="card">
+    <div class="card-header">
+        <span style="font-size:1.3rem">🧬</span>
+        <h3 class="card-title">14エンジン自動記述子計算</h3>
+    </div>
+    <p style="color:var(--text-secondary);margin-bottom:1rem;">
+        RDKit, Mordred, scikit-FP, Mol2Vec等のエンジンで分子記述子を一括計算します。
+    </p>
+    <button class="btn btn-primary btn-lg" id="btn-calc-desc"
+            onclick="calculateDescriptors('{{ session.id }}')">
+        ⚗️ 全エンジンで記述子を計算
+    </button>
+    <div id="desc-progress" style="display:none;margin-top:1rem;">
+        <div class="progress-bar"><div class="progress-fill" id="desc-progress-fill" style="width:0%"></div></div>
+        <p id="desc-progress-text" style="margin-top:0.5rem;font-size:0.85rem;color:var(--text-secondary);"></p>
+    </div>
+    <div id="desc-results" style="margin-top:1rem;"></div>
+</div>
+{% endif %}
+
+{% elif step == 'analysis' %}
+<h2 style="margin-bottom:1.5rem;">🚀 解析実行</h2>
+<div class="alert alert-info">解析実行機能は近日実装予定です。</div>
+
+{% elif step == 'results' %}
+<h2 style="margin-bottom:1.5rem;">📊 結果</h2>
+<div class="alert alert-info">結果表示機能は近日実装予定です。</div>
+
+{% endif %}
+
+</div>
+
+<script>
+async function calculateDescriptors(sessionId) {
+    const btn = document.getElementById('btn-calc-desc');
+    const progress = document.getElementById('desc-progress');
+    const progressFill = document.getElementById('desc-progress-fill');
+    const progressText = document.getElementById('desc-progress-text');
+    const results = document.getElementById('desc-results');
+
+    btn.disabled = true;
+    btn.textContent = '計算中...';
+    progress.style.display = 'block';
+    progressFill.style.width = '30%';
+    progressText.textContent = 'エンジンを初期化中...';
+
+    try {
+        const resp = await fetch(`/api/session/${sessionId}/descriptors/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        const data = await resp.json();
+        progressFill.style.width = '100%';
+
+        if (data.success) {
+            progressText.textContent = `✅ 完了: ${data.total_descriptors}個の記述子を計算`;
+            let html = '<div class="alert alert-success">✅ 計算完了</div>';
+            html += '<div class="metrics-grid">';
+            html += `<div class="metric-card"><div class="metric-value">${data.total_descriptors}</div><div class="metric-label">記述子数</div></div>`;
+            html += `<div class="metric-card"><div class="metric-value">${Object.keys(data.engines).length}</div><div class="metric-label">エンジン数</div></div>`;
+            html += '</div>';
+            results.innerHTML = html;
+        } else {
+            progressText.textContent = `❌ エラー: ${data.error}`;
+            results.innerHTML = `<div class="alert alert-error">${data.error}</div>`;
+        }
+    } catch (err) {
+        progressText.textContent = `❌ ネットワークエラー`;
+        results.innerHTML = `<div class="alert alert-error">${err.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '⚗️ 全エンジンで記述子を計算';
+    }
+}
+</script>
+{% endblock %}
