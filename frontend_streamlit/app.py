@@ -1435,6 +1435,7 @@ else:
                                     "記述子": n,
                                     "|r|": round(v, 3),
                                     "ソース": _engine_map.get(n, ""),
+                                    "化学的意味": _meta.get(n, {}).get("meaning", ""),
                                 } for n, v in _top_corr[:_corr_n]]),
                                 use_container_width=True, hide_index=True,
                                 height=min(400, 35 + _corr_n * 35),
