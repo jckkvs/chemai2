@@ -892,7 +892,7 @@ else:
                         get_all_target_recommendations as _get_all_recs,
                     )
 
-                    _cur_sel = set(st.session_state.get("adv_desc", []))
+                    _cur_sel = set(st.session_state.get("adv_desc") or [])
                     n_total = len(_precalc_df.columns)
                     n_sel = len(_cur_sel)
 
@@ -1142,9 +1142,9 @@ else:
                                 while f"セット{_n}" in _desc_sets:
                                     _n += 1
                                 _final_name = f"セット{_n}"
-                            _desc_sets[_final_name] = list(st.session_state.get("adv_desc", []))
+                            _desc_sets[_final_name] = list(st.session_state.get("adv_desc") or [])
                             st.session_state["_desc_sets"] = _desc_sets
-                            st.success(f"✅ 「{_final_name}」保存（{len(st.session_state.get('adv_desc', []))}個）")
+                            st.success(f"✅ 「{_final_name}」保存（{len(st.session_state.get('adv_desc') or [])}個）")
                             st.rerun()
 
                     # 登録済みセット一覧（ある場合のみ表示）
@@ -1696,7 +1696,7 @@ else:
                 added_smiles_cols = []
 
                 if smiles_col_eda and smiles_col_eda in df_preview.columns:
-                    selected_desc_preview = st.session_state.get("adv_desc", [])
+                    selected_desc_preview = st.session_state.get("adv_desc") or []
                     _precalc = st.session_state.get("precalc_smiles_df")
 
                     if _precalc is not None and selected_desc_preview:
@@ -1794,7 +1794,7 @@ else:
                 # EDAタブでは記述子選択は行わない（SMILES特徴量設計タブで設定）
                 if st.session_state.get("smiles_col"):
                     if st.session_state.get("precalc_done"):
-                        n_sel = len(st.session_state.get("adv_desc", []))
+                        n_sel = len(st.session_state.get("adv_desc") or [])
                         st.info(f"🔬 記述子の選択は「⚗️ SMILES特徴量設計」タブで行えます。現在 **{n_sel}件** 選択中。")
                     else:
                         st.info("💡 「⚗️ SMILES特徴量設計」タブで記述子を計算・選択してください。")
@@ -2128,7 +2128,7 @@ else:
                     scaler=scaler,
                     do_eda=do_eda, do_prep=do_prep, do_eval=do_eval,
                     do_pca=do_pca, do_shap=do_shap,
-                    selected_descriptors=st.session_state.get("adv_desc", []),
+                    selected_descriptors=st.session_state.get("adv_desc") or [],
                 )
 
     # ====================================================

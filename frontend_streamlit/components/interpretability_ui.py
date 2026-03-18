@@ -51,19 +51,29 @@ def _get_shap_explainer(model, X_bg):
     return exp, "kernel"
 
 
-@st.cache_data(show_spinner=False, max_entries=3)
-def _compute_shap_values(_model, _X, max_samples: int = 300):
-    """SHAP値を計算してキャッシュ。"""
+def _compute_shap_values(model, X_input, max_samples: int = 300):
+    """SHAP値を計算する（キャッシュをsession_stateで手動管理）。"""
     import shap
-    X = _X.iloc[:max_samples] if hasattr(_X, "iloc") else _X[:max_samples]
-    explainer, kind = _get_shap_explainer(_model, X)
+    # session_state キャッシュ
+    cache_key = f"_shap_cache_{id(model)}_{len(X_input)}_{max_samples}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    X = X_input.iloc[:max_samples] if hasattr(X_input, "iloc") else X_input[:max_samples]
+    explainer, kind = _get_shap_explainer(model, X)
     sv = explainer.shap_values(X)
     # 分類で3次元 → 最後クラスを使う
     if isinstance(sv, list):
         sv = sv[-1]
     if hasattr(sv, "values"):   # shap.Explanation
         sv = sv.values
-    return sv, X, kind
+    # expected_value を保存
+    ev = getattr(explainer, "expected_value", None)
+    if isinstance(ev, (list, np.ndarray)):
+        ev = ev[-1] if len(ev) > 1 else ev[0]
+    result = (sv, X, kind, ev)
+    st.session_state[cache_key] = result
+    return result
 
 
 # ─────────────────────────────────────────────
@@ -180,32 +190,48 @@ def _tab_shap_summary(model, X, feature_names):
     max_s = st.slider("使用サンプル数", 30, min(500, len(X)), min(200, len(X)), step=10, key="shap_sum_n")
     plot_type = st.radio("プロット種別", ["🐝 Beeswarm", "📊 Bar (mean |SHAP|)"], horizontal=True, key="shap_sum_type")
 
-    with st.spinner("SHAP値を計算中..."):
-        sv, X_sub, kind = _compute_shap_values(model, X, max_samples=max_s)
+    try:
+        with st.spinner("SHAP値を計算中..."):
+            sv, X_sub, kind, ev = _compute_shap_values(model, X, max_samples=max_s)
 
-    st.caption(f"Explainer: `{kind}` | サンプル数: {len(X_sub)} | 特徴量数: {sv.shape[1] if sv.ndim > 1 else len(feature_names)}")
+        # feature_names と sv の列数を揃える
+        n_feat = sv.shape[1] if sv.ndim > 1 else 1
+        if len(feature_names) != n_feat:
+            feature_names = list(feature_names[:n_feat]) if len(feature_names) > n_feat else \
+                list(feature_names) + [f"feat_{i}" for i in range(len(feature_names), n_feat)]
 
-    fig, ax = plt.subplots(figsize=(9, max(4, min(16, len(feature_names)*0.35))), facecolor="#0e1117")
-    plt.rcParams["figure.facecolor"] = "#0e1117"
-    plt.rcParams["axes.facecolor"] = "#0e1117"
-    plt.rcParams["text.color"] = "white"
-    plt.rcParams["axes.labelcolor"] = "white"
-    plt.rcParams["xtick.color"] = "white"
-    plt.rcParams["ytick.color"] = "white"
+        st.caption(f"Explainer: `{kind}` | サンプル数: {len(X_sub)} | 特徴量数: {n_feat}")
 
-    exp_obj = shap.Explanation(
-        values=sv,
-        data=X_sub.values if hasattr(X_sub, "values") else X_sub,
-        feature_names=list(feature_names)
-    )
+        plt.rcParams["figure.facecolor"] = "#0e1117"
+        plt.rcParams["axes.facecolor"] = "#0e1117"
+        plt.rcParams["text.color"] = "white"
+        plt.rcParams["axes.labelcolor"] = "white"
+        plt.rcParams["xtick.color"] = "white"
+        plt.rcParams["ytick.color"] = "white"
 
-    if "Beeswarm" in plot_type:
-        shap.plots.beeswarm(exp_obj, max_display=30, show=False)
-    else:
-        shap.plots.bar(exp_obj, max_display=30, show=False)
+        X_data = X_sub.values if hasattr(X_sub, "values") else X_sub
+        # データ形状をSHAP値に合わせる
+        if X_data.shape[1] != n_feat:
+            X_data = X_data[:, :n_feat]
 
-    st.pyplot(plt.gcf(), use_container_width=True)
-    plt.close("all")
+        exp_obj = shap.Explanation(
+            values=sv,
+            data=X_data,
+            feature_names=list(feature_names)
+        )
+
+        if "Beeswarm" in plot_type:
+            shap.plots.beeswarm(exp_obj, max_display=30, show=False)
+        else:
+            shap.plots.bar(exp_obj, max_display=30, show=False)
+
+        st.pyplot(plt.gcf(), use_container_width=True)
+        plt.close("all")
+    except Exception as e:
+        st.error(f"SHAP Summary エラー: {e}")
+        import traceback
+        with st.expander("🛠️ エラー詳細"):
+            st.code(traceback.format_exc())
 
 
 # ─────────────────────────────────────────────
@@ -215,41 +241,59 @@ def _tab_shap_individual(model, X, feature_names):
     import shap
     import matplotlib.pyplot as plt
 
-    max_s = min(300, len(X))
-    sv, X_sub, kind = _compute_shap_values(model, X, max_samples=max_s)
-
-    sample_idx = st.slider("サンプルを選択", 0, len(X_sub) - 1, 0, key="shap_ind_idx")
-    plot_type = st.radio("プロット種別", ["💧 Waterfall", "⚡ Force Plot"], horizontal=True, key="shap_ind_type")
-
-    exp_obj = shap.Explanation(
-        values=sv[sample_idx],
-        base_values=shap.TreeExplainer(
-            model.steps[-1][1] if hasattr(model, "steps") else model
-        ).expected_value if kind == "tree" else sv.mean(),
-        data=X_sub.iloc[sample_idx].values if hasattr(X_sub, "iloc") else X_sub[sample_idx],
-        feature_names=list(feature_names)
-    )
-
-    # 予測値を表示
     try:
-        pred_val = model.predict(X_sub.iloc[[sample_idx]] if hasattr(X_sub, "iloc") else X_sub[[sample_idx]])[0]
-        if hasattr(X_sub, "iloc"):
-            actual_val = None  # yは渡されていないので省略
-        st.metric("予測値", f"{pred_val:.4f}")
-    except Exception:
-        pass
+        max_s = min(300, len(X))
+        sv, X_sub, kind, ev = _compute_shap_values(model, X, max_samples=max_s)
 
-    plt.rcParams["figure.facecolor"] = "#0e1117"
-    plt.rcParams["axes.facecolor"] = "#0e1117"
-    plt.rcParams["text.color"] = "white"
+        # feature_names と sv の列数を揃える
+        n_feat = sv.shape[1] if sv.ndim > 1 else len(sv[0]) if sv.ndim == 2 else 1
+        if len(feature_names) != n_feat:
+            feature_names = list(feature_names[:n_feat]) if len(feature_names) > n_feat else \
+                list(feature_names) + [f"feat_{i}" for i in range(len(feature_names), n_feat)]
 
-    if "Waterfall" in plot_type:
-        shap.plots.waterfall(exp_obj, max_display=20, show=False)
-    else:
-        shap.plots.force(exp_obj, matplotlib=True, show=False)
+        sample_idx = st.slider("サンプルを選択", 0, len(X_sub) - 1, 0, key="shap_ind_idx")
+        plot_type = st.radio("プロット種別", ["💧 Waterfall", "⚡ Force Plot"], horizontal=True, key="shap_ind_type")
 
-    st.pyplot(plt.gcf(), use_container_width=True)
-    plt.close("all")
+        # base_values を安全に取得（キャッシュから取得したevを使用）
+        if ev is not None:
+            base_val = float(ev) if np.isscalar(ev) or (hasattr(ev, 'ndim') and ev.ndim == 0) else float(ev)
+        else:
+            base_val = float(sv.mean())
+
+        sample_data = X_sub.iloc[sample_idx].values if hasattr(X_sub, "iloc") else X_sub[sample_idx]
+        if len(sample_data) != n_feat:
+            sample_data = sample_data[:n_feat]
+
+        exp_obj = shap.Explanation(
+            values=sv[sample_idx][:n_feat] if len(sv[sample_idx]) > n_feat else sv[sample_idx],
+            base_values=base_val,
+            data=sample_data,
+            feature_names=list(feature_names)
+        )
+
+        # 予測値を表示
+        try:
+            pred_val = model.predict(X_sub.iloc[[sample_idx]] if hasattr(X_sub, "iloc") else X_sub[[sample_idx]])[0]
+            st.metric("予測値", f"{pred_val:.4f}")
+        except Exception:
+            pass
+
+        plt.rcParams["figure.facecolor"] = "#0e1117"
+        plt.rcParams["axes.facecolor"] = "#0e1117"
+        plt.rcParams["text.color"] = "white"
+
+        if "Waterfall" in plot_type:
+            shap.plots.waterfall(exp_obj, max_display=20, show=False)
+        else:
+            shap.plots.force(exp_obj, matplotlib=True, show=False)
+
+        st.pyplot(plt.gcf(), use_container_width=True)
+        plt.close("all")
+    except Exception as e:
+        st.error(f"SHAP 個別予測エラー: {e}")
+        import traceback
+        with st.expander("🛠️ エラー詳細"):
+            st.code(traceback.format_exc())
 
 
 # ─────────────────────────────────────────────
@@ -259,48 +303,54 @@ def _tab_shap_dependence(model, X, feature_names):
     import shap
     import plotly.graph_objects as go
 
-    max_s = min(300, len(X))
-    sv, X_sub, kind = _compute_shap_values(model, X, max_samples=max_s)
+    try:
+        max_s = min(300, len(X))
+        sv, X_sub, kind, ev = _compute_shap_values(model, X, max_samples=max_s)
 
-    feat1 = st.selectbox("主特徴量", feature_names, key="dep_feat1")
-    feat2 = st.selectbox("着色特徴量（交互作用）", ["自動"] + list(feature_names), key="dep_feat2")
+        feat1 = st.selectbox("主特徴量", feature_names, key="dep_feat1")
+        feat2 = st.selectbox("着色特徴量（交互作用）", ["自動"] + list(feature_names), key="dep_feat2")
 
-    f1_idx = list(feature_names).index(feat1)
-    X_arr = X_sub.values if hasattr(X_sub, "values") else X_sub
-    shap_vals = sv[:, f1_idx]
-    feat_vals = X_arr[:, f1_idx]
+        f1_idx = list(feature_names).index(feat1)
+        X_arr = X_sub.values if hasattr(X_sub, "values") else X_sub
+        shap_vals = sv[:, f1_idx]
+        feat_vals = X_arr[:, f1_idx]
 
-    if feat2 == "自動":
-        # 相互作用が最も大きい特徴量を自動選択
-        if sv.ndim > 1 and sv.shape[1] > 1:
-            corrs = [abs(np.corrcoef(sv[:, j], feat_vals)[0, 1]) for j in range(sv.shape[1])]
-            corrs[f1_idx] = -1
-            color_idx = int(np.argmax(corrs))
-            color_label = feature_names[color_idx]
-            color_vals = X_arr[:, color_idx]
+        if feat2 == "自動":
+            # 相互作用が最も大きい特徴量を自動選択
+            if sv.ndim > 1 and sv.shape[1] > 1:
+                corrs = [abs(np.corrcoef(sv[:, j], feat_vals)[0, 1]) for j in range(sv.shape[1])]
+                corrs[f1_idx] = -1
+                color_idx = int(np.argmax(corrs))
+                color_label = feature_names[color_idx]
+                color_vals = X_arr[:, color_idx]
+            else:
+                color_vals = feat_vals
+                color_label = feat1
         else:
-            color_vals = feat_vals
-            color_label = feat1
-    else:
-        color_idx = list(feature_names).index(feat2)
-        color_label = feat2
-        color_vals = X_arr[:, color_idx]
+            color_idx = list(feature_names).index(feat2)
+            color_label = feat2
+            color_vals = X_arr[:, color_idx]
 
-    fig = go.Figure(go.Scatter(
-        x=feat_vals, y=shap_vals,
-        mode="markers",
-        marker=dict(color=color_vals, colorscale="Viridis", size=6,
-                    colorbar=dict(title=color_label), showscale=True),
-        hovertemplate=f"{feat1}: %{{x:.3f}}<br>SHAP: %{{y:.3f}}<extra></extra>",
-    ))
-    fig.update_layout(
-        xaxis_title=feat1, yaxis_title=f"SHAP value of {feat1}",
-        height=420, margin=dict(l=20, r=20, t=30, b=30),
-        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-        font=dict(color="white")
-    )
-    fig.add_hline(y=0, line_color="#555", line_width=1)
-    st.plotly_chart(fig, use_container_width=True)
+        fig = go.Figure(go.Scatter(
+            x=feat_vals, y=shap_vals,
+            mode="markers",
+            marker=dict(color=color_vals, colorscale="Viridis", size=6,
+                        colorbar=dict(title=color_label), showscale=True),
+            hovertemplate=f"{feat1}: %{{x:.3f}}<br>SHAP: %{{y:.3f}}<extra></extra>",
+        ))
+        fig.update_layout(
+            xaxis_title=feat1, yaxis_title=f"SHAP value of {feat1}",
+            height=420, margin=dict(l=20, r=20, t=30, b=30),
+            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+            font=dict(color="white")
+        )
+        fig.add_hline(y=0, line_color="#555", line_width=1)
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"SHAP Dependence エラー: {e}")
+        import traceback
+        with st.expander("🛠️ エラー詳細"):
+            st.code(traceback.format_exc())
 
 
 # ─────────────────────────────────────────────
@@ -310,35 +360,41 @@ def _tab_shap_heatmap(model, X, feature_names):
     import shap
     import plotly.graph_objects as go
 
-    max_s = min(200, len(X))
-    sv, X_sub, kind = _compute_shap_values(model, X, max_samples=max_s)
+    try:
+        max_s = min(200, len(X))
+        sv, X_sub, kind, ev = _compute_shap_values(model, X, max_samples=max_s)
 
-    top_n = st.slider("表示する特徴量数（重要度上位）", 5, min(50, sv.shape[1] if sv.ndim > 1 else 10), 20,
-                       key="hm_topn")
-    mean_abs = np.abs(sv).mean(axis=0) if sv.ndim > 1 else np.abs(sv)
-    top_idx = np.argsort(mean_abs)[-top_n:][::-1]
-    sv_top = sv[:, top_idx] if sv.ndim > 1 else sv.reshape(-1, 1)
-    feat_top = [feature_names[i] for i in top_idx]
+        top_n = st.slider("表示する特徴量数（重要度上位）", 5, min(50, sv.shape[1] if sv.ndim > 1 else 10), 20,
+                           key="hm_topn")
+        mean_abs = np.abs(sv).mean(axis=0) if sv.ndim > 1 else np.abs(sv)
+        top_idx = np.argsort(mean_abs)[-top_n:][::-1]
+        sv_top = sv[:, top_idx] if sv.ndim > 1 else sv.reshape(-1, 1)
+        feat_top = [feature_names[i] for i in top_idx]
 
-    # サンプルを mean|SHAP| でソート
-    row_order = np.argsort(np.abs(sv_top).mean(axis=1))
+        # サンプルを mean|SHAP| でソート
+        row_order = np.argsort(np.abs(sv_top).mean(axis=1))
 
-    fig = go.Figure(go.Heatmap(
-        z=sv_top[row_order].T,
-        x=[f"S{i}" for i in range(len(row_order))],
-        y=feat_top,
-        colorscale="RdBu_r", zmid=0,
-        colorbar=dict(title="SHAP値"),
-        hovertemplate="Sample: %{x}<br>Feature: %{y}<br>SHAP: %{z:.3f}<extra></extra>",
-    ))
-    fig.update_layout(
-        height=max(400, top_n * 20),
-        margin=dict(l=10, r=10, t=30, b=30),
-        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-        font=dict(color="white"),
-        xaxis=dict(showticklabels=False),
-    )
-    st.plotly_chart(fig, use_container_width=True)
+        fig = go.Figure(go.Heatmap(
+            z=sv_top[row_order].T,
+            x=[f"S{i}" for i in range(len(row_order))],
+            y=feat_top,
+            colorscale="RdBu_r", zmid=0,
+            colorbar=dict(title="SHAP値"),
+            hovertemplate="Sample: %{x}<br>Feature: %{y}<br>SHAP: %{z:.3f}<extra></extra>",
+        ))
+        fig.update_layout(
+            height=max(400, top_n * 20),
+            margin=dict(l=10, r=10, t=30, b=30),
+            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+            font=dict(color="white"),
+            xaxis=dict(showticklabels=False),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"SHAP Heatmap エラー: {e}")
+        import traceback
+        with st.expander("🛠️ エラー詳細"):
+            st.code(traceback.format_exc())
 
 
 # ─────────────────────────────────────────────
@@ -413,7 +469,7 @@ def _tab_shapiq(model, X, feature_names):
     # ─ 1次効果を棒グラフで表示（SHAPキャッシュから代用）
     st.markdown("---")
     st.markdown("#### 1次効果（単独寄与）")
-    sv_base, X_s, _ = _compute_shap_values(model, X, max_samples=min(200, len(X)))
+    sv_base, X_s, _, _ = _compute_shap_values(model, X, max_samples=min(200, len(X)))
     mean_abs = np.abs(sv_base).mean(axis=0) if sv_base.ndim > 1 else np.abs(sv_base)
     top_idx = np.argsort(mean_abs)[-max_feat:][::-1]
     df_si1 = pd.DataFrame({
