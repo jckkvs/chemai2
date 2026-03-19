@@ -274,6 +274,14 @@ _CV_REGISTRY: dict[str, dict[str, Any]] = {
         "requires_groups": False,
         "requires_classification": False,
     },
+    "leave_one_group_out": {
+        "name": "Leave-One-Group-Out",
+        "description": "グループ単位でLeave-One-Out（logoのエイリアス）",
+        "class": LeaveOneGroupOut,
+        "default_params": {},
+        "requires_groups": True,
+        "requires_classification": False,
+    },
 }
 
 def _get_cv_class(class_name: str) -> Type[Any]:

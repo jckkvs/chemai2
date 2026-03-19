@@ -468,6 +468,10 @@ def get_all_target_recommendations() -> List[TargetRecommendations]:
     """すべての推奨説明変数データを取得する"""
     return _RECOMMENDATION_DATA
 
+def get_all_target_recommendations() -> List[TargetRecommendations]:
+    """登録されているすべての目的変数推奨セットのリストを返す"""
+    return list(_RECOMMENDATION_DATA)
+
 def get_target_recommendation_by_name(name: str) -> TargetRecommendations | None:
     """指定された名前のターゲット変数の推奨情報を取得する（部分一致対応）"""
     for rec in _RECOMMENDATION_DATA:

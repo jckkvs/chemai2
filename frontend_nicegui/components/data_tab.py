@@ -326,7 +326,7 @@ def _render_column_roles(state: dict) -> None:
 
                 # ── 右列: オプション設定（折りたたみ） ──
                 with ui.column().classes("col-5"):
-                    with ui.expansion("🔧 詳細な列役割設定（上級者）", icon="settings").classes("full-width"):
+                    with ui.expansion("🔧 詳細な列役割設定", icon="settings").classes("full-width"):
                         excl_opts = [c for c in all_cols
                                      if c != state.get("target_col") and c != state.get("smiles_col")]
 
@@ -432,7 +432,7 @@ def _render_column_summary(state: dict) -> None:
 # サブタブ3: SMILES特徴量
 # ================================================================
 def _render_smiles_features(state: dict) -> None:
-    """SMILES記述子の計算と選択UI"""
+    """SMILES記述子プラグイン管理UI"""
 
     if state["df"] is None:
         ui.label("⚠️ まずデータを読み込んでください").classes("text-amber q-pa-md")
@@ -446,94 +446,18 @@ def _render_smiles_features(state: dict) -> None:
                      "SMILES列がない場合、このステップはスキップできます。").classes("text-grey-5")
         return
 
-    desc_status = ui.label("").classes("q-mt-md")
-    desc_progress = ui.linear_progress(value=0, show_value=False).classes("q-mt-sm")
-    desc_progress.visible = False
-    results_container = ui.column().classes("full-width q-mt-md")
+    # ── プラグイン管理UI（動的生成） ──
+    from frontend_nicegui.components.descriptor_plugins_ui import render_descriptor_plugins
+    render_descriptor_plugins(state)
 
-    # ── エンジンパラメータ自動UI（上級者用） ──
-    with ui.expansion("🔧 エンジン別パラメータ設定（上級者）", icon="tune").classes("full-width q-mt-sm"):
-        _render_adapter_auto_params(state)
-
-    # 計算済みならサマリを表示
+    # ── 計算ステータス表示 ──
     if state.get("precalc_done") and state.get("precalc_df") is not None:
         precalc = state["precalc_df"]
-        desc_status.text = f"✅ {len(precalc.columns)}個の記述子が計算済みです"
+        ui.label(f"✅ {len(precalc.columns)}個の記述子が計算済みです").classes("q-mt-md text-positive")
+        results_container = ui.column().classes("full-width q-mt-sm")
         _show_descriptor_summary(state, results_container)
-
-    async def calc_descriptors():
-        smiles_list = state["df"][state["smiles_col"]].dropna().tolist()
-        n = len(smiles_list)
-        if n == 0:
-            ui.notify("有効なSMILESが0件です", type="warning")
-            return
-
-        desc_status.text = "⏳ 計算中..."
-        desc_progress.visible = True
-        desc_progress.value = 0.05
-
-        df_result = pd.DataFrame(index=range(n))
-        calc_summary = {}
-        total = len(_ALL_ENGINES)
-
-        # ユーザーが設定したエンジンパラメータを取得
-        adapter_params = state.get("adapter_params", {})
-
-        for i, (ename, emod, ecls, ekwargs) in enumerate(_ALL_ENGINES):
-            desc_status.text = f"⏳ {ename} を計算中... ({i+1}/{total})"
-            desc_progress.value = (i + 1) / total
-            try:
-                mod = importlib.import_module(emod)
-                adapter_cls = getattr(mod, ecls)
-                # ユーザー設定パラメータをマージ
-                user_params = adapter_params.get(ename, {})
-                merged_kwargs = {**ekwargs}
-                if user_params:
-                    from backend.ui.param_schema import introspect_params, apply_params
-                    specs = introspect_params(adapter_cls)
-                    applied = apply_params(specs, user_params)
-                    merged_kwargs.update(applied)
-                adapter = adapter_cls(**merged_kwargs)
-                if not adapter.is_available():
-                    continue
-                eres = adapter.compute(smiles_list)
-                if hasattr(eres, 'descriptors') and eres.descriptors is not None:
-                    edf = eres.descriptors
-                    new_cols = [c for c in edf.columns if c not in df_result.columns]
-                    if new_cols:
-                        edf_new = edf[new_cols].copy()
-                        edf_new.index = range(n)
-                        df_result = pd.concat([df_result, edf_new], axis=1)
-                        calc_summary[ename] = len(new_cols)
-            except Exception as ex:
-                logger.warning(f"{ename} スキップ: {ex}")
-
-        # クリーンアップ
-        df_result = df_result.loc[:, ~df_result.columns.duplicated()]
-        df_result = df_result.apply(pd.to_numeric, errors="coerce").convert_dtypes()
-        df_result = df_result.dropna(axis=1, how="all")
-
-        state["precalc_df"] = df_result
-        state["precalc_done"] = True
-        state["selected_descriptors"] = list(df_result.columns)
-        state["calc_summary"] = calc_summary
-
-        n_desc = len(df_result.columns)
-        desc_status.text = f"✅ {n_desc}個の記述子を計算完了"
-        desc_progress.visible = False
-        ui.notify(f"✅ {n_desc}個の記述子を計算完了", type="positive")
-        _show_descriptor_summary(state, results_container)
-
-    # 計算ボタン
-    if not state.get("precalc_done"):
-        ui.button(
-            "⚗️ 全エンジンで記述子を計算", on_click=calc_descriptors
-        ).props("color=purple size=lg icon=science").classes("q-mt-md")
     else:
-        with ui.row().classes("q-gutter-sm"):
-            ui.button(
-                "🔄 再計算", on_click=calc_descriptors
-            ).props("outline color=purple size=sm")
+        ui.label("⏳ SMILES検出後、記述子は自動計算されます").classes("q-mt-md text-grey-5")
 
 
 def _show_descriptor_summary(state: dict, container) -> None:
@@ -578,20 +502,24 @@ def _show_descriptor_summary(state: dict, container) -> None:
 # サブタブ4: EDA
 # ================================================================
 def _render_eda(state: dict) -> None:
-    """特徴量の探索的データ分析"""
+    """特徴量の探索的データ分析（SMILES記述子含む）"""
 
     if state["df"] is None:
         ui.label("⚠️ まずデータを読み込んでください").classes("text-amber q-pa-md")
         return
 
     df = state["df"]
+    precalc_df = state.get("precalc_df")
+    target_col = state.get("target_col", "")
 
     # ── 基本統計 ──
     ui.label("📊 データ概要").classes("text-subtitle1")
+    n_desc = precalc_df.shape[1] if precalc_df is not None else 0
     with ui.row().classes("q-gutter-md full-width"):
         for val, lbl in [
             (f"{df.shape[0]:,}", "行数"),
-            (str(df.shape[1]), "列数"),
+            (str(df.shape[1]), "元の列数"),
+            (str(n_desc), "SMILES記述子"),
             (f"{df.isna().mean().mean():.1%}", "欠損率"),
             (str(df.select_dtypes(include='number').shape[1]), "数値列数"),
         ]:
@@ -599,9 +527,9 @@ def _render_eda(state: dict) -> None:
                 ui.label(val).classes("text-h5 text-bold hero-gradient")
                 ui.label(lbl).classes("text-caption text-grey-5")
 
-    # ── 統計量テーブル ──
+    # ── 統計量テーブル（元データ） ──
     ui.separator()
-    ui.label("📈 統計量サマリー").classes("text-subtitle2 q-mt-md")
+    ui.label("📈 統計量サマリー（元データ）").classes("text-subtitle2 q-mt-md")
     stat_rows = []
     for col in df.columns:
         s = df[col]
@@ -629,6 +557,96 @@ def _render_eda(state: dict) -> None:
         for c in ["列名", "ユニーク数", "欠損数", "欠損率(%)", "最小値", "最大値", "平均値"]
     ]
     ui.table(columns=stat_columns, rows=stat_rows).classes("full-width").props("dense flat bordered")
+
+    # ══════════════════════════════════════════════════════
+    # SMILES記述子のEDA（precalc_dfが存在する場合）
+    # ══════════════════════════════════════════════════════
+    if precalc_df is not None and not precalc_df.empty:
+        ui.separator()
+        ui.label(f"⚗️ SMILES記述子 EDA（{precalc_df.shape[1]}記述子）").classes("text-subtitle1 q-mt-md")
+
+        # ── 目的変数との相関係数 ──
+        if target_col and target_col in df.columns and pd.api.types.is_numeric_dtype(df[target_col]):
+            target_s = df[target_col].iloc[:len(precalc_df)].reset_index(drop=True)
+            try:
+                corr = precalc_df.iloc[:len(target_s)].corrwith(target_s, method="pearson").abs().dropna()
+                if not corr.empty:
+                    top_n = 20
+                    top_corr = corr.sort_values(ascending=False).head(top_n)
+
+                    ui.label(f"📊 目的変数 ({target_col}) との相関 TOP {min(top_n, len(top_corr))}").classes(
+                        "text-subtitle2 q-mt-sm"
+                    )
+
+                    # バーチャートで表示
+                    try:
+                        import plotly.graph_objects as go
+                        fig = go.Figure()
+                        fig.add_bar(
+                            x=list(top_corr.values),
+                            y=list(top_corr.index),
+                            orientation="h",
+                            marker_color=["#00d4ff" if v > 0.3 else "#fbbf24" if v > 0.1 else "#555577"
+                                          for v in top_corr.values],
+                        )
+                        fig.update_layout(
+                            xaxis_title="|r| (ピアソン相関係数の絶対値)",
+                            yaxis=dict(autorange="reversed"),
+                            height=max(250, len(top_corr) * 22),
+                            margin=dict(l=10, r=10, t=10, b=30),
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                            font=dict(color="#ccc", size=10),
+                        )
+                        ui.plotly(fig).classes("full-width")
+                    except ImportError:
+                        # Plotlyなしの場合はテーブル表示
+                        corr_rows = [{"記述子": name, "|r|": f"{val:.4f}"}
+                                     for name, val in top_corr.items()]
+                        corr_cols = [
+                            {"name": "記述子", "label": "記述子", "field": "記述子", "align": "left"},
+                            {"name": "|r|", "label": "|r|", "field": "|r|", "align": "center"},
+                        ]
+                        ui.table(columns=corr_cols, rows=corr_rows).classes("full-width").props("dense flat bordered")
+            except Exception:
+                pass
+
+        # ── 記述子の統計量テーブル ──
+        with ui.expansion(
+            f"📈 記述子の統計量（{precalc_df.shape[1]}列）", icon="analytics",
+        ).classes("full-width q-mt-sm"):
+            desc_stats = precalc_df.describe().T
+            desc_rows = []
+            for col_name in desc_stats.index:
+                row = {"列名": col_name}
+                for stat_name in ["count", "mean", "std", "min", "25%", "50%", "75%", "max"]:
+                    if stat_name in desc_stats.columns:
+                        v = desc_stats.loc[col_name, stat_name]
+                        row[stat_name] = f"{v:.4g}" if pd.notna(v) else "—"
+                    else:
+                        row[stat_name] = "—"
+                desc_rows.append(row)
+
+            desc_columns = [
+                {"name": c, "label": c, "field": c,
+                 "align": "left" if c == "列名" else "center", "sortable": True}
+                for c in ["列名", "count", "mean", "std", "min", "25%", "50%", "75%", "max"]
+            ]
+            ui.table(
+                columns=desc_columns, rows=desc_rows,
+                pagination={"rowsPerPage": 20},
+            ).classes("full-width").props("dense flat bordered")
+
+        # ── 欠損・定数列の警告 ──
+        const_cols = [c for c in precalc_df.columns if precalc_df[c].nunique() <= 1]
+        high_na_cols = [c for c in precalc_df.columns if precalc_df[c].isna().mean() > 0.5]
+        if const_cols or high_na_cols:
+            with ui.card().classes("full-width q-pa-sm q-mt-sm").style(
+                "border: 1px solid rgba(251,191,36,0.4); background: rgba(50,40,0,0.2); border-radius: 8px;"
+            ):
+                if const_cols:
+                    ui.label(f"⚠️ 定数列 ({len(const_cols)}列): {', '.join(const_cols[:10])}{'...' if len(const_cols) > 10 else ''}").classes("text-caption text-amber")
+                if high_na_cols:
+                    ui.label(f"⚠️ 高欠損列 >50% ({len(high_na_cols)}列): {', '.join(high_na_cols[:10])}{'...' if len(high_na_cols) > 10 else ''}").classes("text-caption text-amber")
 
     # ── データプレビュー ──
     ui.separator()
@@ -673,52 +691,234 @@ def _render_eda(state: dict) -> None:
 # サブタブ5: パイプライン設計
 # ================================================================
 def _render_pipeline(state: dict) -> None:
-    """CV設定・モデル選択"""
+    """CV設定・前処理・特徴選択・モデル選択・単調制約"""
 
     if state["df"] is None:
         ui.label("⚠️ まずデータを読み込んでください").classes("text-amber q-pa-md")
         return
 
-    # ── CV設定 ──
-    ui.label("⚙️ 交差検証設定").classes("text-subtitle1")
-    with ui.row().classes("q-gutter-md"):
-        cv_folds = ui.number(
-            label="CV分割数", value=state.get("cv_folds", 5),
+    df = state["df"]
+    target_col = state.get("target_col", "")
+    task = state.get("task_type", "regression")
+    if task == "auto":
+        task = "regression" if (target_col and pd.api.types.is_float_dtype(df[target_col])) else "classification"
+
+    # ────────────────────────────────────────────
+    # 1. 交差検証設定
+    # ────────────────────────────────────────────
+    ui.label("🔄 交差検証（CV）設定").classes("text-subtitle1")
+
+    with ui.row().classes("q-gutter-md items-end full-width"):
+        # CV方式
+        try:
+            from backend.models.cv_manager import _CV_REGISTRY
+            cv_options = {k: v["name"] for k, v in _CV_REGISTRY.items()}
+        except ImportError:
+            cv_options = {
+                "kfold": "K-Fold", "stratified_kfold": "Stratified K-Fold",
+                "repeated_kfold": "Repeated K-Fold", "logo": "Leave-One-Group-Out",
+                "group_kfold": "GroupKFold", "loo": "Leave-One-Out",
+                "timeseries": "TimeSeriesSplit",
+            }
+
+        cv_select = ui.select(
+            options=cv_options,
+            label="CV方式",
+            value=state.get("cv_key", "auto"),
+            on_change=lambda e: state.update({"cv_key": e.value}),
+        ).classes("w-48").tooltip(
+            "auto: タスクに応じて自動選択（回帰→KFold、分類→StratifiedKFold）\n"
+            "グループ系: グループ列の設定が必要"
+        )
+
+        # N分割
+        ui.number(
+            label="分割数", value=state.get("cv_folds", 5),
             min=2, max=20, step=1,
             on_change=lambda e: state.update({"cv_folds": int(e.value)}),
-        ).classes("col-2").tooltip("交差検証のFold分割数。通常は3〜10。")
+        ).classes("w-24").tooltip("K-Fold等の分割数。通常3〜10。")
 
-        timeout = ui.number(
+        # タイムアウト
+        ui.number(
             label="タイムアウト(秒)", value=state.get("timeout", 300),
             min=30, max=3600, step=30,
             on_change=lambda e: state.update({"timeout": int(e.value)}),
-        ).classes("col-2").tooltip("全体の制限時間。超過するとモデルをスキップします。")
+        ).classes("w-28").tooltip("全体の制限時間。超過するとモデルをスキップ。")
 
+    ui.separator().classes("q-my-sm")
+
+    # ────────────────────────────────────────────
+    # 2. 前処理設定（ColumnTransformer相当）
+    # ────────────────────────────────────────────
+    with ui.expansion(
+        "🔧 前処理設定（スケーリング・欠損値・変換）", icon="transform",
+    ).classes("full-width"):
+        ui.label(
+            "列の型ごとに異なる前処理を適用します。デフォルト設定で問題なく動作します。"
+        ).classes("text-caption text-grey q-mb-sm")
+
+        # 数値列の前処理
+        with ui.card().classes("glass-card q-pa-sm full-width q-mb-sm"):
+            ui.label("🔢 数値列").classes("text-subtitle2")
+            with ui.row().classes("q-gutter-sm items-end"):
+                ui.select(
+                    options={
+                        "standard": "StandardScaler (平均0, 分散1)",
+                        "robust": "RobustScaler (外れ値に頑健)",
+                        "minmax": "MinMaxScaler (0-1正規化)",
+                        "maxabs": "MaxAbsScaler",
+                        "none": "なし",
+                    },
+                    label="スケーラー",
+                    value=state.get("num_scaler", "standard"),
+                    on_change=lambda e: state.update({"num_scaler": e.value}),
+                ).classes("w-56")
+
+                ui.select(
+                    options={
+                        "median": "中央値で補完",
+                        "mean": "平均値で補完",
+                        "knn": "KNN Imputer",
+                        "iterative": "IterativeImputer (MICE)",
+                        "drop": "欠損行を削除",
+                    },
+                    label="欠損値処理",
+                    value=state.get("num_imputer", "median"),
+                    on_change=lambda e: state.update({"num_imputer": e.value}),
+                ).classes("w-48")
+
+                ui.select(
+                    options={
+                        "none": "なし",
+                        "boxcox": "Box-Cox変換",
+                        "yeojohnson": "Yeo-Johnson変換",
+                        "quantile_uniform": "QuantileTransformer (uniform)",
+                        "quantile_normal": "QuantileTransformer (normal)",
+                        "log1p": "log(1+x)変換",
+                    },
+                    label="非線形変換",
+                    value=state.get("num_transform", "none"),
+                    on_change=lambda e: state.update({"num_transform": e.value}),
+                ).classes("w-56")
+
+        # カテゴリ列の前処理
+        with ui.card().classes("glass-card q-pa-sm full-width q-mb-sm"):
+            ui.label("🔤 カテゴリ列").classes("text-subtitle2")
+            with ui.row().classes("q-gutter-sm items-end"):
+                ui.select(
+                    options={
+                        "onehot": "OneHotEncoding",
+                        "ordinal": "OrdinalEncoding",
+                        "target": "TargetEncoding",
+                        "binary": "BinaryEncoding",
+                    },
+                    label="エンコーディング",
+                    value=state.get("cat_encoder", "onehot"),
+                    on_change=lambda e: state.update({"cat_encoder": e.value}),
+                ).classes("w-48")
+
+                ui.select(
+                    options={
+                        "most_frequent": "最頻値で補完",
+                        "constant": "定数 ('missing')",
+                        "drop": "欠損行を削除",
+                    },
+                    label="欠損値処理",
+                    value=state.get("cat_imputer", "most_frequent"),
+                    on_change=lambda e: state.update({"cat_imputer": e.value}),
+                ).classes("w-48")
+
+    # ────────────────────────────────────────────
+    # 3. 特徴量生成・選択
+    # ────────────────────────────────────────────
+    with ui.expansion("🎯 特徴量生成・選択", icon="filter_alt").classes("full-width"):
+        # 特徴量生成
+        ui.label("生成").classes("text-subtitle2")
+        with ui.row().classes("q-gutter-sm"):
+            ui.checkbox(
+                "PolynomialFeatures（交互作用項）",
+                value=state.get("do_polynomial", False),
+                on_change=lambda e: state.update({"do_polynomial": e.value}),
+            ).tooltip("二次の交互作用項を自動生成します。列数が大幅に増加するため注意。")
+
+            if state.get("do_polynomial"):
+                ui.number(
+                    label="次数", value=state.get("poly_degree", 2),
+                    min=2, max=3, step=1,
+                    on_change=lambda e: state.update({"poly_degree": int(e.value)}),
+                ).classes("w-20")
+
+                ui.checkbox(
+                    "interaction_only",
+                    value=state.get("poly_interaction_only", True),
+                    on_change=lambda e: state.update({"poly_interaction_only": e.value}),
+                ).tooltip("True: 交互作用のみ（x1*x2）、False: 二乗項も含む（x1^2, x1*x2）")
+
+        ui.separator().classes("q-my-xs")
+
+        # 特徴量選択
+        ui.label("選択").classes("text-subtitle2")
+        _selector_label = "回帰" if task == "regression" else "分類"
         ui.select(
-            options=["auto", "standard", "robust", "minmax", "none"],
-            label="スケーラー",
-            value=state.get("scaler", "auto"),
-            on_change=lambda e: state.update({"scaler": e.value}),
-        ).classes("col-2").tooltip("特徴量の正規化手法を選択します。")
+            options={
+                "none": "選択しない（全特徴量を使用）",
+                "variance": "VarianceThreshold (分散閾値)",
+                "selectkbest_f": f"SelectKBest (F-test, {_selector_label})",
+                "selectkbest_mi": f"SelectKBest (Mutual Info, {_selector_label})",
+                "select_from_model_lasso": "SelectFromModel (Lasso / L1)",
+                "select_from_model_rf": "SelectFromModel (RandomForest)",
+                "rfe": "RFE (再帰的特徴量削除)",
+                "boruta": "Boruta (全関連特徴量選択)",
+            },
+            label="特徴量選択手法",
+            value=state.get("feature_selector", "none"),
+            on_change=lambda e: state.update({"feature_selector": e.value}),
+        ).classes("full-width").tooltip(
+            "SelectFromModelやBorutaは内部でモデルを使用。タスク（回帰/分類）に自動適応。"
+        )
 
-    # ── モデル選択 ──
+        if state.get("feature_selector", "none") not in ("none", "variance"):
+            ui.number(
+                label="選択する特徴量数 (k)",
+                value=state.get("n_features_to_select", 20),
+                min=1, max=500, step=1,
+                on_change=lambda e: state.update({"n_features_to_select": int(e.value)}),
+            ).classes("w-40")
+
+    # ────────────────────────────────────────────
+    # 4. モデル選択
+    # ────────────────────────────────────────────
     ui.separator()
     ui.label("🤖 使用するモデル").classes("text-subtitle1 q-mt-md")
 
     try:
         from backend.models.factory import list_models, get_default_automl_models
 
-        task = state.get("task_type", "regression")
-        if task == "auto":
-            target = state.get("target_col")
-            task = "regression" if (target and state["df"] is not None
-                                    and pd.api.types.is_float_dtype(state["df"][target])) else "classification"
-
         available = list_models(task=task, available_only=True)
         defaults = get_default_automl_models(task=task)
 
         if "selected_models" not in state or not state["selected_models"]:
             state["selected_models"] = defaults
+
+        # クイック選択ボタン
+        with ui.row().classes("q-gutter-sm q-mb-sm"):
+            def _select_all():
+                state["selected_models"] = [m["key"] for m in available]
+                ui.notify(f"全{len(available)}モデルを選択", type="info")
+            def _select_defaults():
+                state["selected_models"] = defaults
+                ui.notify(f"デフォルト{len(defaults)}モデルを選択", type="info")
+            def _select_fast():
+                fast_keys = [m["key"] for m in available
+                             if any(t in m.get("tags", []) for t in ["linear", "tree"])]
+                state["selected_models"] = fast_keys[:8]
+                ui.notify(f"高速{len(fast_keys[:8])}モデルを選択", type="info")
+
+            ui.button("デフォルト", on_click=_select_defaults).props("outline size=sm no-caps color=cyan")
+            ui.button("高速モデルのみ", on_click=_select_fast).props("outline size=sm no-caps color=teal")
+            ui.button("全モデル", on_click=_select_all).props("flat size=sm no-caps color=grey")
+            n_sel = len(state.get("selected_models", []))
+            ui.badge(f"{n_sel}選択中", color="cyan").props("outline")
 
         # カテゴリ分け
         categories: dict[str, list] = {"線形系": [], "カーネル系": [], "決定木系": [], "その他": []}
@@ -755,19 +955,22 @@ def _render_pipeline(state: dict) -> None:
                                 lambda e, key=m["key"]: _toggle_model(state, key, e.value)
                             )
 
-        # 選択数表示
-        n_sel = len(state.get("selected_models", []))
-        ui.label(f"📋 {n_sel}モデル選択中").classes("text-caption text-grey-5 q-mt-sm")
-
         # ── 選択モデルのパラメータ自動UI ──
         _render_model_auto_params(state, available)
 
     except Exception as ex:
         ui.label(f"モデル一覧取得エラー: {ex}").classes("text-red")
 
-    # ── パイプライン詳細設定（上級者用折りたたみ） ──
+    # ────────────────────────────────────────────
+    # 5. 単調制約（説明変数ごと）
+    # ────────────────────────────────────────────
+    _render_monotonic_constraints(state, df, target_col)
+
+    # ────────────────────────────────────────────
+    # 6. 詳細設定（上級者用折りたたみ）
+    # ────────────────────────────────────────────
     ui.separator()
-    with ui.expansion("🔬 パイプライン詳細設定（上級者）", icon="tune").classes("full-width q-mt-md"):
+    with ui.expansion("🔬 その他の詳細設定", icon="tune").classes("full-width q-mt-md"):
         with ui.row().classes("q-gutter-md"):
             ui.checkbox("EDA実行", value=state.get("do_eda", True)).on_value_change(
                 lambda e: state.update({"do_eda": e.value})
@@ -784,6 +987,40 @@ def _render_pipeline(state: dict) -> None:
             ui.checkbox("SHAP解析", value=state.get("do_shap", True)).on_value_change(
                 lambda e: state.update({"do_shap": e.value})
             )
+
+
+def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str) -> None:
+    """説明変数ごとの単調制約UI。"""
+    numeric_cols = [c for c in df.select_dtypes(include='number').columns
+                    if c != target_col and c not in state.get("exclude_cols", [])]
+
+    if not numeric_cols:
+        return
+
+    with ui.expansion(
+        f"📐 単調制約（{len(numeric_cols)}数値列）", icon="trending_up",
+    ).classes("full-width q-mt-sm"):
+        ui.label(
+            "各説明変数の目的変数に対する単調増加/減少の制約を設定できます。"
+            "XGBoost, LightGBM, monotonic kernel等で利用されます。デフォルトは制約なし。"
+        ).classes("text-caption text-grey q-mb-sm")
+
+        if "monotonic_constraints" not in state:
+            state["monotonic_constraints"] = {}
+
+        constraints = state["monotonic_constraints"]
+
+        # テーブル形式で表示
+        for col in numeric_cols:
+            current = constraints.get(col, 0)
+            with ui.row().classes("items-center q-gutter-xs full-width q-mb-xs"):
+                ui.label(col).classes("text-body2").style("width: 200px; overflow: hidden; text-overflow: ellipsis;")
+                sel = ui.select(
+                    options={0: "制約なし", 1: "↗ 単調増加", -1: "↘ 単調減少"},
+                    value=current,
+                    on_change=lambda e, c=col: constraints.update({c: e.value}),
+                ).props("dense outlined").classes("w-36")
+                sel.tooltip(f"{col}: 0=制約なし, 1=単調増加, -1=単調減少")
 
 
 def _toggle_model(state: dict, key: str, checked: bool) -> None:

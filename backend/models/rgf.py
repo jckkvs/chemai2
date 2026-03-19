@@ -74,8 +74,23 @@ class _RGFCore:
         """フォレスト状態の初期化。"""
         self.trees_: list[DecisionTreeRegressor] = []
         self.leaf_offsets_: list[int] = []  # 各木の葉インデックスのオフセット
+        self.leaf_id_maps_: list[dict[int, int]] = []  # 各木の葉ID→ローカルIDマッピング
+        self.leaf_counts_: list[int] = []  # 各木の葉数
         self.weights_: np.ndarray = np.array([])  # 全葉重み
         self._total_leaves: int = 0
+
+    def _register_tree_leaves(self, tree: DecisionTreeRegressor, X_train: np.ndarray) -> int:
+        """
+        新しい木のfit直後に呼び出し、葉IDマッピングを記録する。
+        Returns: この木の葉数
+        """
+        leaf_ids = tree.apply(X_train)
+        unique = np.unique(leaf_ids)
+        local_map = {int(lid): j for j, lid in enumerate(unique)}
+        self.leaf_id_maps_.append(local_map)
+        n_leaves = len(unique)
+        self.leaf_counts_.append(n_leaves)
+        return n_leaves
 
     def _get_leaf_indicators(
         self,
@@ -84,6 +99,7 @@ class _RGFCore:
         """
         全木の葉インジケータ行列 Φ を構築。
         Φ[i, k] = 1 iff サンプル i が葉 k に落ちる
+        fit時に記録した葉IDマッピングを使用し、train/predict間の列数整合を保証。
 
         Returns:
             shape (n_samples, total_leaves)
@@ -92,15 +108,14 @@ class _RGFCore:
             return np.zeros((X.shape[0], 0))
 
         cols = []
-        for tree, offset in zip(self.trees_, self.leaf_offsets_):
+        for tree, leaf_map, n_leaves in zip(self.trees_, self.leaf_id_maps_, self.leaf_counts_):
             leaf_ids = tree.apply(X)               # shape (n,)
-            unique   = np.unique(leaf_ids)
-            n_leaves = len(unique)
-            # 各葉にローカルID (0..n_leaves-1) をマッピング
-            local_id = {lid: j for j, lid in enumerate(unique)}
             ind = np.zeros((X.shape[0], n_leaves), dtype=np.float32)
             for i, lid in enumerate(leaf_ids):
-                ind[i, local_id[lid]] = 1.0
+                local = leaf_map.get(int(lid))
+                if local is not None:
+                    ind[i, local] = 1.0
+                # predict時にtrain時に見なかった葉に落ちた場合は0ベクトル（安全）
             cols.append(ind)
 
         return np.hstack(cols)     # (n, total_leaves)
@@ -223,8 +238,8 @@ class RGFRegressor(_RGFCore, BaseEstimator, RegressorMixin):
             self.trees_.append(tree)
             self.leaf_offsets_.append(self._total_leaves)
 
-            # 葉数を更新
-            n_new_leaves = len(np.unique(tree.apply(X_arr)))
+            # 葉IDマッピングを記録し、葉数を更新
+            n_new_leaves = self._register_tree_leaves(tree, X_arr)
             self._total_leaves += n_new_leaves
 
             # --- Step b: 全面更新 ---
@@ -355,16 +370,15 @@ class RGFClassifier(_RGFCore, BaseEstimator, ClassifierMixin):
             tree.fit(X_sub, r_sub)
             self.trees_.append(tree)
             self.leaf_offsets_.append(self._total_leaves)
-            n_new = len(np.unique(tree.apply(X_arr)))
+            n_new = self._register_tree_leaves(tree, X_arr)
             self._total_leaves += n_new
 
-            # 全面更新: Φw≈logit(y) - F0 を近似
+            # 全面更新: Φw を y-F0 の疑似残差に近似
+            # 注: y_intは0/1なのでlogit変換すると±infになるため、
+            #     回帰と同様に (y - init_value) をターゲットにする
             Phi = self._get_leaf_indicators(X_arr)
-            target_logit = np.log(
-                np.clip(y_int.astype(float), 1e-7, 1 - 1e-7) /
-                np.clip(1 - y_int.astype(float), 1e-7, 1 - 1e-7)
-            ) - self.F0_
-            self._update_weights(Phi, target_logit, self.lambda_l2)
+            full_residuals = y_int.astype(float) - _sigmoid(np.full(len(y_int), self.F0_))
+            self._update_weights(Phi, full_residuals, self.lambda_l2)
             if self.lambda_l1 > 0:
                 self.weights_ = np.sign(self.weights_) * np.maximum(
                     0.0, np.abs(self.weights_) - self.lambda_l1

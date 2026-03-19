@@ -598,8 +598,6 @@ def wrap_with_soft_monotonic(
     if not any(c != 0 for c in monotonic_constraints):
         return estimator
 
-    is_classifier = hasattr(estimator, "predict_proba") and hasattr(estimator, "classes_")
-    # fitしていないのでclasses_はない → ClassifierMixin の継承でチェック
     from sklearn.base import is_classifier as _is_clf
     if _is_clf(estimator):
         logger.info(

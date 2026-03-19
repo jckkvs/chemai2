@@ -17,8 +17,12 @@ from pathlib import Path
 # backendへのパスを追加
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import logging
+
 import pandas as pd
 from nicegui import ui, app
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
 # プレミアム ダークテーマ CSS
@@ -106,16 +110,25 @@ body {
 # ─────────────────────────────────────────────
 @ui.page("/")
 def main_page():
+    import numpy as np
+    from frontend_nicegui.components.data_tab import SAMPLE_SMILES, _auto_detect_columns
 
     # ── ページスコープの共有ステート ──
+    # サンプルデータを最初から自動ロード
+    _rng = np.random.RandomState(42)
+    _n = 25
+    _sample_df = pd.DataFrame({
+        "SMILES": _rng.choice(SAMPLE_SMILES, _n),
+        "solubility_logS": _rng.randn(_n) * 2 - 2,
+    })
     state = {
-        # データ
-        "df": None,
-        "filename": "",
+        # データ（サンプル自動ロード）
+        "df": _sample_df,
+        "filename": "sample_regression.csv",
         # 列役割
-        "target_col": "",
-        "smiles_col": "",
-        "task_type": "auto",
+        "target_col": "solubility_logS",
+        "smiles_col": "SMILES",
+        "task_type": "regression",
         "exclude_cols": [],
         "group_col": None,
         "time_col": None,
@@ -125,11 +138,25 @@ def main_page():
         "precalc_done": False,
         "selected_descriptors": [],
         "calc_summary": {},
-        # パイプライン
+        "_applied_recommendation": None,
+        # パイプライン: CV
+        "cv_key": "auto",
         "cv_folds": 5,
         "timeout": 300,
-        "scaler": "auto",
+        # パイプライン: 前処理
+        "num_scaler": "standard",
+        "num_imputer": "median",
+        "num_transform": "none",
+        "cat_encoder": "onehot",
+        "cat_imputer": "most_frequent",
+        # パイプライン: 特徴量生成・選択
+        "do_polynomial": False,
+        "feature_selector": "none",
+        # パイプライン: モデル
         "selected_models": [],
+        "model_params": {},
+        "monotonic_constraints": {},
+        # パイプライン: フラグ
         "do_eda": True,
         "do_prep": True,
         "do_eval": True,
@@ -162,12 +189,19 @@ def main_page():
                 ui.notify("🎯 目的変数を設定してください", type="warning")
                 return
 
-            from frontend_nicegui.components.analysis_runner import run_analysis
-            await run_analysis(
-                state,
-                analysis_status_container,
-                on_complete=lambda: main_tabs.set_value("results"),
-            )
+            # ボタン無効化（二重実行防止）
+            run_btn.disable()
+            run_btn.text = "⏳ 解析中..."
+            try:
+                from frontend_nicegui.components.analysis_runner import run_analysis
+                await run_analysis(
+                    state,
+                    analysis_status_container,
+                    on_complete=lambda: main_tabs.set_value("results"),
+                )
+            finally:
+                run_btn.enable()
+                run_btn.text = "🚀 解析開始"
 
         run_btn = ui.button(
             "🚀 解析開始", on_click=_run_analysis,
@@ -264,6 +298,50 @@ def main_page():
             from frontend_nicegui.components.results_tab import render_results_tab
             render_results_tab(state)
 
+    # ── SMILES列がある場合、特徴量計算のみバックグラウンドで自動実行 ──
+    # （解析は「解析開始」ボタンのクリックでのみ実行される）
+    async def _auto_compute_descriptors():
+        if state["df"] is not None and state.get("smiles_col"):
+            smiles_col = state["smiles_col"]
+            if smiles_col in state["df"].columns and not state.get("precalc_done"):
+                try:
+                    from nicegui import run
+                    from backend.chem.descriptors import compute_all_descriptors
+                    smiles_list = state["df"][smiles_col].dropna().tolist()
+                    ui.notify("⚗️ 全エンジンで記述子を自動計算中...", type="info", timeout=3000)
+                    df_desc = await run.io_bound(compute_all_descriptors, smiles_list)
+                    state["precalc_df"] = df_desc
+                    state["precalc_done"] = True
+                    ui.notify(
+                        f"✅ 記述子計算完了: {df_desc.shape[1]}個",
+                        type="positive", timeout=5000,
+                    )
+                    # 目的変数名から推薦記述子セットを自動適用
+                    _auto_apply_recommendation(state)
+                except Exception as e:
+                    logger.warning(f"自動記述子計算エラー: {e}")
+                    ui.notify(f"⚠️ 記述子計算エラー: {e}", type="warning", timeout=5000)
+
+    def _auto_apply_recommendation(state: dict):
+        """目的変数名から推薦記述子セットを自動適用する。"""
+        target_col = state.get("target_col", "")
+        if not target_col or state.get("_applied_recommendation"):
+            return
+        try:
+            from backend.chem.recommender import get_target_recommendation_by_name
+            rec = get_target_recommendation_by_name(target_col)
+            if rec:
+                state["selected_descriptors"] = [d.name for d in rec.descriptors]
+                state["_applied_recommendation"] = rec
+                ui.notify(
+                    f"📌 推薦適用: {rec.target_name} ({len(rec.descriptors)}記述子)",
+                    type="info", timeout=5000,
+                )
+        except ImportError:
+            pass
+
+    ui.timer(3.0, _auto_compute_descriptors, once=True)
+
 
 # ─────────────────────────────────────────────
 # ヘルプページ
@@ -324,7 +402,7 @@ def help_page():
 
 | 版 | コマンド | ポート |
 |---|---|---|
-| **NiceGUI** | `python frontend_nicegui/main.py` | **8080** |
+| **NiceGUI** | `python frontend_nicegui/main.py` | **8085** |
 | Streamlit | `streamlit run frontend_streamlit/app.py` | 8501 |
 | Django | `python frontend_django/manage.py runserver` | 8000 |
 """)
@@ -337,7 +415,8 @@ if __name__ in {"__main__", "__mp_main__"}:
     ui.run(
         title="ChemAI ML Studio",
         dark=True,
-        port=8080,
-        reload=True,
-        storage_secret="chemai-nicegui-secret",
+        port=8085,
+        reload=False,
+        storage_secret="chemai-v3-clean",
     )
+

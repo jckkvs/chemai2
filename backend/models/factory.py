@@ -61,8 +61,10 @@ except ImportError as e:
 try:
     from backend.models.rgf import RGFRegressor, RGFClassifier
     _rgf_available = True
-except ImportError as e:
+except (ImportError, Exception) as e:
     _rgf_available = False
+    RGFRegressor = None  # type: ignore[assignment,misc]
+    RGFClassifier = None  # type: ignore[assignment,misc]
     logger.warning(f"rgf モジュールロード失敗: {e}")
 
 
@@ -424,20 +426,25 @@ _REGRESSION_REGISTRY: dict[str, dict[str, Any]] = {
     },
     "ridgetree": {
         "name": "Ridge Tree Regressor",
-        "factory": _linear_tree_regressor,
+        "factory": lambda **kw: RidgeTreeRegressor(**kw),
         "default_params": {"max_depth": 5, "alpha": 1.0},
         "available": _linear_tree_available,
         "tags": ["tree", "linear", "interpretable"],
     },
-    # ─── RGF (フルスクラッチ) ───
-    "rgf": {
+}
+
+# ─── RGF （フルスクラッチ、利用可能時のみレジストリに追加） ───
+if _rgf_available:
+    _REGRESSION_REGISTRY["rgf"] = {
         "name": "RGF Regressor (Regularized Greedy Forest, scratch)",
         "class": RGFRegressor,
         "default_params": {"n_estimators": 100, "max_leaf_nodes": 32, "lambda_l2": 1.0},
-        "available": _rgf_available,
+        "available": True,
         "tags": ["ensemble", "tree", "regularized"],
-    },
-    # ─── imodels ───
+    }
+
+# ─── imodels (回帰) ───
+_REGRESSION_REGISTRY.update({
     "figs": {
         "name": "FIGS Regressor (imodels)",
         "factory": _figs_regressor,
@@ -466,7 +473,7 @@ _REGRESSION_REGISTRY: dict[str, dict[str, Any]] = {
         "available": bool(_imodels),
         "tags": ["tree", "interpretable"],
     },
-}
+})
 
 # ============================================================
 # 分類モデルのレジストリ
@@ -647,14 +654,6 @@ _CLASSIFICATION_REGISTRY: dict[str, dict[str, Any]] = {
         "available": _linear_tree_available,
         "tags": ["tree", "linear", "interpretable"],
     },
-    # ─── RGF (フルスクラッチ) ───
-    "rgf_c": {
-        "name": "RGF Classifier (Regularized Greedy Forest, scratch)",
-        "class": RGFClassifier,
-        "default_params": {"n_estimators": 100, "max_leaf_nodes": 32, "lambda_l2": 1.0},
-        "available": _rgf_available,
-        "tags": ["ensemble", "tree", "regularized"],
-    },
     # ─── imodels ───
     "figs_c": {
         "name": "FIGS Classifier (imodels)",
@@ -692,6 +691,16 @@ _CLASSIFICATION_REGISTRY: dict[str, dict[str, Any]] = {
         "tags": ["tree", "interpretable"],
     },
 }
+
+# ─── RGF （フルスクラッチ、利用可能時のみレジストリに追加） ───
+if _rgf_available:
+    _CLASSIFICATION_REGISTRY["rgf_c"] = {
+        "name": "RGF Classifier (Regularized Greedy Forest, scratch)",
+        "class": RGFClassifier,
+        "default_params": {"n_estimators": 100, "max_leaf_nodes": 32, "lambda_l2": 1.0},
+        "available": True,
+        "tags": ["ensemble", "tree", "regularized"],
+    }
 
 
 # ============================================================
