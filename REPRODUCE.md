@@ -138,12 +138,40 @@ python -m pytest tests/test_charge_extended.py \
 
 ## 6. アプリケーション起動
 
+3つのフロントエンドから選択できます：
+
+| フロントエンド | コマンド | ポート | 特徴 |
+|--------------|---------|--------|------|
+| Streamlit | `streamlit run frontend_streamlit/app.py` | 8501 | インタラクティブ分析向け |
+| NiceGUI | `python frontend_nicegui/main.py` | 8080 | ステッパーUI・ダークテーマ |
+| Django | `python frontend_django/manage.py runserver` | 8000 | マルチユーザー・ジョブ管理 |
+
+### Streamlit（推奨・最も機能が充実）
+
 ```bash
 cd frontend_streamlit
 streamlit run app.py --server.port 8501
 ```
 
 ブラウザで http://localhost:8501 を開きます。
+
+### NiceGUI
+
+```bash
+python frontend_nicegui/main.py
+```
+
+ブラウザで http://localhost:8080 を開きます。
+
+### Django
+
+```bash
+cd frontend_django
+python manage.py migrate
+python manage.py runserver 0.0.0.0:8000
+```
+
+ブラウザで http://localhost:8000 を開きます。
 
 ### 動作確認チェックリスト
 
