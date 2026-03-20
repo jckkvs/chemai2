@@ -2,29 +2,102 @@
 frontend_nicegui/components/analysis_runner.py
 
 解析実行コンポーネント: AutoMLEngine呼び出しとリアルタイム進捗表示。
+run.io_bound で重い計算をバックグラウンドスレッドにオフロードし、
+NiceGUI の WebSocket heartbeat をブロックしない。
 """
 from __future__ import annotations
 
 import logging
+import queue
 import traceback
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from nicegui import ui
+from nicegui import ui, run
 
 logger = logging.getLogger(__name__)
+
+# 解析ロック（二重実行防止）
+_analysis_running = False
+
+
+def _run_engine_sync(
+    df_work: pd.DataFrame,
+    target_col: str,
+    smiles_col: str | None,
+    group_col: str | None,
+    task: str,
+    model_keys: list[str] | None,
+    cv_folds: int,
+    timeout: int,
+    selected_desc: list[str] | None,
+    progress_queue: queue.Queue,
+    *,
+    cv_key: str = "auto",
+    model_params: dict[str, dict] | None = None,
+    preprocess_params: dict[str, Any] | None = None,
+    monotonic_constraints: dict[str, int] | None = None,
+) -> Any:
+    """
+    バックグラウンドスレッドで AutoMLEngine を実行する同期関数。
+
+    進捗情報は progress_queue に送信される。
+    NiceGUI の run.io_bound から呼ばれるため、
+    この関数内で UI 操作を行ってはいけない。
+
+    Implements: WebSocket切断修正 + パイプライン設定統合
+    注意点: run.cpu_bound ではなく run.io_bound を使用。
+            AutoMLEngine 内部で numpy/sklearn が GIL リリースするため、
+            io_bound（スレッド）で十分かつ pickle 不要で簡潔。
+    """
+    from backend.models.automl import AutoMLEngine
+
+    def progress_callback(step: int, total: int, msg: str) -> None:
+        """進捗をキューに送信（スレッドセーフ）"""
+        try:
+            progress_queue.put_nowait(("progress", step, total, msg))
+        except queue.Full:
+            pass  # キューが満杯なら進捗をスキップ
+
+    engine = AutoMLEngine(
+        task=task,
+        cv_folds=cv_folds,
+        cv_key=cv_key,
+        model_keys=model_keys if model_keys else None,
+        model_params=model_params,
+        preprocess_params=preprocess_params,
+        timeout_seconds=timeout,
+        progress_callback=progress_callback,
+        selected_descriptors=selected_desc,
+        monotonic_constraints_dict=monotonic_constraints,
+    )
+
+    result = engine.run(
+        df_work,
+        target_col=target_col,
+        smiles_col=smiles_col,
+        group_col=group_col,
+    )
+
+    return result
 
 
 async def run_analysis(state: dict[str, Any], status_container, on_complete=None) -> None:
     """
     AutoML解析を実行し、結果をstateに保存する。
 
+    重い計算は run.io_bound でバックグラウンドスレッドにオフロードし、
+    NiceGUI の WebSocket heartbeat をブロックしない。
+    進捗は queue.Queue + ui.timer でポーリング更新する。
+
     Args:
         state: 共有ステート辞書
         status_container: 進捗表示を描画するUIコンテナ
         on_complete: 完了時のコールバック
     """
+    global _analysis_running
+
     df = state.get("df")
     target_col = state.get("target_col")
 
@@ -32,24 +105,42 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         ui.notify("データと目的変数を設定してください", type="warning")
         return
 
+    if _analysis_running:
+        ui.notify("⏳ 解析が既に実行中です", type="info")
+        return
+
+    _analysis_running = True
+
     # 進捗表示の構築
     status_container.clear()
     with status_container:
         progress_label = ui.label("⏳ 解析を開始しています...").classes("text-lg q-mb-sm")
         progress_bar = ui.linear_progress(value=0, show_value=False).classes("q-mb-sm")
         progress_detail = ui.label("").classes("text-caption text-grey-5")
-        log_container = ui.column().classes("full-width q-mt-md")
 
-    def progress_callback(step: int, total: int, msg: str) -> None:
-        progress_bar.value = step / total
-        progress_label.text = f"⏳ {msg}"
-        progress_detail.text = f"ステップ {step}/{total}"
-        with log_container:
-            ui.label(f"  [{step}/{total}] {msg}").classes("text-caption text-grey-6")
+    # 進捗キュー（スレッドセーフ）
+    progress_queue: queue.Queue = queue.Queue(maxsize=100)
+
+    # 進捗ポーリングタイマー（最新のステップのみ表示、羅列しない）
+    def _poll_progress():
+        """キューから進捗情報を取得してUI更新（最新のみ）"""
+        latest = None
+        while True:
+            try:
+                item = progress_queue.get_nowait()
+                if item[0] == "progress":
+                    latest = item
+            except queue.Empty:
+                break
+        if latest:
+            _, step, total, msg = latest
+            progress_bar.value = step / total if total > 0 else 0
+            progress_label.text = f"⏳ {msg}"
+            progress_detail.text = f"ステップ {step}/{total}"
+
+    timer = ui.timer(0.5, _poll_progress)
 
     try:
-        from backend.models.automl import AutoMLEngine
-
         # タスク判定
         task = state.get("task_type", "auto")
 
@@ -68,28 +159,53 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         # 記述子選択
         selected_desc = state.get("selected_descriptors")
 
-        # エンジンの構築
-        engine = AutoMLEngine(
-            task=task,
-            cv_folds=state.get("cv_folds", 5),
-            model_keys=model_keys if model_keys else None,
-            timeout_seconds=state.get("timeout", 300),
-            progress_callback=progress_callback,
-            selected_descriptors=selected_desc,
-        )
-
         # 除外列の処理
         exclude_cols = state.get("exclude_cols", [])
         df_work = df.copy()
         if exclude_cols:
             df_work = df_work.drop(columns=[c for c in exclude_cols if c in df_work.columns], errors="ignore")
 
-        # 実行
-        result = engine.run(
+        # ── パイプライン設定をstateから抽出 ──
+        # 前処理パラメータ
+        preprocess_params = {}
+        for key in [
+            "num_scaler", "num_imputer", "num_transform",
+            "cat_encoder", "cat_imputer",
+            "feature_selector", "n_features_to_select",
+            "do_polynomial", "poly_degree", "poly_interaction_only",
+        ]:
+            if key in state:
+                preprocess_params[key] = state[key]
+
+        # モデルパラメータ（動的UI）
+        model_params = state.get("model_params") or None
+
+        # 単調制約（0以外の制約のみ）
+        mono_raw = state.get("monotonic_constraints", {})
+        monotonic_constraints = {k: v for k, v in mono_raw.items() if v != 0} or None
+
+        # CV方式
+        cv_key = state.get("cv_key", "auto")
+
+        # ══════════════════════════════════════════════════════
+        # run.io_bound でバックグラウンドスレッドにオフロード
+        # ══════════════════════════════════════════════════════
+        result = await run.io_bound(
+            _run_engine_sync,
             df_work,
-            target_col=target_col,
-            smiles_col=smiles_col if smiles_col and smiles_col in df_work.columns else None,
-            group_col=state.get("group_col"),
+            target_col,
+            smiles_col if smiles_col and smiles_col in df_work.columns else None,
+            state.get("group_col"),
+            task,
+            model_keys if model_keys else None,
+            state.get("cv_folds", 5),
+            state.get("timeout", 300),
+            selected_desc,
+            progress_queue,
+            cv_key=cv_key,
+            model_params=model_params,
+            preprocess_params=preprocess_params if preprocess_params else None,
+            monotonic_constraints=monotonic_constraints,
         )
 
         # 結果の保存
@@ -114,9 +230,13 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             on_complete()
 
     except Exception as ex:
-        progress_label.text = f"❌ エラーが発生しました"
-        progress_detail.text = str(ex)
-        with log_container:
-            ui.label(f"❌ {traceback.format_exc()}").classes("text-caption text-red")
-        ui.notify(f"解析エラー: {ex}", type="negative")
+        error_msg = str(ex)
+        short_msg = error_msg[:200] + "..." if len(error_msg) > 200 else error_msg
+        progress_label.text = "❌ エラーが発生しました"
+        progress_detail.text = short_msg
+        ui.notify(f"解析エラー: {short_msg}", type="negative", timeout=8000)
         logger.error(f"AutoML実行エラー: {traceback.format_exc()}")
+
+    finally:
+        _analysis_running = False
+        timer.deactivate()
