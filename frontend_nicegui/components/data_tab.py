@@ -648,6 +648,94 @@ def _render_eda(state: dict) -> None:
                 if high_na_cols:
                     ui.label(f"⚠️ 高欠損列 >50% ({len(high_na_cols)}列): {', '.join(high_na_cols[:10])}{'...' if len(high_na_cols) > 10 else ''}").classes("text-caption text-amber")
 
+    # ── 🧹 データクリーニングアクション ──
+    ui.separator()
+    ui.label("🧹 データクリーニングアクション").classes("text-subtitle1 q-mt-md")
+    ui.label(
+        "EDAの結果に基づいて、不要な列や欠損行をワンクリックで処理できます。"
+    ).classes("text-caption text-grey q-mb-sm")
+
+    with ui.row().classes("q-gutter-sm full-width flex-wrap"):
+
+        # ── 定数列を除外 ──
+        const_all = [c for c in df.columns if df[c].nunique() <= 1 and c != state.get("target_col")]
+        if precalc_df is not None:
+            const_desc = [c for c in precalc_df.columns if precalc_df[c].nunique() <= 1]
+        else:
+            const_desc = []
+        n_const = len(const_all) + len(const_desc)
+
+        def _remove_const():
+            excluded = list(state.get("exclude_cols", []))
+            added = [c for c in const_all if c not in excluded]
+            excluded.extend(added)
+            state["exclude_cols"] = excluded
+            # precalc_dfからも定数列を除外
+            if precalc_df is not None and const_desc:
+                state["precalc_df"] = precalc_df.drop(columns=const_desc, errors="ignore")
+            ui.notify(f"✅ 定数列 {n_const}列を除外しました", type="positive")
+
+        btn_const = ui.button(
+            f"🗑️ 定数列を除外 ({n_const}列)",
+            on_click=_remove_const,
+        ).props("outline color=amber size=sm no-caps")
+        if n_const == 0:
+            btn_const.disable()
+
+        # ── 高欠損列を除外 ──
+        high_na_thresh = 0.5
+        high_na_all = [c for c in df.columns
+                       if df[c].isna().mean() > high_na_thresh
+                       and c != state.get("target_col")]
+        n_high_na = len(high_na_all)
+
+        def _remove_high_na():
+            excluded = list(state.get("exclude_cols", []))
+            added = [c for c in high_na_all if c not in excluded]
+            excluded.extend(added)
+            state["exclude_cols"] = excluded
+            ui.notify(f"✅ 高欠損列(>50%) {len(added)}列を除外しました", type="positive")
+
+        btn_na = ui.button(
+            f"🗑️ 高欠損列を除外 ({n_high_na}列, >50%)",
+            on_click=_remove_high_na,
+        ).props("outline color=amber size=sm no-caps")
+        if n_high_na == 0:
+            btn_na.disable()
+
+        # ── 欠損行を削除 ──
+        n_na_rows = int(df.isna().any(axis=1).sum())
+
+        def _drop_na_rows():
+            state["df"] = df.dropna().reset_index(drop=True)
+            dropped = n_na_rows
+            ui.notify(f"✅ 欠損行 {dropped}行を削除 → {len(state['df'])}行", type="positive")
+
+        btn_drop = ui.button(
+            f"🗑️ 欠損行を削除 ({n_na_rows}行)",
+            on_click=_drop_na_rows,
+        ).props("outline color=red size=sm no-caps")
+        if n_na_rows == 0:
+            btn_drop.disable()
+
+    # ── 列を手動で除外（セレクタ） ──
+    with ui.expansion("🔧 列を手動で除外", icon="remove_circle").classes("full-width q-mt-sm"):
+        exclude_opts = [c for c in df.columns
+                        if c != state.get("target_col")
+                        and c != state.get("smiles_col")]
+        current_excluded = state.get("exclude_cols", [])
+
+        def _on_exclude_change(e):
+            state["exclude_cols"] = e.value or []
+            ui.notify(f"除外列を更新: {len(e.value or [])}列", type="info")
+
+        ui.select(
+            options=exclude_opts,
+            label="除外する列を選択",
+            value=current_excluded,
+            on_change=_on_exclude_change,
+        ).classes("full-width").props("multiple clearable use-chips outlined dense")
+
     # ── データプレビュー ──
     ui.separator()
     ui.label("🔍 データプレビュー（先頭8行）").classes("text-subtitle2 q-mt-md")

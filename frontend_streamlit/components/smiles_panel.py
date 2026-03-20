@@ -137,11 +137,13 @@ _PURPOSE_CATEGORIES = [
 ]
 
 # 目的別おすすめプリセット
+# ※ 名称は化学的に正確に。溶解度は物性の一種であり並列しない。
+# ※ QSAR/QSPRは手法名であり目的分類としては不適切。使い分ける用途で区分。
 _PRESETS = {
-    "🎯 溶解度・物性予測": ["RDKitAdapter", "GroupContribAdapter"],
-    "💊 活性予測（QSAR）": ["RDKitAdapter", "SkfpAdapter"],
-    "🔬 網羅的QSPR": ["RDKitAdapter", "MordredAdapter"],
-    "🧠 深層学習活用": ["MolAIAdapter", "Mol2VecAdapter"],
+    "🧪 基本物性（沸点・密度等）": ["RDKitAdapter", "GroupContribAdapter"],
+    "🔑 構造活性相関（FP中心）": ["RDKitAdapter", "SkfpAdapter"],
+    "📐 網羅的記述子（特徴量選択前提）": ["RDKitAdapter", "MordredAdapter"],
+    "🧠 深層学習表現": ["MolAIAdapter", "Mol2VecAdapter"],
     "⚛️ 量子化学込み": ["RDKitAdapter", "XTBAdapter", "CosmoAdapter"],
 }
 

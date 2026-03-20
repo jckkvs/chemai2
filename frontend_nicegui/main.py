@@ -110,24 +110,16 @@ body {
 # ─────────────────────────────────────────────
 @ui.page("/")
 def main_page():
-    import numpy as np
-    from frontend_nicegui.components.data_tab import SAMPLE_SMILES, _auto_detect_columns
 
     # ── ページスコープの共有ステート ──
-    # サンプルデータを最初から自動ロード
-    _rng = np.random.RandomState(42)
-    _n = 25
-    _sample_df = pd.DataFrame({
-        "SMILES": _rng.choice(SAMPLE_SMILES, _n),
-        "solubility_logS": _rng.randn(_n) * 2 - 2,
-    })
+    # 空の状態で開始。ユーザーがデータを読み込むまで待機。
     state = {
-        # データ（サンプル自動ロード）
-        "df": _sample_df,
-        "filename": "sample_regression.csv",
-        # 列役割
-        "target_col": "solubility_logS",
-        "smiles_col": "SMILES",
+        # データ（未読み込み）
+        "df": None,
+        "filename": None,
+        # 列役割（未設定）
+        "target_col": None,
+        "smiles_col": None,
         "task_type": "regression",
         "exclude_cols": [],
         "group_col": None,
@@ -298,29 +290,47 @@ def main_page():
             from frontend_nicegui.components.results_tab import render_results_tab
             render_results_tab(state)
 
-    # ── SMILES列がある場合、特徴量計算のみバックグラウンドで自動実行 ──
-    # （解析は「解析開始」ボタンのクリックでのみ実行される）
+    # ── SMILES列がある場合、特徴量計算をバックグラウンドで自動実行 ──
+    # precalc_done=False の間だけ発火する定期ポーリング型。
+    # SMILES列変更時に precalc_done=False にリセットすれば再計算がトリガーされる。
+    _computing = {"active": False}  # 二重実行防止フラグ
+
     async def _auto_compute_descriptors():
-        if state["df"] is not None and state.get("smiles_col"):
-            smiles_col = state["smiles_col"]
-            if smiles_col in state["df"].columns and not state.get("precalc_done"):
-                try:
-                    from nicegui import run
-                    from backend.chem.descriptors import compute_all_descriptors
-                    smiles_list = state["df"][smiles_col].dropna().tolist()
-                    ui.notify("⚗️ 全エンジンで記述子を自動計算中...", type="info", timeout=3000)
-                    df_desc = await run.io_bound(compute_all_descriptors, smiles_list)
-                    state["precalc_df"] = df_desc
-                    state["precalc_done"] = True
-                    ui.notify(
-                        f"✅ 記述子計算完了: {df_desc.shape[1]}個",
-                        type="positive", timeout=5000,
-                    )
-                    # 目的変数名から推薦記述子セットを自動適用
-                    _auto_apply_recommendation(state)
-                except Exception as e:
-                    logger.warning(f"自動記述子計算エラー: {e}")
-                    ui.notify(f"⚠️ 記述子計算エラー: {e}", type="warning", timeout=5000)
+        if _computing["active"]:
+            return  # 既に計算中
+        if state["df"] is None or not state.get("smiles_col"):
+            return
+        if state.get("precalc_done"):
+            return  # 計算済み
+
+        smiles_col = state["smiles_col"]
+        if smiles_col not in state["df"].columns:
+            return
+
+        _computing["active"] = True
+        try:
+            from nicegui import run
+            from backend.chem.descriptors import compute_all_descriptors
+            smiles_list = state["df"][smiles_col].dropna().tolist()
+            if not smiles_list:
+                state["precalc_done"] = True
+                return
+            ui.notify("⚗️ 全エンジンで記述子を自動計算中...", type="info", timeout=3000)
+            df_desc = await run.io_bound(compute_all_descriptors, smiles_list)
+            state["precalc_df"] = df_desc
+            state["precalc_done"] = True
+            ui.notify(
+                f"✅ 記述子計算完了: {df_desc.shape[1]}個",
+                type="positive", timeout=5000,
+            )
+            # 目的変数名から推薦記述子セットを自動適用
+            _auto_apply_recommendation(state)
+        except Exception as e:
+            logger.warning(f"自動記述子計算エラー: {e}")
+            ui.notify(f"⚠️ 記述子計算エラー: {e}", type="warning", timeout=5000)
+            state["precalc_done"] = True  # エラー時も無限ループ防止
+        finally:
+            _computing["active"] = False
 
     def _auto_apply_recommendation(state: dict):
         """目的変数名から推薦記述子セットを自動適用する。"""
@@ -340,7 +350,8 @@ def main_page():
         except ImportError:
             pass
 
-    ui.timer(3.0, _auto_compute_descriptors, once=True)
+    # 5秒ごとにチェック。precalc_done=Falseなら計算実行、Trueなら何もしない。
+    ui.timer(5.0, _auto_compute_descriptors)
 
 
 # ─────────────────────────────────────────────

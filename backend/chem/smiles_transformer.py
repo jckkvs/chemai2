@@ -99,35 +99,58 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
         if has_psmiles:
             logger.info("PSMILESを検出しました。ポリマー用記述子抽出モード(PSmilesAdapter)に切り替えます。")
             adapters.append(PSmilesAdapter())
-            # Mordred等はモノマー近似したMolでも動く可能性があるが、安定性のため今回はPSmiles優先
+            # PSMILES は従来アダプタを使用
+            desc_dfs: list[pd.DataFrame] = []
+            for adapter in adapters:
+                if adapter.is_available():
+                    try:
+                        res = adapter.compute(smiles_list)
+                        desc_dfs.append(res.descriptors)
+                    except Exception as e:
+                        logger.warning(f"{adapter.name}: 計算エラー - {e}")
+            if not desc_dfs:
+                return pd.DataFrame()
+            X_chem = pd.concat(desc_dfs, axis=1)
+            X_chem = X_chem.loc[:, ~X_chem.columns.duplicated()]
+            return X_chem
         else:
-            # 通常の低分子SMILES
+            # ── プラグインレジストリ経由で全記述子を計算 ──
+            try:
+                from backend.chem.descriptors import compute_all_descriptors
+                X_chem = compute_all_descriptors(smiles_list)
+                if not X_chem.empty:
+                    # 選択されている場合はフィルタリング
+                    if self.selected_descriptors:
+                        valid = [c for c in self.selected_descriptors if c in X_chem.columns]
+                        if valid:
+                            X_chem = X_chem[valid]
+                    return X_chem
+                else:
+                    logger.warning("プラグインレジストリから記述子が0件。従来アダプタにフォールバック。")
+            except Exception as e:
+                logger.warning(f"プラグインレジストリ経由の計算に失敗: {e}。従来アダプタにフォールバック。")
+
+            # フォールバック: 従来のRDKit+Mordredアダプタ
+            from backend.chem import RDKitAdapter, MordredAdapter
             adapters = [
                 RDKitAdapter(compute_fp=True),
                 MordredAdapter(selected_only=True),
             ]
-            
-        desc_dfs: list[pd.DataFrame] = []
-        for adapter in adapters:
-            if adapter.is_available():
-                try:
-                    # 全てのアダプタはBaseChemAdapterを継承し、compute()を実装している
-                    res = adapter.compute(smiles_list)
-                    res_df = res.descriptors
-                        
-                    desc_dfs.append(res_df)
-                except Exception as e:
-                    logger.warning(f"{adapter.name}: 計算エラー - {e}")
-                    
-        if not desc_dfs:
-            return pd.DataFrame()
-            
-        X_chem = pd.concat(desc_dfs, axis=1)
-        # 重複列名を除去（RDKitとMordredの両方で計算される記述子があるため）
-        X_chem = X_chem.loc[:, ~X_chem.columns.duplicated()]
-        
-        # 選択されている場合はフィルタリング (PSMILES時はスキップ)
-        if self.selected_descriptors and not has_psmiles:
+            desc_dfs = []
+            for adapter in adapters:
+                if adapter.is_available():
+                    try:
+                        res = adapter.compute(smiles_list)
+                        desc_dfs.append(res.descriptors)
+                    except Exception as e:
+                        logger.warning(f"{adapter.name}: 計算エラー - {e}")
+            if not desc_dfs:
+                return pd.DataFrame()
+            X_chem = pd.concat(desc_dfs, axis=1)
+            X_chem = X_chem.loc[:, ~X_chem.columns.duplicated()]
+
+        # 選択されている場合はフィルタリング
+        if self.selected_descriptors:
             valid = [c for c in self.selected_descriptors if c in X_chem.columns]
             if valid:
                 X_chem = X_chem[valid]
@@ -157,12 +180,13 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
                 X_chem[col] = 0.0
         X_chem = X_chem[self._descriptor_cols].reset_index(drop=True)
 
-        # 非SMILES列（記述子以外の生データ列）から、新しく計算する記述子と重複する名前を除去
-        # これにより EDA フェーズで事前計算された列があっても二重定義にならずに済む
-        # ※SMILES列自体はドロップせず、後続の ColumnTransformer 等で処理(除外)させるのが安全
+        # 非SMILES列（記述子以外の生データ列）から、SMILES列と新しく計算した記述子の重複列を除去
+        # SMILES列は記述子で置換済みなので、文字列のまま残すとsklearnモデルが
+        # ValueError: could not convert string to float を発生させる
         X_rest = X.reset_index(drop=True)
-        X_rest = X_rest.drop(columns=[c for c in self._descriptor_cols if c in X_rest.columns], errors="ignore")
-        
+        drop_cols = [self.smiles_col] + [c for c in self._descriptor_cols if c in X_rest.columns]
+        X_rest = X_rest.drop(columns=[c for c in drop_cols if c in X_rest.columns], errors="ignore")
+
         return pd.concat([X_rest, X_chem], axis=1)
 
     def get_feature_names_out(self, input_features: Any = None) -> np.ndarray:

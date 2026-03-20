@@ -46,6 +46,8 @@ def render_results_tab(state: dict[str, Any]) -> None:
         tab_eval = ui.tab("eval", label="📈 モデル評価", icon="leaderboard")
         tab_data = ui.tab("data", label="📊 前処理後データ", icon="table_chart")
         tab_interp = ui.tab("interp", label="🔬 モデル解釈性", icon="psychology")
+        tab_batch = ui.tab("batch", label="🔮 バッチ予測", icon="batch_prediction")
+        tab_report = ui.tab("report", label="📝 レポート", icon="summarize")
 
     with ui.tab_panels(res_tabs, value=tab_eval).classes("full-width"):
 
@@ -66,6 +68,20 @@ def render_results_tab(state: dict[str, Any]) -> None:
         # ════════════════════════════════════════════════════
         with ui.tab_panel(tab_interp):
             _render_interpretability(ar, state)
+
+        # ════════════════════════════════════════════════════
+        # サブタブ: バッチ予測
+        # ════════════════════════════════════════════════════
+        with ui.tab_panel(tab_batch):
+            from frontend_nicegui.components.batch_predict_tab import render_batch_predict_tab
+            render_batch_predict_tab(state)
+
+        # ════════════════════════════════════════════════════
+        # サブタブ: レポート生成
+        # ════════════════════════════════════════════════════
+        with ui.tab_panel(tab_report):
+            from frontend_nicegui.components.report_generator import render_report_tab
+            render_report_tab(state)
 
 
 # ================================================================

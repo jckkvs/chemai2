@@ -20,6 +20,12 @@ import numpy as np
 import pandas as pd
 from nicegui import ui
 
+from frontend_nicegui.components.descriptor_selector_dialog import (
+    open_descriptor_detail_dialog,
+    render_selected_descriptors_panel,
+    render_descriptor_sets_panel,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -172,10 +178,21 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
     _render_target_recommendations(state, adapters)
 
     # ─────────────────────────────────────────────────────
+    # セクション2.5: 記述子セット管理（複数パターン同時試行）
+    # ─────────────────────────────────────────────────────
+    render_descriptor_sets_panel(state)
+
+    # ─────────────────────────────────────────────────────
     # セクション3: 計算済み記述子テーブル（メインコンテンツ）
     # ─────────────────────────────────────────────────────
     if has_precalc:
         _render_descriptor_table(state)
+
+    # ─────────────────────────────────────────────────────
+    # セクション3.5: 選択済み記述子の一覧確認 + 個別ON/OFF
+    # ─────────────────────────────────────────────────────
+    if has_precalc:
+        render_selected_descriptors_panel(state)
 
     # ─────────────────────────────────────────────────────
     # セクション4: エンジン詳細（上級者向け折りたたみ）
@@ -184,6 +201,10 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
         f"⚙️ 計算エンジン詳細（{n_ok}/{n_all} 利用可能）", icon="tune",
     ).classes("full-width q-mt-sm"):
         _render_engine_details(adapters, state)
+
+        # アダプタパラメータの動的UI（上級者向け）
+        ui.separator().classes("q-my-sm")
+        _render_adapter_params(adapters, state)
 
     # ─────────────────────────────────────────────────────
     # セクション5: MolAI PCA / 電荷設定 / カスタムプラグイン
@@ -392,6 +413,27 @@ def _render_engine_details(adapters: dict, state: dict) -> None:
                     ui.label(
                         f"{eng['speed']} | {eng['dims']}次元 | {eng['desc']}"
                     ).classes("text-caption text-grey").style("font-size: 0.7rem;")
+
+                    # 詳細選択ボタン（カタログが存在するエンジンのみ）
+                    _engine_catalog_map = {
+                        "RDKitAdapter": "RDKit",
+                        "XTBAdapter": "XTB",
+                        "GroupContribAdapter": "原子団寄与法",
+                        "SkfpAdapter": "scikit-FP",
+                        "MordredAdapter": "Mordred",
+                        "MolfeatAdapter": "Molfeat",
+                        "CosmoAdapter": "COSMO-RS",
+                    }
+                    catalog_name = _engine_catalog_map.get(cls_name)
+                    if catalog_name and avail:
+                        ui.button(
+                            "詳細選択",
+                            on_click=lambda cn=catalog_name: open_descriptor_detail_dialog(
+                                cn, state
+                            ),
+                        ).props("flat dense size=xs no-caps color=cyan").tooltip(
+                            "個別の記述子を選択・解除"
+                        )
 
 
 # ═══════════════════════════════════════════════════════════
@@ -629,22 +671,30 @@ def _render_charge_settings(state: dict) -> None:
 # カスタムプラグイン管理
 # ═══════════════════════════════════════════════════════════
 def _render_custom_plugins(state: dict) -> None:
-    """カスタムプラグインのアップロード/削除/テンプレートUI。"""
+    """カスタムプラグインのアップロード/削除/テンプレート/既存アダプタからの作成UI。"""
     from backend.chem.descriptors import get_custom_dir, invalidate_cache
 
     ui.label(
         "custom/ ディレクトリに .py ファイルを追加して独自記述子を作成できます。"
+        "既存の記述子アダプタをベースにして変更を加える方法が最も効率的です。"
     ).classes("text-grey text-caption q-mb-sm")
 
     custom_dir = get_custom_dir()
     custom_files = [f for f in custom_dir.glob("*.py") if not f.name.startswith("_")]
 
+    # ── 既存カスタムプラグインの一覧 ──
     if custom_files:
+        ui.label(f"📁 登録済みカスタムプラグイン ({len(custom_files)})").classes("text-subtitle2")
         with ui.column().classes("q-gutter-xs"):
             for cf in custom_files:
                 with ui.row().classes("items-center q-gutter-xs"):
                     ui.icon("description", color="amber").classes("text-body1")
                     ui.label(cf.name).classes("text-body2")
+                    # ソースコード閲覧ボタン
+                    ui.button(
+                        icon="visibility",
+                        on_click=lambda _, f=cf: _show_source_dialog(f),
+                    ).props("flat dense color=cyan size=sm").tooltip("ソースコードを確認")
                     ui.button(
                         icon="delete",
                         on_click=lambda _, f=cf: _delete_custom(f),
@@ -654,6 +704,7 @@ def _render_custom_plugins(state: dict) -> None:
 
     ui.separator()
 
+    # ── アップロード ──
     async def _on_upload(e):
         content = e.content.read()
         filename = e.name
@@ -671,6 +722,7 @@ def _render_custom_plugins(state: dict) -> None:
         auto_upload=True,
     ).props("accept='.py' flat dense").classes("full-width")
 
+    # ── テンプレート ──
     with ui.row().classes("q-gutter-sm q-mt-sm"):
         ui.label("テンプレート:").classes("text-caption text-grey")
         for tpl_name in ["_template_simple.py", "_template_with_config.py"]:
@@ -680,6 +732,104 @@ def _render_custom_plugins(state: dict) -> None:
                     tpl_name.replace("_template_", "").replace(".py", ""),
                     on_click=lambda _, p=tpl_path: ui.download(str(p)),
                 ).props("flat dense size=sm color=cyan no-caps")
+
+    # ── 既存記述子アダプタからコピーして作成 ──
+    ui.separator()
+    ui.label("📋 既存記述子からカスタムプラグインを作成").classes("text-subtitle2 q-mt-sm")
+    ui.label(
+        "既存のSMILES記述子アダプタのソースコードをコピーし、"
+        "カスタムプラグインとして保存してから編集できます。"
+    ).classes("text-grey text-caption q-mb-sm")
+
+    # 既存アダプタのソースファイルを検出
+    adapter_sources = _detect_adapter_sources()
+    if adapter_sources:
+        with ui.row().classes("q-gutter-sm flex-wrap"):
+            for adapter_name, source_path in adapter_sources.items():
+                ui.button(
+                    f"📄 {adapter_name}",
+                    on_click=lambda _, n=adapter_name, p=source_path: _copy_adapter_to_custom(
+                        n, p, custom_dir,
+                    ),
+                ).props("outline dense size=sm no-caps color=teal").tooltip(
+                    f"{source_path.name} をカスタムプラグインとしてコピー"
+                )
+    else:
+        ui.label("利用可能なアダプタが見つかりません").classes("text-grey text-caption")
+
+
+def _detect_adapter_sources() -> dict[str, Path]:
+    """backend/chem/以下のSMILES記述子アダプタのソースファイルを検出。"""
+    import inspect
+    adapters = {}
+    adapter_dir = Path(__file__).resolve().parent.parent.parent / "backend" / "chem"
+    if not adapter_dir.exists():
+        return adapters
+
+    # 既知のアダプタファイル
+    known = [
+        ("RDKit", "rdkit_adapter.py"),
+        ("Mordred", "mordred_adapter.py"),
+        ("XTB", "xtb_adapter.py"),
+        ("COSMO-RS", "cosmo_adapter.py"),
+        ("Uni-pKa", "unipka_adapter.py"),
+        ("UMA", "uma_adapter.py"),
+        ("scikit-FP", "scikitfp_adapter.py"),
+        ("MolAI", "molai_adapter.py"),
+    ]
+    for name, filename in known:
+        filepath = adapter_dir / filename
+        if filepath.exists():
+            adapters[name] = filepath
+
+    return adapters
+
+
+def _copy_adapter_to_custom(adapter_name: str, source_path: Path, custom_dir: Path) -> None:
+    """既存アダプタのソースをカスタムプラグインとしてコピー。"""
+    from backend.chem.descriptors import invalidate_cache
+
+    dest_name = f"custom_{source_path.stem}.py"
+    dest = custom_dir / dest_name
+
+    if dest.exists():
+        ui.notify(f"⚠️ {dest_name} は既に存在します。名前を変えてください。", type="warning")
+        return
+
+    try:
+        # ヘッダーコメントを追加
+        original_source = source_path.read_text(encoding="utf-8")
+        header = (
+            f'"""\n'
+            f"カスタムプラグイン: {adapter_name}アダプタから作成\n"
+            f"元ファイル: {source_path.name}\n"
+            f"\n"
+            f"このファイルを自由に編集して、独自の記述子計算ロジックを実装してください。\n"
+            f"クラス名やcompute()メソッドのシグネチャを変更すると読み込まれなくなるため注意。\n"
+            f'"""\n\n'
+        )
+        dest.write_text(header + original_source, encoding="utf-8")
+        invalidate_cache()
+        ui.notify(f"✅ {dest_name} を作成しました。編集してカスタマイズしてください。", type="positive")
+    except Exception as e:
+        ui.notify(f"⚠️ コピーエラー: {e}", type="warning")
+
+
+def _show_source_dialog(filepath: Path) -> None:
+    """ソースコードを表示するダイアログ。"""
+    try:
+        source = filepath.read_text(encoding="utf-8")
+    except Exception:
+        source = "(読み込めません)"
+
+    with ui.dialog() as dlg, ui.card().classes("q-pa-md").style("width: 80vw; max-width: 900px;"):
+        ui.label(f"📄 {filepath.name}").classes("text-h6")
+        # NiceGUIのcode要素でソースコード表示
+        ui.code(source, language="python").classes("full-width").style(
+            "max-height: 60vh; overflow-y: auto; font-size: 0.8rem;"
+        )
+        ui.button("閉じる", on_click=dlg.close).props("outline color=cyan")
+    dlg.open()
 
 
 def _delete_custom(filepath: Path) -> None:
@@ -691,3 +841,52 @@ def _delete_custom(filepath: Path) -> None:
         ui.notify(f"🗑️ {filepath.name} を削除しました", type="info")
     except Exception as e:
         ui.notify(f"⚠️ 削除エラー: {e}", type="warning")
+
+
+# ═══════════════════════════════════════════════════════════
+# アダプタパラメータ動的UI
+# ═══════════════════════════════════════════════════════════
+def _render_adapter_params(adapters: list[tuple], state: dict) -> None:
+    """
+    各SMILESアダプタのパラメータを introspect_params で自動検出し、
+    動的UIを生成する。パラメータが0個のエンジンはスキップ。
+    """
+    if "adapter_params" not in state:
+        state["adapter_params"] = {}
+
+    ui.label(
+        "各エンジンの引数を自動検出して表示しています。"
+        "変更しなければデフォルト設定で計算されます。"
+    ).classes("text-caption text-grey q-mb-sm")
+
+    any_shown = False
+    for name, mod_path, cls_name, _kwargs in adapters:
+        try:
+            import importlib
+            mod = importlib.import_module(mod_path)
+            adapter_cls = getattr(mod, cls_name)
+
+            from backend.ui.param_schema import introspect_params
+            specs = introspect_params(adapter_cls)
+            if not specs:
+                continue  # パラメータなしのエンジンはスキップ
+
+            any_shown = True
+            with ui.expansion(
+                f"🔹 {name} ({len(specs)}パラメータ)", icon="settings",
+            ).classes("full-width q-mb-xs"):
+                try:
+                    from frontend_nicegui.components.auto_params_ui import render_param_editor
+                    existing = state["adapter_params"].get(name, {})
+                    values = render_param_editor(
+                        specs, title=name, values=existing, compact=True,
+                    )
+                    state["adapter_params"][name] = values
+                except Exception as ex:
+                    ui.label(f"⚠️ {ex}").classes("text-amber")
+        except Exception:
+            pass  # インポート不可のエンジンはスキップ
+
+    if not any_shown:
+        ui.label("設定可能なパラメータを持つエンジンはありません").classes("text-grey text-caption")
+

@@ -23,6 +23,24 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ShapConfig:
+    """SHAP計算の設定を保持するデータクラス。
+
+    Attributes:
+        explainer_type: Explainerの種類 ("auto" | "tree" | "linear" | "kernel" | "deep")
+        max_display: プロットに表示する特徴量の最大数
+        background_size: KernelExplainerのバックグラウンドサンプル数
+        plot_types: 生成するプロット種別のリスト
+        kernel_nsamples: KernelExplainerのnsamples (backgroundと別)
+    """
+    explainer_type: str = "auto"
+    max_display: int = SHAP_MAX_DISPLAY
+    background_size: int = 100
+    plot_types: list[str] = field(default_factory=lambda: ["summary", "waterfall", "dependence"])
+    kernel_nsamples: int = SHAP_KERNEL_NSAMPLES
+
+
+@dataclass
 class ShapResult:
     """SHAP計算結果を保持するデータクラス。"""
     shap_values: np.ndarray             # shape: (n_samples, n_features) for single output
@@ -34,6 +52,35 @@ class ShapResult:
     shap_interaction_values: np.ndarray | None = None
     base_values: np.ndarray | None = None
 
+    def feature_importance(self) -> pd.DataFrame:
+        """SHAP値の絶対値平均から特徴量重要度DataFrameを返す。
+
+        Returns:
+            {feature, importance} のDataFrame（降順ソート済み）
+        """
+        sv = self.shap_values
+        if self.is_multiclass and sv.ndim == 3:
+            imp = np.abs(sv).mean(axis=(0, 2))
+        else:
+            imp = np.abs(sv).mean(axis=0)
+
+        return pd.DataFrame({
+            "feature": self.feature_names,
+            "importance": imp,
+        }).sort_values("importance", ascending=False).reset_index(drop=True)
+
+    def top_features(self, n: int = 10) -> list[str]:
+        """重要度上位n件の特徴量名リストを返す。
+
+        Args:
+            n: 返す特徴量数
+
+        Returns:
+            特徴量名のリスト（降順）
+        """
+        fi = self.feature_importance()
+        return fi["feature"].head(n).tolist()
+
 
 class ShapExplainer:
     """
@@ -42,18 +89,57 @@ class ShapExplainer:
     Implements: 要件定義書 §3.8 モデル解釈 (SHAP)
 
     Args:
-        max_display: プロットに表示する特徴量の最大数
-        kernel_nsamples: KernelExplainerのサンプル数
+        config_or_max_display: ShapConfig または max_display (int)
+        kernel_nsamples: KernelExplainerのサンプル数 (config未使用時)
     """
 
     def __init__(
         self,
-        max_display: int = SHAP_MAX_DISPLAY,
+        config_or_max_display: ShapConfig | int = SHAP_MAX_DISPLAY,
         kernel_nsamples: int = SHAP_KERNEL_NSAMPLES,
     ) -> None:
         require("shap", feature="SHAP解釈")
-        self.max_display = max_display
-        self.kernel_nsamples = kernel_nsamples
+        if isinstance(config_or_max_display, ShapConfig):
+            self._config = config_or_max_display
+            self.max_display = config_or_max_display.max_display
+            self.kernel_nsamples = config_or_max_display.kernel_nsamples
+        else:
+            self._config = ShapConfig(
+                max_display=config_or_max_display,
+                kernel_nsamples=kernel_nsamples,
+            )
+            self.max_display = config_or_max_display
+            self.kernel_nsamples = kernel_nsamples
+
+    def _select_explainer_type(self, model: Any) -> str:
+        """モデルの種類に応じてExplainerタイプ文字列を返す。
+
+        Args:
+            model: 学習済みモデル
+
+        Returns:
+            "tree" | "linear" | "kernel" | "deep"
+        """
+        if self._config.explainer_type != "auto":
+            return self._config.explainer_type
+
+        model_type = type(model).__name__.lower()
+
+        tree_keywords = ["tree", "forest", "boost", "xgb", "lgbm", "lgb",
+                         "catboost", "gradient", "ada", "extra", "bagging"]
+        if any(kw in model_type for kw in tree_keywords):
+            return "tree"
+
+        linear_keywords = ["linear", "logistic", "ridge", "lasso", "elastic", "pls",
+                           "bayesianridge", "ard", "huber"]
+        if any(kw in model_type for kw in linear_keywords):
+            return "linear"
+
+        deep_keywords = ["torch", "keras", "tensorflow", "neural"]
+        if any(kw in model_type for kw in deep_keywords):
+            return "deep"
+
+        return "kernel"
 
     def explain(
         self,
