@@ -403,3 +403,261 @@ def _render_interpretability(ar, state: dict) -> None:
         ui.button(
             "🔀 Permutation Importance を計算", on_click=_calc_perm_importance
         ).props("outline color=purple size=sm")
+
+    # ── SHAP 解析 ──
+    ui.separator()
+    with ui.expansion("🔍 SHAP 解析", icon="insights").classes("full-width q-mt-md"):
+        ui.label(
+            "SHAP値で各特徴量のモデル予測への寄与を可視化します。"
+            "計算にはshapライブラリが必要です。"
+        ).classes("text-caption text-grey-5 q-mb-sm")
+
+        shap_container = ui.column().classes("full-width")
+
+        async def _calc_shap():
+            shap_container.clear()
+            with shap_container:
+                ui.label("⏳ SHAP値を計算中...").classes("text-grey-5")
+            try:
+                from backend.interpret.shap_explainer import ShapExplainer, ShapResult
+                import plotly.graph_objects as go  # noqa: F811
+
+                proc_X = getattr(ar, "processed_X", X)
+                if hasattr(proc_X, "values"):
+                    proc_X_arr = proc_X.values
+                else:
+                    proc_X_arr = np.asarray(proc_X)
+
+                feat_names_shap = list(proc_X.columns) if hasattr(proc_X, "columns") else [
+                    f"f{i}" for i in range(proc_X_arr.shape[1])
+                ]
+
+                explainer = ShapExplainer()
+                shap_result = explainer.explain(model, proc_X, feature_names=feat_names_shap)
+
+                # 特徴量重要度（SHAP ベース）
+                fi_df = shap_result.feature_importance()
+                top_features = fi_df.head(20)
+
+                shap_container.clear()
+                with shap_container:
+                    # ── SHAP Summary Bar Plot ──
+                    ui.label("📊 SHAP Feature Importance (Top 20)").classes("text-subtitle2 q-mb-sm")
+                    fig_bar = go.Figure(go.Bar(
+                        x=top_features["importance"].values[::-1],
+                        y=top_features["feature"].values[::-1],
+                        orientation="h",
+                        marker_color="rgba(0,212,255,0.7)",
+                    ))
+                    fig_bar.update_layout(
+                        template="plotly_dark",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        height=max(300, 20 * len(top_features)),
+                        margin=dict(l=10, r=10, t=30, b=10),
+                        title="平均|SHAP値|",
+                        xaxis_title="平均|SHAP値|",
+                    )
+                    ui.plotly(fig_bar).classes("full-width")
+
+                    # ── SHAP Beeswarm (dot plot approximation via scatter) ──
+                    ui.separator()
+                    ui.label("🐝 SHAP Beeswarm Plot (Top 10)").classes("text-subtitle2 q-mt-md q-mb-sm")
+                    top10_feats = fi_df.head(10)["feature"].tolist()
+                    sv = shap_result.shap_values
+                    if sv.ndim == 3:
+                        sv = sv[:, :, 0]
+
+                    fig_bee = go.Figure()
+                    for i, feat in enumerate(reversed(top10_feats)):
+                        feat_idx = feat_names_shap.index(feat) if feat in feat_names_shap else i
+                        if feat_idx < sv.shape[1]:
+                            shap_vals = sv[:, feat_idx]
+                            feat_vals = proc_X_arr[:, feat_idx]
+                            fig_bee.add_trace(go.Scatter(
+                                x=shap_vals,
+                                y=[feat] * len(shap_vals),
+                                mode="markers",
+                                marker=dict(
+                                    size=4,
+                                    color=feat_vals,
+                                    colorscale="RdBu_r",
+                                    opacity=0.6,
+                                    showscale=(i == 0),
+                                    colorbar=dict(title="特徴量値") if i == 0 else None,
+                                ),
+                                name=feat,
+                                showlegend=False,
+                            ))
+                    fig_bee.update_layout(
+                        template="plotly_dark",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        height=max(300, 35 * len(top10_feats)),
+                        margin=dict(l=10, r=10, t=30, b=10),
+                        xaxis_title="SHAP値",
+                    )
+                    ui.plotly(fig_bee).classes("full-width")
+
+                    # ── Waterfall (サンプル0) ──
+                    ui.separator()
+                    ui.label("💧 Waterfall Plot (サンプル #0)").classes("text-subtitle2 q-mt-md q-mb-sm")
+                    sample_sv = sv[0]
+                    sorted_idx_w = np.argsort(np.abs(sample_sv))[::-1]
+                    top_w = min(15, len(sorted_idx_w))
+
+                    waterfall_feats = [feat_names_shap[sorted_idx_w[i]] if sorted_idx_w[i] < len(feat_names_shap) else f"f{sorted_idx_w[i]}" for i in range(top_w)]
+                    waterfall_vals = [sample_sv[sorted_idx_w[i]] for i in range(top_w)]
+
+                    exp_val = shap_result.expected_value
+                    if hasattr(exp_val, "__len__"):
+                        exp_val = float(exp_val[0]) if len(exp_val) > 0 else 0.0
+                    else:
+                        exp_val = float(exp_val)
+
+                    fig_wf = go.Figure(go.Waterfall(
+                        name="SHAP",
+                        orientation="h",
+                        y=waterfall_feats[::-1],
+                        x=waterfall_vals[::-1],
+                        connector=dict(line=dict(color="rgba(255,255,255,0.2)")),
+                        increasing=dict(marker=dict(color="rgba(74,222,128,0.7)")),
+                        decreasing=dict(marker=dict(color="rgba(248,113,113,0.7)")),
+                        base=exp_val,
+                    ))
+                    fig_wf.update_layout(
+                        template="plotly_dark",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        height=max(300, 25 * top_w),
+                        margin=dict(l=10, r=10, t=30, b=10),
+                        title=f"ベースライン: {exp_val:.4f}",
+                        xaxis_title="予測への寄与",
+                    )
+                    ui.plotly(fig_wf).classes("full-width")
+
+                    # ── Dependence Plot (Top 1特徴量) ──
+                    if len(top10_feats) > 0:
+                        ui.separator()
+                        top1_feat = top10_feats[0]
+                        top1_idx = feat_names_shap.index(top1_feat) if top1_feat in feat_names_shap else 0
+                        ui.label(f"📈 Dependence Plot: {top1_feat}").classes("text-subtitle2 q-mt-md q-mb-sm")
+
+                        fig_dep = go.Figure(go.Scatter(
+                            x=proc_X_arr[:, top1_idx],
+                            y=sv[:, top1_idx],
+                            mode="markers",
+                            marker=dict(
+                                size=5,
+                                color=sv[:, top1_idx],
+                                colorscale="RdBu_r",
+                                opacity=0.7,
+                                showscale=True,
+                                colorbar=dict(title="SHAP値"),
+                            ),
+                        ))
+                        fig_dep.update_layout(
+                            template="plotly_dark",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            height=350,
+                            margin=dict(l=10, r=10, t=30, b=10),
+                            xaxis_title=top1_feat,
+                            yaxis_title=f"SHAP値 ({top1_feat})",
+                        )
+                        ui.plotly(fig_dep).classes("full-width")
+
+                    ui.notify("✅ SHAP解析完了", type="positive")
+
+            except ImportError as ie:
+                shap_container.clear()
+                with shap_container:
+                    ui.label(f"⚠️ {ie}").classes("text-amber text-caption")
+                    ui.label("pip install shap でインストールしてください。").classes("text-caption text-grey-6")
+            except Exception as ex:
+                shap_container.clear()
+                with shap_container:
+                    ui.label(f"SHAP計算エラー: {ex}").classes("text-red text-caption")
+
+        ui.button(
+            "🔍 SHAP 解析を実行", on_click=_calc_shap
+        ).props("outline color=cyan size=sm no-caps")
+
+    # ── PDP (Partial Dependence Plot) ──
+    ui.separator()
+    with ui.expansion("📉 Partial Dependence Plot (PDP)", icon="timeline").classes("full-width q-mt-md"):
+        ui.label(
+            "特定の特徴量が予測にどう影響するかを可視化します（他の特徴量を平均化）。"
+        ).classes("text-caption text-grey-5 q-mb-sm")
+
+        pdp_container = ui.column().classes("full-width")
+
+        async def _calc_pdp():
+            pdp_container.clear()
+            with pdp_container:
+                ui.label("⏳ PDP計算中...").classes("text-grey-5")
+            try:
+                from sklearn.inspection import partial_dependence
+                import plotly.graph_objects as go  # noqa: F811
+
+                proc_X = getattr(ar, "processed_X", X)
+                feat_names_pdp = list(proc_X.columns) if hasattr(proc_X, "columns") else [
+                    f"f{i}" for i in range(proc_X.shape[1])
+                ]
+
+                # Feature Importanceが高い上位4特徴量
+                if hasattr(estimator, "feature_importances_"):
+                    imp = estimator.feature_importances_
+                    top_idx = np.argsort(imp)[::-1][:4]
+                else:
+                    top_idx = list(range(min(4, len(feat_names_pdp))))
+
+                pdp_container.clear()
+                with pdp_container:
+                    ui.label("📉 PDP (Top 4 特徴量)").classes("text-subtitle2 q-mb-sm")
+
+                    for idx in top_idx:
+                        feat_name = feat_names_pdp[idx] if idx < len(feat_names_pdp) else f"f{idx}"
+                        try:
+                            pdp_result = partial_dependence(
+                                model, proc_X, features=[idx],
+                                grid_resolution=50, kind="average",
+                            )
+                            grid = pdp_result["grid_values"][0]
+                            avg_pred = pdp_result["average"][0]
+
+                            fig_pdp = go.Figure(go.Scatter(
+                                x=grid, y=avg_pred,
+                                mode="lines",
+                                line=dict(color="rgba(0,212,255,0.8)", width=2),
+                                fill="tozeroy",
+                                fillcolor="rgba(0,212,255,0.08)",
+                            ))
+                            fig_pdp.update_layout(
+                                template="plotly_dark",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                height=250,
+                                margin=dict(l=10, r=10, t=30, b=10),
+                                title=f"PDP: {feat_name}",
+                                xaxis_title=feat_name,
+                                yaxis_title="予測値",
+                            )
+                            ui.plotly(fig_pdp).classes("full-width q-mb-sm")
+                        except Exception:
+                            pass
+
+                    ui.notify("✅ PDP計算完了", type="positive")
+
+            except ImportError:
+                pdp_container.clear()
+                with pdp_container:
+                    ui.label("⚠️ sklearn.inspection が必要です").classes("text-amber text-caption")
+            except Exception as ex:
+                pdp_container.clear()
+                with pdp_container:
+                    ui.label(f"PDP計算エラー: {ex}").classes("text-red text-caption")
+
+        ui.button(
+            "📉 PDP を計算", on_click=_calc_pdp
+        ).props("outline color=teal size=sm no-caps")

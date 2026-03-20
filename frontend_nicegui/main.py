@@ -106,6 +106,63 @@ body {
 
 
 # ─────────────────────────────────────────────
+# プリフライトチェック（解析前の自動検証）
+# ─────────────────────────────────────────────
+def _preflight_check(state: dict) -> list[str]:
+    """解析前にデータの不備を自動検出し、問題リストを返す。
+
+    Returns:
+        問題メッセージのリスト（空なら問題なし）
+    """
+    issues: list[str] = []
+    df = state.get("df")
+    target_col = state.get("target_col")
+
+    if df is None:
+        issues.append("📂 まずデータを読み込んでください")
+        return issues
+
+    if not target_col:
+        issues.append("🎯 目的変数を設定してください")
+        return issues
+
+    # 目的変数の存在確認
+    if target_col not in df.columns:
+        issues.append(f"🎯 目的変数 '{target_col}' がデータに存在しません")
+        return issues
+
+    # 目的変数の欠損チェック
+    na_ratio = df[target_col].isna().mean()
+    if na_ratio > 0.5:
+        issues.append(f"⚠️ 目的変数の欠損率が {na_ratio:.0%} と高すぎます")
+    elif na_ratio > 0:
+        issues.append(f"ℹ️ 目的変数に {na_ratio:.1%} の欠損があります（欠損行は自動除外されます）")
+
+    # サンプル数チェック
+    n_valid = df[target_col].notna().sum()
+    if n_valid < 10:
+        issues.append(f"⚠️ 有効サンプル数が {n_valid}件と少なすぎます（最低10件必要）")
+
+    # 定数目的変数チェック
+    if df[target_col].nunique() <= 1:
+        issues.append("⚠️ 目的変数の値がすべて同じです")
+
+    # 特徴量が0列
+    exclude_cols = set(state.get("exclude_cols", []))
+    exclude_cols.add(target_col)
+    smiles_col = state.get("smiles_col")
+    if smiles_col:
+        exclude_cols.add(smiles_col)
+    feature_cols = [c for c in df.columns if c not in exclude_cols]
+    precalc_df = state.get("precalc_df")
+    n_total_features = len(feature_cols) + (precalc_df.shape[1] if precalc_df is not None else 0)
+    if n_total_features == 0:
+        issues.append("⚠️ 特徴量が0列です（除外列の設定を見直してください）")
+
+    return issues
+
+
+# ─────────────────────────────────────────────
 # メインページ
 # ─────────────────────────────────────────────
 @ui.page("/")
@@ -174,11 +231,11 @@ def main_page():
         analysis_status_container = ui.column().classes("full-width")
 
         async def _run_analysis():
-            if state["df"] is None:
-                ui.notify("📂 まずデータを読み込んでください", type="warning")
-                return
-            if not state["target_col"]:
-                ui.notify("🎯 目的変数を設定してください", type="warning")
+            # ── プリフライトチェック ──
+            issues = _preflight_check(state)
+            if issues:
+                for issue in issues:
+                    ui.notify(issue, type="warning", timeout=5000)
                 return
 
             # ボタン無効化（二重実行防止）
@@ -201,9 +258,9 @@ def main_page():
         run_btn.tooltip("EDA → 前処理 → AutoML → 評価 → SHAP まで自動実行")
 
     # ═══════════════════════════════════════════════════════════
-    # サイドバー — ステップインジケーター + ジャンプ
+    # サイドバー — ステップインジケーター + ジャンプ + 次のステップ
     # ═══════════════════════════════════════════════════════════
-    with ui.left_drawer(value=True).classes("bg-dark q-pa-md").props("width=220"):
+    with ui.left_drawer(value=True).classes("bg-dark q-pa-md").props("width=240"):
         ui.label("⚗️ ChemAI").classes("text-h6 q-mb-sm hero-gradient")
         ui.separator()
 
@@ -215,36 +272,83 @@ def main_page():
             has_data = state["df"] is not None
             has_target = bool(state.get("target_col"))
             has_smiles = bool(state.get("smiles_col"))
+            has_desc = state.get("precalc_done", False)
             has_result = state.get("automl_result") is not None
 
             steps = [
                 ("📂 データ読込", has_data),
                 ("🎯 目的変数設定", has_target),
                 ("🧬 SMILES検出", has_smiles),
+                ("⚗️ 記述子計算", has_desc),
                 ("🚀 解析完了", has_result),
             ]
             with step_container:
-                for label, done in steps:
+                # ── ステップ表示 ──
+                for i, (label, done) in enumerate(steps):
                     icon = "✅" if done else "⬜"
                     color = "step-done" if done else "step-pending"
+                    # 接続線（最後以外）
+                    line_html = ""
+                    if i < len(steps) - 1:
+                        line_color = "rgba(74,222,128,0.3)" if done else "rgba(255,255,255,0.05)"
+                        line_html = f'<div style="border-left:2px solid {line_color};height:8px;margin-left:10px;"></div>'
                     ui.html(
                         f'<div class="step-indicator">'
                         f'<span class="{color}" style="font-size:0.85rem;">'
-                        f'{icon} {label}</span></div>'
+                        f'{icon} {label}</span></div>{line_html}'
                     )
 
-                # データサマリー
+                # ── 次のステップヒント ──
+                ui.separator().classes("q-my-xs")
+                if not has_data:
+                    ui.html(
+                        '<div style="background:rgba(0,212,255,0.08);border-radius:8px;padding:8px;margin:4px 0;">'
+                        '<span style="color:#00d4ff;font-size:0.8rem;">'
+                        '👉 次: CSV/Excelをアップロード</span></div>'
+                    )
+                elif not has_target:
+                    ui.html(
+                        '<div style="background:rgba(0,212,255,0.08);border-radius:8px;padding:8px;margin:4px 0;">'
+                        '<span style="color:#00d4ff;font-size:0.8rem;">'
+                        '👉 次: 目的変数を設定</span></div>'
+                    )
+                elif not has_result:
+                    ui.html(
+                        '<div style="background:rgba(0,212,255,0.08);border-radius:8px;padding:8px;margin:4px 0;">'
+                        '<span style="color:#00d4ff;font-size:0.8rem;">'
+                        '👉 次: 🚀 解析開始ボタンで開始</span></div>'
+                    )
+                else:
+                    ui.html(
+                        '<div style="background:rgba(74,222,128,0.08);border-radius:8px;padding:8px;margin:4px 0;">'
+                        '<span style="color:#4ade80;font-size:0.8rem;">'
+                        '✨ 解析完了！結果タブで確認</span></div>'
+                    )
+
+                # ── データサマリー ──
                 if has_data:
                     df = state["df"]
-                    ui.separator()
+                    ui.separator().classes("q-my-xs")
                     ui.label(state.get("filename", "")).classes("text-caption text-grey-6")
                     ui.label(f"{df.shape[0]:,}行 × {df.shape[1]}列").classes("text-caption text-grey-6")
 
                 if has_result:
                     ar = state["automl_result"]
-                    ui.separator()
+                    ui.separator().classes("q-my-xs")
                     ui.label(f"🏆 {ar.best_model_key}").classes("text-caption text-cyan")
                     ui.label(f"スコア: {ar.best_score:.4f}").classes("text-caption text-grey-6")
+
+                    # ── 結果後アクション提案 ──
+                    ui.separator().classes("q-my-xs")
+                    ui.label("💡 次のアクション").classes("text-caption text-grey-5 q-mb-xs")
+                    ui.button(
+                        "📝 レポート生成",
+                        on_click=lambda: main_tabs.set_value("results"),
+                    ).props("flat dense color=teal size=xs no-caps").classes("full-width")
+                    ui.button(
+                        "🔮 バッチ予測",
+                        on_click=lambda: main_tabs.set_value("results"),
+                    ).props("flat dense color=purple size=xs no-caps").classes("full-width")
 
         _update_sidebar()
         # タイマーで定期更新
@@ -262,7 +366,7 @@ def main_page():
         ui.space()
         ui.separator()
         ui.link("❓ ヘルプ", "/help").classes("text-white")
-        ui.label("v2.0 — NiceGUI Edition").classes("text-caption text-grey-7 q-mt-sm")
+        ui.label("v2.1 — NiceGUI Edition").classes("text-caption text-grey-7 q-mt-sm")
 
     # ═══════════════════════════════════════════════════════════
     # メインコンテンツ — 2タブ構造
