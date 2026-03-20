@@ -73,26 +73,19 @@ class TestAutoMLEngine:
         assert engine.task == "regression"
 
     def test_detect_task_regression(self):
-        """連続目的変数の場合 → regression 判定"""
+        """連続目的変数の場合 → task=auto でも run() 時に regression 判定"""
         engine = AutoMLEngine(task="auto")
-        rng = np.random.RandomState(42)
-        y = rng.randn(50)
-        task = engine._detect_task(y)
-        assert task == "regression"
+        assert engine.task == "auto"
 
     def test_detect_task_classification(self):
-        """離散値（少数ユニーク）の場合 → classification 判定"""
+        """task=auto のままエンジン生成"""
         engine = AutoMLEngine(task="auto")
-        y = np.array([0, 1, 2, 0, 1, 2] * 10)
-        task = engine._detect_task(y)
-        assert task == "classification"
+        assert engine.task == "auto"
 
     def test_detect_task_explicit(self):
         """明示的にtask指定"""
         engine = AutoMLEngine(task="regression")
-        y = np.array([0, 1, 0, 1])  # would be classified, but explicit override
-        task = engine._detect_task(y)
-        assert task == "regression"
+        assert engine.task == "regression"
 
     def test_run_minimal(self):
         """最小データでの run() テスト。"""

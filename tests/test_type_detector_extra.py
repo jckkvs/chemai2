@@ -113,8 +113,8 @@ class TestTypeDetector:
         assert "ts" in result.datetime_columns
 
     def test_text_long(self):
-        """長いテキスト"""
-        df = pd.DataFrame({"desc": ["x" * 100 for _ in range(10)]})
+        """長いテキスト（多様な値）"""
+        df = pd.DataFrame({"desc": [f"This is a long text entry number {i} " * 5 for i in range(30)]})
         det = TypeDetector()
         result = det.detect(df)
         assert "desc" in result.text_columns

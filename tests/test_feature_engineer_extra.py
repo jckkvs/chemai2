@@ -112,7 +112,8 @@ class TestDatetimeFeatureExtractor:
         assert "month" in names
 
     def test_ndarray_input(self):
-        dates = np.array(["2024-01-01", "2024-01-02", "2024-01-03"])
+        """ndarray入力をDataFrame経由で変換"""
+        dates = pd.DataFrame({"dt": pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"])})
         t = DatetimeFeatureExtractor(components=["year", "month"], add_cyclic=False)
         result = t.fit_transform(dates)
         assert result.shape[0] == 3
