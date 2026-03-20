@@ -127,18 +127,47 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
         with ui.card().classes("full-width q-pa-md q-mb-sm").style(
             "border: 1px solid rgba(251,191,36,0.4); background: rgba(50,40,0,0.3); border-radius: 10px;"
         ):
+            # ── ワークフローガイド ──
+            with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+                # ステップ1: 計算（未完了）
+                ui.badge("1", color="amber").props("rounded")
+                ui.label("記述子計算").classes("text-body2 text-amber text-bold")
+                ui.icon("arrow_forward", color="grey").classes("text-caption")
+                # ステップ2: 選択（灰色）
+                ui.badge("2", color="grey").props("rounded outline")
+                ui.label("記述子選択").classes("text-body2 text-grey")
+                ui.icon("arrow_forward", color="grey").classes("text-caption")
+                # ステップ3: ML（灰色）
+                ui.badge("3", color="grey").props("rounded outline")
+                ui.label("機械学習").classes("text-body2 text-grey")
+
             ui.label(
-                "📋 SMILES記述子はデータ読み込み時に自動計算されます。"
-                "計算が完了すると、ここに記述子一覧が表示されます。"
+                "SMILES記述子はデータ読み込み時に自動計算されます。"
+                "計算が完了すると記述子選択→機械学習に進めます。"
             ).classes("text-body2 text-amber")
 
-            # 手動計算トリガー（自動計算が失敗した場合のフォールバック）
+            # ── 進捗バー表示エリア ──
+            progress_container = ui.column().classes("full-width q-mt-sm")
+            progress_container.set_visibility(False)
+
+            with progress_container:
+                progress_bar = ui.linear_progress(
+                    value=0, show_value=False, color="cyan",
+                ).props("rounded instant-feedback stripe").style("height: 8px;")
+                progress_label = ui.label("準備中...").classes("text-caption text-cyan")
+                progress_step = ui.label("").classes("text-caption text-grey")
+
+            # 手動計算トリガー
             async def _manual_compute():
                 if state.get("df") is None or not state.get("smiles_col"):
-                    ui.notify("📂 SMILES列を含むデータを読み込んでください", type="warning")
+                    ui.notify("SMILES列を含むデータを読み込んでください", type="warning")
                     return
                 compute_btn.disable()
-                compute_btn.text = "⏳ 計算中..."
+                compute_btn.text = "計算中..."
+                progress_container.set_visibility(True)
+                progress_bar.value = 0
+                progress_label.text = "エンジンを初期化中..."
+
                 try:
                     from nicegui import run
                     from backend.chem.smiles_transformer import precalculate_all_descriptors
@@ -152,25 +181,66 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
                         if _is_available(adapters, eng["cls"]):
                             engine_flags[key] = True
 
+                    # 進捗コールバック（UIをリアルタイム更新）
+                    step_messages = {
+                        1: ("推奨記述子を計算中...", "目的変数に関連する記述子を優先計算"),
+                        2: ("数え上げ系記述子を計算中...", "原子数・環数・官能基カウント"),
+                        3: ("主要物理化学記述子を計算中...", "MolWt, LogP, TPSA 等"),
+                        4: ("追加エンジンの記述子を計算中...", "Mordred, XTB, scikit-FP 等"),
+                        5: ("完了処理中...", "記述子の整形・重複除去"),
+                    }
+
+                    def _on_progress(step: int, total: int, msg: str):
+                        pct = step / total if total > 0 else 0
+                        progress_bar.value = pct
+                        progress_label.text = f"[{step}/{total}] {msg}"
+                        detail = step_messages.get(step, ("", ""))
+                        progress_step.text = detail[1] if detail[1] else ""
+
                     df_desc, molai_var = await run.io_bound(
                         precalculate_all_descriptors,
                         smiles_list, target_name, engine_flags,
+                        progress_callback=_on_progress,
                     )
                     state["precalc_df"] = df_desc
                     state["precalc_done"] = True
                     if molai_var:
                         state["molai_explained_variance"] = molai_var
-                    ui.notify(f"✅ {df_desc.shape[1]}個の記述子を計算完了", type="positive")
+
+                    progress_bar.value = 1.0
+                    progress_label.text = f"{df_desc.shape[1]}個の記述子を計算完了!"
+                    progress_step.text = "次のステップ: 記述子を選択して機械学習に進みましょう"
+                    ui.notify(
+                        f"{df_desc.shape[1]}個の記述子を計算完了。記述子を選択してください。",
+                        type="positive", timeout=5000,
+                    )
                 except Exception as e:
-                    ui.notify(f"⚠️ 記述子計算エラー: {e}", type="warning")
+                    progress_label.text = f"エラー: {e}"
+                    ui.notify(f"記述子計算エラー: {e}", type="warning")
                 finally:
                     compute_btn.enable()
-                    compute_btn.text = "🔄 手動で記述子を計算"
+                    compute_btn.text = "手動で記述子を計算"
 
             compute_btn = ui.button(
-                "🔄 手動で記述子を計算", on_click=_manual_compute,
+                "手動で記述子を計算", on_click=_manual_compute,
             ).props("outline size=sm no-caps color=amber")
             compute_btn.tooltip("通常は自動計算されますが、失敗した場合にこのボタンで再実行できます")
+
+    # ── 計算完了後: ワークフローガイド（ステップ2がアクティブ）──
+    if has_precalc:
+        with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+            # ステップ1: 計算（完了）
+            ui.badge("1", color="green").props("rounded")
+            ui.label("記述子計算").classes("text-body2 text-green")
+            ui.icon("check", color="green").classes("text-body2")
+            ui.icon("arrow_forward", color="grey").classes("text-caption")
+            # ステップ2: 選択（アクティブ）
+            ui.badge("2", color="cyan").props("rounded")
+            ui.label("記述子選択").classes("text-body2 text-cyan text-bold")
+            ui.icon("arrow_forward", color="grey").classes("text-caption")
+            # ステップ3: ML（灰色）
+            ui.badge("3", color="grey").props("rounded outline")
+            ui.label("機械学習").classes("text-body2 text-grey")
 
     # ─────────────────────────────────────────────────────
     # セクション2: 推薦記述子（目的変数ベース）

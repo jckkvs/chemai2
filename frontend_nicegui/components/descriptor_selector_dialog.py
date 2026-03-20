@@ -323,21 +323,158 @@ def render_selected_descriptors_panel(state: dict) -> None:
 
 
 # ═══════════════════════════════════════════════════════════
-# 3. 複数記述子セット（パターン）管理
+# 3. 複数記述子セット（パターン）管理 — カード型ビジュアルUI
 # ═══════════════════════════════════════════════════════════
+
+def _get_engine_badges(descriptors: list[str] | None) -> list[str]:
+    """記述子名からエンジン名を推定してバッジ用のリストを返す。"""
+    if not descriptors:
+        return []
+    engines = set()
+    for d in descriptors:
+        if d.startswith("xtb_"):
+            engines.add("XTB")
+        elif d.startswith("joback_"):
+            engines.add("基団寄与")
+        elif d.startswith("mu_") or d.startswith("ln_gamma"):
+            engines.add("COSMO")
+        elif d.startswith("fr_") or d in ("MolWt", "MolLogP", "TPSA", "qed"):
+            engines.add("RDKit")
+        elif d.startswith("gasteiger_"):
+            engines.add("RDKit")
+        else:
+            engines.add("他")
+    return sorted(engines)[:4]
+
+_ENGINE_BADGE_COLORS = {
+    "RDKit": "green", "XTB": "orange", "COSMO": "purple",
+    "基団寄与": "teal", "Mordred": "blue", "scikit-FP": "indigo",
+    "Molfeat": "pink", "他": "grey",
+}
+
+
+def _open_set_compare_dialog(sets: dict, state: dict) -> None:
+    """セット比較ダイアログ: セット間の記述子重複・差分を表示。"""
+    set_names = list(sets.keys())
+    if len(set_names) < 2:
+        ui.notify("⚠️ 比較には2つ以上のセットが必要です", type="warning")
+        return
+
+    with ui.dialog() as dlg, ui.card().classes("q-pa-md").style(
+        "width: 85vw; max-width: 1000px; max-height: 85vh;"
+    ):
+        ui.label("📊 セット比較ダッシュボード").classes("text-h6 q-mb-sm")
+
+        # 各セットの記述子セット
+        desc_sets = {}
+        for name in set_names:
+            descs = sets[name].get("descriptors")
+            desc_sets[name] = set(descs) if descs else set()
+
+        # 比較テーブル
+        rows = []
+        for name in set_names:
+            d = desc_sets[name]
+            others_union = set()
+            for n2 in set_names:
+                if n2 != name:
+                    others_union |= desc_sets[n2]
+            unique = d - others_union
+            shared = d & others_union
+            rows.append({
+                "name": name,
+                "total": len(d),
+                "unique": len(unique),
+                "shared": len(shared),
+                "engines": ", ".join(_get_engine_badges(list(d))),
+            })
+
+        cols = [
+            {"name": "name", "label": "セット名", "field": "name"},
+            {"name": "total", "label": "記述子数", "field": "total", "sortable": True},
+            {"name": "unique", "label": "固有", "field": "unique", "sortable": True},
+            {"name": "shared", "label": "共有", "field": "shared", "sortable": True},
+            {"name": "engines", "label": "エンジン", "field": "engines"},
+        ]
+        ui.table(columns=cols, rows=rows, row_key="name").classes(
+            "full-width"
+        ).props("dense flat bordered")
+
+        # ペアワイズ重複マトリクス
+        if len(set_names) >= 2:
+            ui.separator().classes("q-my-sm")
+            ui.label("🔗 ペアワイズ重複率 (%)").classes("text-subtitle2")
+            matrix_rows = []
+            for n1 in set_names:
+                row_data = {"name": n1}
+                for n2 in set_names:
+                    if desc_sets[n1] and desc_sets[n2]:
+                        overlap = len(desc_sets[n1] & desc_sets[n2])
+                        union = len(desc_sets[n1] | desc_sets[n2])
+                        pct = round(overlap / union * 100) if union > 0 else 0
+                    else:
+                        pct = 0
+                    row_data[n2] = f"{pct}%"
+                matrix_rows.append(row_data)
+
+            m_cols = [{"name": "name", "label": "", "field": "name"}] + [
+                {"name": n, "label": n, "field": n} for n in set_names
+            ]
+            ui.table(columns=m_cols, rows=matrix_rows, row_key="name").classes(
+                "full-width"
+            ).props("dense flat bordered")
+
+        ui.separator()
+        ui.button("閉じる", on_click=dlg.close).props("outline no-caps color=cyan")
+
+    dlg.open()
+
+
+def _open_rename_dialog(old_name: str, sets: dict, state: dict) -> None:
+    """セット名変更ダイアログ。"""
+    if old_name == "デフォルト":
+        ui.notify("⚠️ デフォルトセットは名前変更できません", type="warning")
+        return
+
+    with ui.dialog() as dlg, ui.card().classes("q-pa-md").style("min-width: 350px;"):
+        ui.label("✏️ セット名を変更").classes("text-h6 q-mb-sm")
+        name_input = ui.input("新しい名前", value=old_name).props(
+            "outlined dense autofocus"
+        ).classes("full-width")
+
+        with ui.row().classes("justify-end q-gutter-sm q-mt-sm"):
+            def _apply():
+                new_name = name_input.value.strip()
+                if not new_name or new_name == old_name:
+                    dlg.close()
+                    return
+                if new_name in sets:
+                    ui.notify(f"⚠️ 「{new_name}」は既に存在します", type="warning")
+                    return
+                sets[new_name] = sets.pop(old_name)
+                if state.get("current_set_name") == old_name:
+                    state["current_set_name"] = new_name
+                ui.notify(f"✏️ 「{old_name}」→「{new_name}」に変更", type="positive")
+                dlg.close()
+
+            ui.button("キャンセル", on_click=dlg.close).props("flat no-caps color=grey")
+            ui.button("変更", on_click=_apply).props("no-caps color=cyan")
+
+    dlg.open()
+
 
 def render_descriptor_sets_panel(state: dict) -> None:
     """
-    複数の記述子セット(パターン)を管理するUI。
-    各セットに名前をつけて保存し、解析時に複数セットを同時に試行できる。
+    複数の記述子セット(パターン)をカード型で管理するUI。
+    各セットの内容（記述子数・エンジン構成・プログレスバー）が一目瞭然。
     """
     # セット管理の初期化
     if "descriptor_sets" not in state:
         state["descriptor_sets"] = {
             "デフォルト": {
-                "engines": [],  # 使用するエンジン名リスト
+                "engines": [],
                 "active": True,
-                "descriptors": None,  # Noneなら全記述子
+                "descriptors": None,
             }
         }
     if "current_set_name" not in state:
@@ -346,98 +483,234 @@ def render_descriptor_sets_panel(state: dict) -> None:
     sets = state["descriptor_sets"]
     current = state["current_set_name"]
 
-    with ui.card().classes("full-width q-pa-sm q-mb-sm").style(
-        "border: 1px solid rgba(0,188,212,0.3); border-radius: 8px;"
+    # 全記述子数を取得（プログレスバー用）
+    precalc_df = state.get("precalc_df")
+    total_available = precalc_df.shape[1] if precalc_df is not None else 0
+
+    # ── メインカード ──
+    with ui.card().classes("full-width q-pa-md q-mb-sm").style(
+        "border: 1px solid rgba(0,188,212,0.3); border-radius: 12px;"
+        "background: rgba(0,20,40,0.3);"
     ):
-        with ui.row().classes("items-center q-gutter-sm full-width"):
-            ui.icon("layers").classes("text-cyan")
-            ui.label("記述子セット管理").classes("text-subtitle2")
-            ui.badge(f"{len(sets)} セット", color="cyan")
+        # ── ヘッダー ──
+        with ui.row().classes("items-center justify-between full-width q-mb-sm"):
+            with ui.row().classes("items-center q-gutter-sm"):
+                ui.icon("layers", color="cyan").classes("text-h5")
+                ui.label("記述子セット管理").classes("text-h6")
+                ui.badge(f"{len(sets)} セット", color="cyan").props("outline")
 
-        # セット一覧
-        with ui.row().classes("q-gutter-xs q-mt-xs flex-wrap"):
-            for name, info in sets.items():
-                is_current = (name == current)
-                color = "cyan" if is_current else "grey"
-                props = "no-caps size=sm"
-                if not is_current:
-                    props += " outline"
+            with ui.row().classes("q-gutter-xs"):
+                def _add_set():
+                    idx = len(sets) + 1
+                    name = f"セット{idx}"
+                    while name in sets:
+                        idx += 1
+                        name = f"セット{idx}"
+                    active = state.get("active_descriptors", [])
+                    sets[name] = {
+                        "engines": [],
+                        "active": True,
+                        "descriptors": list(active) if active else None,
+                    }
+                    state["current_set_name"] = name
+                    ui.notify(f"➕ セット「{name}」を作成", type="positive")
 
-                def _switch(n=name):
-                    state["current_set_name"] = n
-                    if sets[n].get("descriptors"):
-                        state["active_descriptors"] = list(sets[n]["descriptors"])
-                    ui.notify(f"🔄 セット「{n}」に切替", type="info")
+                ui.button("➕ 新規セット", on_click=_add_set).props(
+                    "unelevated size=sm no-caps color=green-8"
+                ).tooltip("現在の記述子選択を新しいセットとして保存")
 
-                btn = ui.button(
-                    f"{'▶ ' if is_current else ''}{name}",
-                    on_click=_switch,
-                ).props(props + f" color={color}")
+                if len(sets) >= 2:
+                    ui.button(
+                        "📊 比較",
+                        on_click=lambda: _open_set_compare_dialog(sets, state),
+                    ).props("outline size=sm no-caps color=amber")
 
-        # セット操作ボタン
-        with ui.row().classes("q-gutter-xs q-mt-xs"):
-            def _save_current():
-                """現在の記述子選択を現在のセットに保存"""
-                active = state.get("active_descriptors", [])
-                sets[current]["descriptors"] = list(active)
-                ui.notify(f"💾 セット「{current}」に {len(active)} 記述子を保存", type="positive")
-
-            def _add_set():
-                """新しいセットを追加"""
-                new_name = f"セット{len(sets) + 1}"
-                active = state.get("active_descriptors", [])
-                sets[new_name] = {
-                    "engines": [],
-                    "active": True,
-                    "descriptors": list(active),
-                }
-                state["current_set_name"] = new_name
-                ui.notify(f"➕ セット「{new_name}」を作成", type="positive")
-
-            def _duplicate_set():
-                """現在のセットを複製"""
-                new_name = f"{current}_コピー"
-                sets[new_name] = copy.deepcopy(sets[current])
-                state["current_set_name"] = new_name
-                ui.notify(f"📋 セット「{new_name}」を複製", type="info")
-
-            def _delete_current():
-                """現在のセットを削除（デフォルトは削除不可）"""
-                if current == "デフォルト":
-                    ui.notify("⚠️ デフォルトセットは削除できません", type="warning")
-                    return
-                del sets[current]
-                state["current_set_name"] = "デフォルト"
-                ui.notify(f"🗑️ セット「{current}」を削除", type="info")
-
-            ui.button("💾 保存", on_click=_save_current).props(
-                "flat dense size=xs no-caps color=cyan"
+        # ── プリセットギャラリー ──
+        try:
+            from backend.chem.recommender import (
+                get_target_categories,
+                get_targets_by_category,
             )
-            ui.button("➕ 新規", on_click=_add_set).props(
-                "flat dense size=xs no-caps color=green"
-            )
-            ui.button("📋 複製", on_click=_duplicate_set).props(
-                "flat dense size=xs no-caps color=blue"
-            )
-            ui.button("🗑️ 削除", on_click=_delete_current).props(
-                "flat dense size=xs no-caps color=red"
-            )
+            categories = get_target_categories()
+            if categories:
+                with ui.expansion(
+                    "🏪 プリセットから作成", icon="collections_bookmark",
+                ).classes("full-width q-mb-sm").props("dense"):
+                    ui.label(
+                        "予測目標に最適化された記述子セットをワンクリックで作成できます"
+                    ).classes("text-caption text-grey q-mb-xs")
+                    with ui.row().classes("q-gutter-xs flex-wrap"):
+                        for cat_name in categories:
+                            cat_recs = get_targets_by_category(cat_name)
+                            for rec in cat_recs:
+                                def _create_preset(r=rec):
+                                    preset_name = f"📌 {r.target_name}"
+                                    desc_names = [d.name for d in r.descriptors]
+                                    sets[preset_name] = {
+                                        "engines": sorted(set(d.library for d in r.descriptors)),
+                                        "active": True,
+                                        "descriptors": desc_names,
+                                    }
+                                    state["current_set_name"] = preset_name
+                                    state["active_descriptors"] = list(desc_names)
+                                    state["_applied_recommendation"] = r
+                                    ui.notify(
+                                        f"✅ プリセット「{r.target_name}」を作成 ({len(desc_names)}記述子)",
+                                        type="positive",
+                                    )
 
-        # 全セット同時解析ボタン
+                                lib_colors = sorted(set(d.library for d in rec.descriptors))
+                                with ui.button(
+                                    rec.target_name,
+                                    on_click=_create_preset,
+                                ).props("outline dense size=sm no-caps color=cyan").classes("text-xs"):
+                                    pass
+        except ImportError:
+            pass
+
+        ui.separator().classes("q-my-sm")
+
+        # ── セットカード一覧 ──
+        with ui.scroll_area().style("max-height: 400px;"):
+            with ui.row().classes("q-gutter-md flex-wrap full-width"):
+                for set_name, info in sets.items():
+                    is_current = (set_name == current)
+                    descs = info.get("descriptors")
+                    n_descs = len(descs) if descs else 0
+                    engines = _get_engine_badges(descs)
+                    pct = round(n_descs / total_available * 100) if total_available > 0 and descs else 0
+                    is_active = info.get("active", True)
+
+                    # カードの色設定
+                    border_color = "rgba(0,212,255,0.7)" if is_current else (
+                        "rgba(255,255,255,0.15)" if is_active else "rgba(255,255,255,0.05)"
+                    )
+                    bg_color = "rgba(0,35,60,0.6)" if is_current else "rgba(25,25,35,0.5)"
+                    glow = "box-shadow: 0 0 15px rgba(0,200,255,0.15);" if is_current else ""
+
+                    with ui.card().classes("q-pa-sm").style(
+                        f"border: 2px solid {border_color}; border-radius: 10px;"
+                        f"background: {bg_color}; min-width: 240px; max-width: 320px;"
+                        f"transition: all 0.3s ease; {glow}"
+                    ):
+                        # ── カードヘッダー: 名前 + 操作ボタン ──
+                        with ui.row().classes("items-center justify-between full-width no-wrap"):
+                            with ui.row().classes("items-center q-gutter-xs no-wrap"):
+                                if is_current:
+                                    ui.icon("play_arrow", color="cyan").classes("text-body1")
+                                else:
+                                    ui.icon("folder", color="grey").classes("text-body1")
+                                ui.label(set_name).classes(
+                                    "text-body1 text-bold" + (" text-cyan" if is_current else "")
+                                ).style("max-width: 160px; overflow: hidden; text-overflow: ellipsis;")
+
+                            with ui.row().classes("q-gutter-none no-wrap"):
+                                # 名前変更
+                                ui.button(
+                                    icon="edit",
+                                    on_click=lambda n=set_name: _open_rename_dialog(n, sets, state),
+                                ).props("flat round dense size=xs color=grey").tooltip("名前変更")
+
+                                # 複製
+                                def _dup(n=set_name):
+                                    new_name = f"{n}_コピー"
+                                    i = 2
+                                    while new_name in sets:
+                                        new_name = f"{n}_コピー{i}"
+                                        i += 1
+                                    sets[new_name] = copy.deepcopy(sets[n])
+                                    state["current_set_name"] = new_name
+                                    ui.notify(f"📋 「{new_name}」を複製", type="info")
+
+                                ui.button(
+                                    icon="content_copy",
+                                    on_click=_dup,
+                                ).props("flat round dense size=xs color=grey").tooltip("複製")
+
+                                # 削除
+                                if set_name != "デフォルト":
+                                    def _del(n=set_name):
+                                        del sets[n]
+                                        if state.get("current_set_name") == n:
+                                            state["current_set_name"] = "デフォルト"
+                                        ui.notify(f"🗑️ 「{n}」を削除", type="info")
+
+                                    ui.button(
+                                        icon="delete_outline",
+                                        on_click=_del,
+                                    ).props("flat round dense size=xs color=red-4").tooltip("削除")
+
+                        # ── 記述子数 + プログレスバー ──
+                        with ui.column().classes("full-width q-mt-xs q-gutter-none"):
+                            if descs is not None:
+                                with ui.row().classes("items-center justify-between full-width"):
+                                    ui.label(f"📐 {n_descs} 記述子").classes(
+                                        "text-caption" + (" text-cyan" if is_current else " text-grey")
+                                    )
+                                    if total_available > 0:
+                                        ui.label(f"{pct}%").classes("text-caption text-grey")
+                                ui.linear_progress(
+                                    value=pct / 100, color="cyan" if is_current else "grey",
+                                ).props("rounded instant-feedback").style("height: 4px;")
+                            else:
+                                ui.label("📐 全記述子（未制限）").classes("text-caption text-amber")
+                                ui.linear_progress(
+                                    value=1.0, color="amber",
+                                ).props("rounded instant-feedback").style("height: 4px;")
+
+                        # ── エンジンバッジ ──
+                        if engines:
+                            with ui.row().classes("q-gutter-xs q-mt-xs flex-wrap"):
+                                for eng in engines:
+                                    color = _ENGINE_BADGE_COLORS.get(eng, "grey")
+                                    ui.badge(eng, color=color).props("dense outline").classes("text-xs")
+
+                        # ── アクションボタン ──
+                        with ui.row().classes("q-gutter-xs q-mt-xs justify-center full-width"):
+                            if not is_current:
+                                def _switch(n=set_name):
+                                    state["current_set_name"] = n
+                                    if sets[n].get("descriptors"):
+                                        state["active_descriptors"] = list(sets[n]["descriptors"])
+                                    ui.notify(f"🔄 セット「{n}」に切替", type="info")
+
+                                ui.button(
+                                    "▶ 切替", on_click=_switch,
+                                ).props("unelevated size=sm no-caps color=cyan")
+                            else:
+                                def _save():
+                                    active = state.get("active_descriptors", [])
+                                    sets[current]["descriptors"] = list(active)
+                                    ui.notify(
+                                        f"💾 セット「{current}」に {len(active)} 記述子を保存",
+                                        type="positive",
+                                    )
+
+                                ui.button(
+                                    "💾 現在の選択を保存", on_click=_save,
+                                ).props("unelevated size=sm no-caps color=teal")
+
+                            # アクティブ切替
+                            def _toggle(n=set_name, val=not is_active):
+                                sets[n]["active"] = val
+                                status = "有効" if val else "無効"
+                                ui.notify(f"{'✅' if val else '⏸️'} 「{n}」を{status}に", type="info")
+
+                            if is_active:
+                                ui.button(
+                                    icon="pause_circle_outline", on_click=_toggle,
+                                ).props("flat round dense size=xs color=grey").tooltip("比較解析から除外")
+                            else:
+                                ui.button(
+                                    icon="play_circle_outline", on_click=_toggle,
+                                ).props("flat round dense size=xs color=green").tooltip("比較解析に含める")
+
+        # ── フッター: アクティブセット数 ──
         active_sets = [n for n, info in sets.items() if info.get("active", True)]
         if len(active_sets) > 1:
             ui.separator().classes("q-my-xs")
             with ui.row().classes("items-center q-gutter-sm"):
-                ui.label(f"🔬 {len(active_sets)} セットで比較解析が可能").classes(
-                    "text-caption text-cyan"
-                )
-
-                def _toggle_set_active(name, val):
-                    sets[name]["active"] = val
-
-                for name in sets:
-                    ui.checkbox(
-                        f"{name}",
-                        value=sets[name].get("active", True),
-                        on_change=lambda e, n=name: _toggle_set_active(n, e.value),
-                    ).props("dense")
+                ui.icon("compare_arrows", color="amber")
+                ui.label(
+                    f"🔬 {len(active_sets)} セットが比較解析対象（アクティブ）"
+                ).classes("text-caption text-amber")
