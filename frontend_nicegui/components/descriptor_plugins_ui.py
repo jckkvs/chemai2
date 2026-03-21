@@ -1032,28 +1032,103 @@ def _apply_recommendation(rec, state: dict) -> None:
 # MolAI PCA 設定
 # ═══════════════════════════════════════════════════════════
 def _render_molai_pca(state: dict) -> None:
-    """MolAI PCA次元数設定。"""
+    """MolAI PCA次元数設定 + 累積寄与率に基づく自動最適化。"""
     n_samples = len(state["df"]) if state.get("df") is not None else 25
     auto_n = min(max(n_samples // 2, 5), 128)
     current_n = state.get("molai_n_components", auto_n)
 
     ui.label(f"サンプル数: {n_samples} → 推奨PCA次元: {auto_n}").classes("text-caption text-grey")
 
-    slider = ui.slider(
-        min=1, max=min(256, n_samples), value=current_n, step=1,
-    ).props("label-always").classes("full-width")
+    # ── 手動スライダー ──
+    with ui.row().classes("items-center full-width q-gutter-sm"):
+        ui.label("PCA次元数:").classes("text-body2")
+        slider = ui.slider(
+            min=1, max=min(256, n_samples), value=current_n, step=1,
+        ).props("label-always").classes("full-width")
+        dim_label = ui.label(f"{current_n}次元").classes("text-body2 text-cyan text-bold")
 
     def _update_pca(e):
         state["molai_n_components"] = int(e.value)
+        dim_label.text = f"{int(e.value)}次元"
     slider.on_value_change(_update_pca)
 
+    # ── 累積寄与率に基づく自動最適化 ──
     mev = state.get("molai_explained_variance")
+
+    with ui.card().classes("full-width q-pa-sm q-mt-sm").style(
+        "border: 1px solid rgba(0,188,212,0.3); border-radius: 8px;"
+        "background: rgba(0,30,50,0.3);"
+    ):
+        with ui.row().classes("items-center q-gutter-sm"):
+            ui.icon("auto_fix_high", color="amber").classes("text-body1")
+            ui.label("累積寄与率で自動決定").classes("text-body2 text-bold")
+
+        ui.label(
+            "累積寄与率の閾値を指定すると、その閾値を超える最小の次元数を自動計算します。"
+        ).classes("text-caption text-grey q-mb-xs")
+
+        threshold = state.get("pca_threshold", 95)
+        with ui.row().classes("items-center q-gutter-sm full-width"):
+            ui.label("閾値:").classes("text-body2")
+            thresh_slider = ui.slider(
+                min=80, max=99, value=threshold, step=1,
+            ).props("label-always").classes("full-width")
+            thresh_label = ui.label(f"{threshold}%").classes("text-body2 text-amber text-bold")
+
+        def _update_threshold(e):
+            state["pca_threshold"] = int(e.value)
+            thresh_label.text = f"{int(e.value)}%"
+        thresh_slider.on_value_change(_update_threshold)
+
+        def _auto_optimize():
+            mev_data = state.get("molai_explained_variance")
+            if not mev_data or not mev_data.get("cumulative"):
+                ui.notify(
+                    "PCA寄与率データがありません。先にMolAI記述子を計算してください。",
+                    type="warning",
+                )
+                return
+            cum = mev_data["cumulative"]
+            target_threshold = state.get("pca_threshold", 95) / 100.0
+            optimal_n = len(cum)  # デフォルトは全次元
+            for i, c in enumerate(cum):
+                if c >= target_threshold:
+                    optimal_n = i + 1
+                    break
+            state["molai_n_components"] = optimal_n
+            slider.value = optimal_n
+            dim_label.text = f"{optimal_n}次元"
+            actual_var = cum[min(optimal_n - 1, len(cum) - 1)] * 100
+            ui.notify(
+                f"✅ 累積寄与率 {actual_var:.1f}% → {optimal_n}次元を自動選択",
+                type="positive",
+            )
+
+        ui.button(
+            "🔍 自動最適化",
+            on_click=_auto_optimize,
+        ).props("unelevated size=sm no-caps color=amber").classes("q-mt-xs")
+
+        if mev and mev.get("cumulative"):
+            cum = mev["cumulative"]
+            t = state.get("pca_threshold", 95) / 100.0
+            opt = len(cum)
+            for i, c in enumerate(cum):
+                if c >= t:
+                    opt = i + 1
+                    break
+            actual = cum[min(opt - 1, len(cum) - 1)] * 100
+            ui.label(
+                f"💡 現在の閾値 {int(t*100)}% → 推奨: {opt}次元 (実際の累積寄与率: {actual:.1f}%)"
+            ).classes("text-caption text-teal q-mt-xs")
+
+    # ── PCA寄与率グラフ ──
     if mev and mev.get("ratio"):
-        _render_pca_chart(mev)
+        _render_pca_chart(mev, state.get("molai_n_components", auto_n))
 
 
-def _render_pca_chart(mev: dict) -> None:
-    """MolAI PCA累積寄与率のグラフ。"""
+def _render_pca_chart(mev: dict, selected_n: int | None = None) -> None:
+    """MolAI PCA累積寄与率のグラフ。選択中の次元に縦線を追加。"""
     try:
         import plotly.graph_objects as go
     except ImportError:
@@ -1071,11 +1146,20 @@ def _render_pca_chart(mev: dict) -> None:
         mode="lines+markers", yaxis="y2",
         line=dict(color="#f4a261", width=2), marker=dict(size=5),
     )
+
+    # 選択中の次元に縦線を描画
+    if selected_n and 1 <= selected_n <= len(pcs):
+        fig.add_vline(
+            x=selected_n - 1, line_dash="dash", line_color="#00e5ff",
+            annotation_text=f"選択: PC{selected_n}",
+            annotation_font_color="#00e5ff",
+        )
+
     fig.update_layout(
         yaxis=dict(title="寄与率 (%)", range=[0, max(v * 100 for v in evr) * 1.15]),
         yaxis2=dict(title="累積寄与率 (%)", overlaying="y", side="right", range=[0, 105], showgrid=False),
         legend=dict(orientation="h", y=1.15),
-        height=250, margin=dict(l=10, r=10, t=30, b=30),
+        height=280, margin=dict(l=10, r=10, t=30, b=30),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#ccc"),
     )

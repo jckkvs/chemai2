@@ -34,6 +34,54 @@ def render_descriptor_help() -> None:
         "推奨説明変数の一覧です。マウスオーバーで詳細を確認できます。"
     ).classes("text-body2 text-grey q-mb-md")
 
+    # ── 初心者向けクイックスタート ──
+    with ui.card().classes("full-width q-pa-md q-mb-md").style(
+        "border: 2px solid rgba(251,191,36,0.5); border-radius: 12px;"
+        "background: linear-gradient(135deg, rgba(50,40,0,0.3), rgba(30,25,0,0.2));"
+    ):
+        with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+            ui.icon("school", color="amber").classes("text-h5")
+            ui.label("🔰 初心者ガイド: 目的変数の列を選ぶ").classes("text-h6 text-amber")
+
+        ui.label(
+            "初めてこのツールを使う方へ。SMILES記述子を活用した機械学習は"
+            "以下の3ステップで行います。"
+        ).classes("text-body2 text-grey q-mb-sm")
+
+        steps = [
+            (
+                "1️⃣",
+                "目的変数（予測したい値）の列を選ぶ",
+                "データの「列の役割」タブで、予測したい数値列（例: 沸点、LogP、活性値）を"
+                "「🎯 目的変数」に設定します。これだけで残りは自動判定されます。",
+            ),
+            (
+                "2️⃣",
+                "推奨記述子を適用する",
+                "「SMILES記述子」タブの「目的変数で選ぶ」から、予測対象に合った"
+                "推奨記述子セットをワンクリックで適用します。どの記述子を使うか"
+                "悩む必要はありません。",
+            ),
+            (
+                "3️⃣",
+                "解析を開始する",
+                "記述子が選択されたら解析開始ボタンを押すだけ。AutoMLが最適な"
+                "モデルを自動で探索・交差検証します。",
+            ),
+        ]
+
+        for emoji, title, desc in steps:
+            with ui.row().classes("items-start q-gutter-sm q-mb-xs"):
+                ui.label(emoji).classes("text-h6").style("min-width: 35px;")
+                with ui.column().classes("q-gutter-none"):
+                    ui.label(title).classes("text-body1 text-bold")
+                    ui.label(desc).classes("text-caption text-grey")
+
+        ui.label(
+            "💡 ヒント: 目的変数がわからない場合は、データ読み込み後に"
+            "「列の役割」タブで各列の統計を確認し、数値列の中から1つ選んでください。"
+        ).classes("text-caption text-amber q-mt-sm")
+
     # ── カテゴリ別に展開 ──
     categories = get_target_categories()
     for cat_name in categories:
