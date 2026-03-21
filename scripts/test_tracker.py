@@ -50,6 +50,9 @@ MODULE_TEST_MAP: dict[str, list[str]] = {
         "tests/test_optim_comprehensive.py",
         "tests/test_search_space_extra.py",
     ],
+    "backend/optim/inverse_optimizer.py": [
+        "tests/test_inverse_optimizer.py",
+    ],
     # === models ===
     "backend/models/factory.py": [
         "tests/test_factory_comprehensive.py",
