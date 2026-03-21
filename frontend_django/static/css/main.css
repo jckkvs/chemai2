@@ -55,6 +55,7 @@ html, body {
     font-weight: 700;
     background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -172,6 +173,7 @@ html, body {
 .hero-title {
     background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple), var(--accent-pink));
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
     font-size: 2rem;
     font-weight: 700;
@@ -384,6 +386,7 @@ html, body {
     font-weight: 700;
     background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -510,4 +513,32 @@ input[type="checkbox"]:checked {
     cursor: not-allowed;
     transform: none !important;
     box-shadow: none !important;
+}
+
+/* ── エンジンカード ────────────────────────── */
+.engine-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+    transition: all 0.2s;
+}
+
+.engine-card:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(0, 212, 255, 0.3);
+}
+
+.engine-badge {
+    font-size: 0.65rem;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(123, 47, 247, 0.2);
+    color: var(--accent-purple);
+    vertical-align: middle;
+}
+
+.engine-badge.available {
+    background: rgba(74, 222, 128, 0.15);
+    color: var(--accent-green);
 }

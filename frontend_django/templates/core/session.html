@@ -123,17 +123,79 @@
 <div class="alert alert-info">💡 SMILES列が設定されていません。「列の設定」でSMILES列を選択してください。</div>
 <a href="?step=columns" class="btn btn-secondary">← 列の設定に戻る</a>
 {% else %}
+
+<!-- プリセット解析目標 -->
+<div class="card">
+    <div class="card-header">
+        <span style="font-size:1.3rem">🎯</span>
+        <h3 class="card-title">解析目標プリセット（任意）</h3>
+    </div>
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;" id="preset-btns">
+        <button class="btn btn-secondary btn-sm" onclick="selectPreset('solubility')">💧 溶解度予測</button>
+        <button class="btn btn-secondary btn-sm" onclick="selectPreset('activity')">🎯 活性予測(QSAR)</button>
+        <button class="btn btn-secondary btn-sm" onclick="selectPreset('toxicity')">⚠️ 毒性予測</button>
+        <button class="btn btn-secondary btn-sm" onclick="selectPreset('all')">🔬 全記述子</button>
+    </div>
+    <p id="preset-info" style="font-size:0.8rem;color:var(--text-muted);margin:0;">プリセットを選ぶと推奨エンジンが自動選択されます</p>
+</div>
+
+<!-- エンジン選択 -->
 <div class="card">
     <div class="card-header">
         <span style="font-size:1.3rem">🧬</span>
-        <h3 class="card-title">14エンジン自動記述子計算</h3>
+        <h3 class="card-title">記述子エンジン</h3>
     </div>
-    <p style="color:var(--text-secondary);margin-bottom:1rem;">
-        RDKit, Mordred, scikit-FP, Mol2Vec等のエンジンで分子記述子を一括計算します。
-    </p>
+    <div class="grid grid-2" id="engine-grid">
+        <label class="checkbox-label engine-card" data-engine="rdkit">
+            <input type="checkbox" checked data-engine="rdkit">
+            <div>
+                <strong>RDKit</strong> <span class="engine-badge available">✅ 利用可</span><br>
+                <span style="font-size:0.75rem;color:var(--text-muted);">200+記述子 — 物理化学的性質</span>
+            </div>
+        </label>
+        <label class="checkbox-label engine-card" data-engine="mordred">
+            <input type="checkbox" checked data-engine="mordred">
+            <div>
+                <strong>Mordred</strong> <span class="engine-badge available">✅ 利用可</span><br>
+                <span style="font-size:0.75rem;color:var(--text-muted);">1800+記述子 — 包括的</span>
+            </div>
+        </label>
+        <label class="checkbox-label engine-card" data-engine="skfp">
+            <input type="checkbox" checked data-engine="skfp">
+            <div>
+                <strong>scikit-fingerprints</strong> <span class="engine-badge available">✅ 利用可</span><br>
+                <span style="font-size:0.75rem;color:var(--text-muted);">分子フィンガープリント</span>
+            </div>
+        </label>
+        <label class="checkbox-label engine-card" data-engine="molai">
+            <input type="checkbox" data-engine="molai">
+            <div>
+                <strong>MolAI</strong> <span class="engine-badge">🧠 Deep Learning</span><br>
+                <span style="font-size:0.75rem;color:var(--text-muted);">Mol2Vec/ChemBERTa</span>
+            </div>
+        </label>
+        <label class="checkbox-label engine-card" data-engine="xtb">
+            <input type="checkbox" data-engine="xtb">
+            <div>
+                <strong>xTB</strong> <span class="engine-badge">⚛️ 量子化学</span><br>
+                <span style="font-size:0.75rem;color:var(--text-muted);">電子状態・エネルギー</span>
+            </div>
+        </label>
+        <label class="checkbox-label engine-card" data-engine="group_contrib">
+            <input type="checkbox" checked data-engine="group_contrib">
+            <div>
+                <strong>Group Contribution</strong> <span class="engine-badge available">✅ 利用可</span><br>
+                <span style="font-size:0.75rem;color:var(--text-muted);">官能基ベース記述子</span>
+            </div>
+        </label>
+    </div>
+</div>
+
+<!-- 計算実行 -->
+<div class="card">
     <button class="btn btn-primary btn-lg" id="btn-calc-desc"
             onclick="calculateDescriptors('{{ session.id }}')">
-        ⚗️ 全エンジンで記述子を計算
+        ⚗️ 選択エンジンで記述子を計算
     </button>
     <div id="desc-progress" style="display:none;margin-top:1rem;">
         <div class="progress-bar"><div class="progress-fill" id="desc-progress-fill" style="width:0%"></div></div>
@@ -141,6 +203,11 @@
     </div>
     <div id="desc-results" style="margin-top:1rem;"></div>
 </div>
+
+{% if session.status == 'descriptors_calculated' %}
+<div class="alert alert-success">✅ 記述子計算済み</div>
+<a href="?step=analysis" class="btn btn-primary">次へ: 解析実行 →</a>
+{% endif %}
 {% endif %}
 
 {% elif step == 'analysis' %}
@@ -246,6 +313,24 @@ setInterval(async () => {
 </div>
 
 <script>
+/* ─── プリセット選択 ─── */
+const PRESETS = {
+    solubility: { engines: ['rdkit', 'mordred', 'group_contrib'], label: '💧 溶解度予測：物性記述子を重視' },
+    activity:   { engines: ['rdkit', 'mordred', 'skfp', 'molai'], label: '🎯 活性予測：フィンガープリント+DL記述子を使用' },
+    toxicity:   { engines: ['rdkit', 'mordred', 'skfp', 'group_contrib'], label: '⚠️ 毒性予測：包括的物性+官能基記述子' },
+    all:        { engines: ['rdkit', 'mordred', 'skfp', 'molai', 'xtb', 'group_contrib'], label: '🔬 全エンジン選択' },
+};
+function selectPreset(key) {
+    const preset = PRESETS[key];
+    if (!preset) return;
+    document.querySelectorAll('#engine-grid input[type=checkbox]').forEach(cb => {
+        const eng = cb.dataset.engine;
+        cb.checked = preset.engines.includes(eng);
+    });
+    const info = document.getElementById('preset-info');
+    if (info) info.textContent = preset.label;
+}
+
 /* ─── 記述子計算 ─── */
 async function calculateDescriptors(sessionId) {
     const btn = document.getElementById('btn-calc-desc');
