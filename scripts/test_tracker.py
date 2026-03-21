@@ -172,6 +172,12 @@ MODULE_TEST_MAP: dict[str, list[str]] = {
         "tests/test_charge_config_extra.py",
         "tests/test_charge_extended.py",
     ],
+    "backend/chem/protonation.py": [
+        "tests/test_protonation.py",
+    ],
+    "backend/chem/cosmo_adapter.py": [
+        "tests/test_cosmo_adapter.py",
+    ],
     "backend/chem/rdkit_adapter.py": [
         "tests/test_chem.py",
     ],

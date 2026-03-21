@@ -158,5 +158,13 @@
   "backend/optim/inverse_optimizer.py": {
     "last_run": 1774103380.893171,
     "result": "pass"
+  },
+  "backend/chem/cosmo_adapter.py": {
+    "last_run": 1774106912.552855,
+    "result": "pass"
+  },
+  "backend/chem/protonation.py": {
+    "last_run": 1774106912.552855,
+    "result": "pass"
   }
 }

@@ -107,7 +107,13 @@ class CosmoAdapter(BaseChemAdapter):
                 records.append(nan_row.copy())
 
         df = pd.DataFrame(records, columns=list(_COSMO_DESCRIPTORS.keys()))
-        return DescriptorResult(descriptors=df)
+        failed = [i for i, r in enumerate(records) if any(np.isnan(v) for v in r.values())]
+        return DescriptorResult(
+            descriptors=df,
+            smiles_list=smiles_list,
+            failed_indices=failed,
+            adapter_name=self.name,
+        )
 
     def get_descriptor_names(self) -> list[str]:
         return list(_COSMO_DESCRIPTORS.keys())
