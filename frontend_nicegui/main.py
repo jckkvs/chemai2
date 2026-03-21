@@ -362,6 +362,9 @@ def main_page():
         ui.button(
             "📊 結果確認", on_click=lambda: main_tabs.set_value("results")
         ).props("flat color=white align=left size=sm no-caps").classes("full-width")
+        ui.button(
+            "🔮 逆解析", on_click=lambda: main_tabs.set_value("inverse")
+        ).props("flat color=white align=left size=sm no-caps").classes("full-width")
 
         ui.space()
         ui.separator()
@@ -381,6 +384,7 @@ def main_page():
     ) as main_tabs:
         data_tab = ui.tab("data", label="📂 データ設定", icon="settings")
         results_tab = ui.tab("results", label="📊 結果確認", icon="analytics")
+        inverse_tab = ui.tab("inverse", label="🔮 逆解析", icon="find_replace")
 
     with ui.tab_panels(main_tabs, value=data_tab).classes("full-width"):
 
@@ -393,6 +397,11 @@ def main_page():
         with ui.tab_panel(results_tab):
             from frontend_nicegui.components.results_tab import render_results_tab
             render_results_tab(state)
+
+        # ── 逆解析タブ ──
+        with ui.tab_panel(inverse_tab):
+            from frontend_nicegui.components.inverse_analysis_tab import render_inverse_analysis_tab
+            render_inverse_analysis_tab(state)
 
     # ── SMILES列がある場合、特徴量計算をバックグラウンドで自動実行 ──
     # precalc_done=False の間だけ発火する定期ポーリング型。
@@ -474,16 +483,19 @@ def help_page():
         ui.markdown("""
 ## 使い方
 
-### 初心者向け（最短2クリック）
+### 初心者向け（最短3クリック）
 1. **📂 データ読込**: CSV/Excelをアップロード（またはサンプル/ベンチマークを選択）
-2. **🚀 解析開始**: ヘッダーの「解析開始」ボタンを押す → 自動でEDA・AutoML・評価・SHAP
-3. **📊 結果確認**: 自動的に結果タブに切り替わります
+2. **🎯 目的変数設定**: 「列の役割」タブで予測したい列（目的変数）を選択
+3. **🚀 解析開始**: ヘッダーの「解析開始」ボタンを押す → 自動でEDA・AutoML・評価・SHAP
+4. **📊 結果確認**: 自動的に結果タブに切り替わります
+5. **🔮 逆解析** *(任意)*: 順解析の結果を使って、目標物性を持つ条件を逆探索
 
 ### 上級者向け（詳細設定）
 - **🏷️ 列の役割**: 目的変数・SMILES列の手動変更、除外列・グループ列・時系列列の設定
-- **⚗️ SMILES特徴量**: 14エンジンの記述子を個別に選択
+- **⚗️ SMILES特徴量**: 14エンジンの記述子を個別に選択（サブカテゴリ分類付き）
 - **📊 EDA**: データ品質チェック・統計量サマリー
 - **⚙️ パイプライン**: CV分割数、使用モデル、スケーラー、単調性制約
+- **🔮 逆解析**: ランダムサンプリング / グリッドサーチ / ベイズ最適化 / 遺伝的アルゴリズム / MOLAI逆変換
 
 ## UI設計思想
 
@@ -521,6 +533,26 @@ def help_page():
 | Streamlit | `streamlit run frontend_streamlit/app.py` | 8501 |
 | Django | `python frontend_django/manage.py runserver` | 8000 |
 """)
+
+
+# ─────────────────────────────────────────────
+# ヘルプページ: 推奨記述子データベース一覧
+# ─────────────────────────────────────────────
+@ui.page("/help/descriptors")
+def help_descriptors_page():
+    ui.add_head_html(f"<style>{CUSTOM_CSS}</style>")
+    with ui.header().classes("items-center q-px-lg"):
+        with ui.row().classes("items-center q-gutter-sm"):
+            ui.label("⚗️").classes("text-h5")
+            ui.label("ChemAI ML Studio").classes("text-h5 text-bold hero-gradient")
+            ui.badge("ヘルプ", color="amber").props("floating")
+        ui.button("← メインへ戻る", on_click=lambda: ui.navigate.to("/")).props(
+            "flat no-caps color=cyan"
+        )
+
+    with ui.column().classes("full-width q-pa-lg"):
+        from frontend_nicegui.components.descriptor_help_page import render_descriptor_help
+        render_descriptor_help()
 
 
 # ─────────────────────────────────────────────

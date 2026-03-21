@@ -465,10 +465,6 @@ _RECOMMENDATION_DATA = [
 ]
 
 def get_all_target_recommendations() -> List[TargetRecommendations]:
-    """すべての推奨説明変数データを取得する"""
-    return _RECOMMENDATION_DATA
-
-def get_all_target_recommendations() -> List[TargetRecommendations]:
     """登録されているすべての目的変数推奨セットのリストを返す"""
     return list(_RECOMMENDATION_DATA)
 
