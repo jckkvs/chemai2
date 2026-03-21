@@ -590,44 +590,76 @@ def _render_execute_section(state: dict, inv: dict) -> None:
             inv_progress_label.text = "逆解析を実行中..."
 
             try:
-                # TODO: 実際の逆解析ロジックを実装
-                # 現在はダミー結果を生成して動作確認
-                import asyncio
-                await asyncio.sleep(1)  # 模擬計算
+                from nicegui import run
+                from backend.optim.inverse_optimizer import (
+                    InverseConfig,
+                    run_inverse_optimization,
+                )
 
-                inv_progress.value = 0.5
-                inv_progress_label.text = "候補を評価中..."
-                await asyncio.sleep(0.5)
+                # AutoMLResultからpredict関数を取得
+                ar = state.get("automl_result")
+                if ar is None or not hasattr(ar, "best_pipeline"):
+                    ui.notify("学習済みモデルがありません", type="warning")
+                    return
 
-                # ダミー結果生成（将来は実際の最適化結果に置換）
-                active_cols = [
-                    col for col, c in inv.get("constraints", {}).items()
-                    if c.get("active", True) and not c.get("fixed", False)
-                ]
-                n_candidates = min(20, inv.get("method_params", {}).get("n_samples", 10))
+                pipeline = ar.best_pipeline
 
-                results = []
-                for i in range(n_candidates):
-                    row = {"rank": i + 1}
-                    for col in active_cols[:10]:
-                        c = inv["constraints"][col]
-                        cmin = c.get("min", 0)
-                        cmax = c.get("max", 1)
-                        row[col] = round(np.random.uniform(cmin, cmax), 4)
-                    row["predicted"] = round(np.random.uniform(
-                        inv.get("target_min", 0) or 0,
-                        inv.get("target_max", 10) or 10,
-                    ), 4)
-                    results.append(row)
+                # 説明変数名リストを構築
+                feature_names = list(inv.get("constraints", {}).keys())
+                if not feature_names:
+                    ui.notify("制約を設定してください（「データ範囲を自動設定」ボタン推奨）", type="warning")
+                    return
 
-                inv["results"] = pd.DataFrame(results)
+                # predict関数:  DataFrame -> array
+                def _predict_fn(X_df):
+                    try:
+                        return pipeline.predict(X_df)
+                    except Exception:
+                        # 列順が違う場合のフォールバック
+                        if hasattr(ar, "X_train") and ar.X_train is not None:
+                            expected_cols = list(ar.X_train.columns)
+                            X_aligned = X_df.reindex(columns=expected_cols, fill_value=0.0)
+                            return pipeline.predict(X_aligned)
+                        raise
+
+                # InverseConfig構築
+                config = InverseConfig(
+                    method=inv.get("method", "random"),
+                    target_mode=inv.get("target_mode", "range"),
+                    target_min=inv.get("target_min"),
+                    target_max=inv.get("target_max"),
+                    constraints=inv.get("constraints", {}),
+                    method_params=inv.get("method_params", {}),
+                )
+
+                # 進捗コールバック
+                def _on_progress(step, total, msg):
+                    pct = step / total if total > 0 else 0
+                    inv_progress.value = pct
+                    inv_progress_label.text = f"[{step}/{total}] {msg}"
+
+                # バックグラウンドで実行
+                result = await run.io_bound(
+                    run_inverse_optimization,
+                    _predict_fn,
+                    feature_names,
+                    config,
+                    _on_progress,
+                )
+
+                inv["results"] = result.candidates
                 inv_progress.value = 1.0
-                inv_progress_label.text = f"✅ {n_candidates}件の候補を発見"
+                inv_progress_label.text = (
+                    f"✅ {len(result.candidates)}件の候補を発見 "
+                    f"({result.n_evaluated}点評価, {result.elapsed_seconds:.1f}秒)"
+                )
                 ui.notify(
-                    f"逆解析完了: {n_candidates}件の候補",
+                    f"逆解析完了: {len(result.candidates)}件の候補 (最良予測: {result.best_predicted:.4f})",
                     type="positive", timeout=5000,
                 )
             except Exception as e:
+                import traceback
+                logger.error(f"逆解析エラー: {traceback.format_exc()}")
                 inv_progress_label.text = f"エラー: {e}"
                 ui.notify(f"逆解析エラー: {e}", type="warning")
             finally:
@@ -641,11 +673,7 @@ def _render_execute_section(state: dict, inv: dict) -> None:
             ).props("unelevated size=lg no-caps color=purple").classes("text-bold").style(
                 "font-size: 1.05rem;"
             )
-            inv_btn.tooltip("設定した条件で逆解析を実行します")
-
-            ui.label(
-                "※ 現在はプロトタイプ版です。実際の最適化ロジックは後日実装されます。"
-            ).classes("text-caption text-grey")
+            inv_btn.tooltip("設定した条件で逆解析を実行します（ランダム/グリッド/ベイズ/GA対応）")
 
 
 # ═══════════════════════════════════════════════════════════
