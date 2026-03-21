@@ -144,18 +144,109 @@
 {% endif %}
 
 {% elif step == 'analysis' %}
+<!-- ════════════════════════════════════════════ -->
+<!-- 解析実行ステップ                             -->
+<!-- ════════════════════════════════════════════ -->
 <h2 style="margin-bottom:1.5rem;">🚀 解析実行</h2>
-<div class="alert alert-info">解析実行機能は近日実装予定です。</div>
+
+{% if session.status == 'created' %}
+<div class="alert alert-warning">⚠️ まずデータを読み込んでください。</div>
+<a href="?step=data" class="btn btn-secondary">← データ読込に戻る</a>
+{% elif not session.target_col %}
+<div class="alert alert-warning">⚠️ 目的変数が設定されていません。</div>
+<a href="?step=columns" class="btn btn-secondary">← 列の設定に戻る</a>
+{% else %}
+<div class="card">
+    <div class="card-header">
+        <span style="font-size:1.3rem">⚙️</span>
+        <h3 class="card-title">AutoML 設定</h3>
+    </div>
+    <div class="grid grid-2" style="margin-bottom:1rem;">
+        <div class="form-group">
+            <label class="form-label">目的変数</label>
+            <div class="form-static">{{ session.target_col }} ({{ session.task_type }})</div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">CV 分割数</label>
+            <select class="form-select" id="cv-folds">
+                <option value="3">3-Fold</option>
+                <option value="5" selected>5-Fold（推奨）</option>
+                <option value="10">10-Fold</option>
+            </select>
+        </div>
+    </div>
+    <div class="form-group">
+        <label class="form-label">データ概要</label>
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+            <div class="metric-card-mini">
+                <div class="metric-value-sm">{{ session.n_rows }}</div>
+                <div class="metric-label-sm">サンプル数</div>
+            </div>
+            <div class="metric-card-mini">
+                <div class="metric-value-sm">{{ session.n_cols }}</div>
+                <div class="metric-label-sm">列数</div>
+            </div>
+            <div class="metric-card-mini">
+                <div class="metric-value-sm">{{ session.task_type }}</div>
+                <div class="metric-label-sm">タスク</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-top:1rem;">
+    <button class="btn btn-primary btn-lg" id="btn-run-analysis"
+            onclick="runAnalysis('{{ session.id }}')">
+        🚀 AutoML 解析を開始
+    </button>
+    <div id="analysis-progress" style="display:none;margin-top:1rem;">
+        <div class="progress-bar"><div class="progress-fill" id="analysis-progress-fill" style="width:0%"></div></div>
+        <p id="analysis-progress-text" style="margin-top:0.5rem;font-size:0.85rem;color:var(--text-secondary);"></p>
+    </div>
+    <div id="analysis-result-summary" style="margin-top:1rem;"></div>
+</div>
+{% endif %}
 
 {% elif step == 'results' %}
+<!-- ════════════════════════════════════════════ -->
+<!-- 結果表示ステップ                             -->
+<!-- ════════════════════════════════════════════ -->
 <h2 style="margin-bottom:1.5rem;">📊 結果</h2>
-<div class="alert alert-info">結果表示機能は近日実装予定です。</div>
+
+{% if session.status == 'completed' %}
+<div class="card" id="results-container">
+    <div class="card-header">
+        <span style="font-size:1.3rem">🏆</span>
+        <h3 class="card-title">解析結果</h3>
+    </div>
+    <div id="results-content">読み込み中...</div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => loadResults('{{ session.id }}'));
+</script>
+{% elif session.status == 'running' %}
+<div class="alert alert-info">⏳ 解析を実行中です。しばらくお待ちください...</div>
+<script>
+setInterval(async () => {
+    const resp = await fetch(`/api/session/{{ session.id }}/status/`);
+    const d = await resp.json();
+    if (d.status === 'completed') location.reload();
+}, 3000);
+</script>
+{% elif session.status == 'error' %}
+<div class="alert alert-error">❌ エラー: {{ session.error_message }}</div>
+<a href="?step=analysis" class="btn btn-secondary">← 解析設定に戻る</a>
+{% else %}
+<div class="alert alert-info">📊 まず解析を実行してください。</div>
+<a href="?step=analysis" class="btn btn-primary">🚀 解析実行に進む</a>
+{% endif %}
 
 {% endif %}
 
 </div>
 
 <script>
+/* ─── 記述子計算 ─── */
 async function calculateDescriptors(sessionId) {
     const btn = document.getElementById('btn-calc-desc');
     const progress = document.getElementById('desc-progress');
@@ -196,6 +287,143 @@ async function calculateDescriptors(sessionId) {
     } finally {
         btn.disabled = false;
         btn.textContent = '⚗️ 全エンジンで記述子を計算';
+    }
+}
+
+/* ─── AutoML 解析実行 ─── */
+async function runAnalysis(sessionId) {
+    const btn = document.getElementById('btn-run-analysis');
+    const progress = document.getElementById('analysis-progress');
+    const progressFill = document.getElementById('analysis-progress-fill');
+    const progressText = document.getElementById('analysis-progress-text');
+    const summary = document.getElementById('analysis-result-summary');
+
+    const cvFolds = parseInt(document.getElementById('cv-folds')?.value || '5');
+
+    btn.disabled = true;
+    btn.textContent = '⏳ 解析実行中...';
+    progress.style.display = 'block';
+    progressFill.style.width = '20%';
+    progressText.textContent = 'AutoMLエンジン起動中...';
+
+    try {
+        progressFill.style.width = '40%';
+        progressText.textContent = '複数モデルで学習・交差検証中...（数十秒かかります）';
+
+        const resp = await fetch(`/api/session/${sessionId}/run/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cv_folds: cvFolds }),
+        });
+        const data = await resp.json();
+        progressFill.style.width = '100%';
+
+        if (data.success) {
+            const r = data.result;
+            progressText.textContent = `✅ 完了: 最良モデル ${r.best_model_key} (スコア: ${r.best_score.toFixed(4)})`;
+            summary.innerHTML = `
+                <div class="alert alert-success">
+                    🏆 最良モデル: <strong>${r.best_model_key}</strong>
+                    (${r.scoring}: ${r.best_score.toFixed(4)}) — ${r.elapsed_seconds.toFixed(1)}秒
+                </div>
+                <a href="?step=results" class="btn btn-primary" style="margin-top:0.5rem;">📊 結果を確認 →</a>
+            `;
+        } else {
+            progressText.textContent = `❌ エラー: ${data.error}`;
+            summary.innerHTML = `<div class="alert alert-error">${data.error}</div>`;
+        }
+    } catch (err) {
+        progressText.textContent = `❌ ネットワークエラー`;
+        summary.innerHTML = `<div class="alert alert-error">${err.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🚀 AutoML 解析を開始';
+    }
+}
+
+/* ─── 結果表示 ─── */
+async function loadResults(sessionId) {
+    const container = document.getElementById('results-content');
+    try {
+        const resp = await fetch(`/api/session/${sessionId}/results/`);
+        const data = await resp.json();
+        if (data.status !== 'completed' || !data.result) {
+            container.innerHTML = '<div class="alert alert-info">結果がまだありません。</div>';
+            return;
+        }
+        const r = data.result;
+        let html = '';
+
+        // 最良モデルカード
+        html += `
+        <div style="background:linear-gradient(135deg,rgba(0,60,120,0.4),rgba(0,40,80,0.3));
+                    border:1px solid rgba(0,188,212,0.4);border-radius:12px;padding:1.5rem;margin-bottom:1.5rem;">
+            <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;">
+                <span style="font-size:2rem;">🏆</span>
+                <div>
+                    <h3 style="margin:0;color:#00e5ff;">${r.best_model_key}</h3>
+                    <p style="margin:0;color:var(--text-secondary);">${r.scoring}: ${r.best_score.toFixed(4)} | ${r.elapsed_seconds.toFixed(1)}秒</p>
+                </div>
+            </div>
+            <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+                <div class="metric-card-mini"><div class="metric-value-sm">${r.task}</div><div class="metric-label-sm">タスク</div></div>
+                <div class="metric-card-mini"><div class="metric-value-sm">${r.n_features}</div><div class="metric-label-sm">特徴量数</div></div>
+                <div class="metric-card-mini"><div class="metric-value-sm">${Object.keys(r.model_scores).length}</div><div class="metric-label-sm">比較モデル数</div></div>
+            </div>
+        </div>`;
+
+        // モデル比較テーブル
+        html += '<h3 style="margin:1rem 0 0.5rem;">📋 モデル比較</h3>';
+        html += '<table class="data-table"><thead><tr><th>モデル</th><th>スコア</th><th>±σ</th><th>学習時間</th></tr></thead><tbody>';
+        const sorted = Object.entries(r.model_details).sort((a, b) => b[1].mean - a[1].mean);
+        for (const [key, det] of sorted) {
+            const isBest = key === r.best_model_key;
+            const rowStyle = isBest ? 'background:rgba(0,188,212,0.1);font-weight:600;' : '';
+            html += `<tr style="${rowStyle}">
+                <td>${isBest ? '🏆 ' : ''}${key}</td>
+                <td>${det.mean.toFixed(4)}</td>
+                <td>±${det.std.toFixed(4)}</td>
+                <td>${det.fit_time.toFixed(2)}s</td>
+            </tr>`;
+        }
+        html += '</tbody></table>';
+
+        // スコア棒グラフ用div
+        html += '<div id="score-chart" style="margin-top:1.5rem;"></div>';
+
+        // 警告
+        if (r.warnings && r.warnings.length > 0) {
+            html += '<h3 style="margin:1rem 0 0.5rem;">⚠️ 警告</h3><ul>';
+            for (const w of r.warnings) {
+                html += `<li style="color:var(--text-secondary);font-size:0.85rem;">${w}</li>`;
+            }
+            html += '</ul>';
+        }
+
+        container.innerHTML = html;
+
+        // Plotly スコア棒グラフ
+        if (typeof Plotly !== 'undefined') {
+            const names = sorted.map(([k]) => k);
+            const scores = sorted.map(([, v]) => v.mean);
+            const errors = sorted.map(([, v]) => v.std);
+            const colors = names.map(n => n === r.best_model_key ? '#00e5ff' : '#4c9be8');
+
+            Plotly.newPlot('score-chart', [{
+                type: 'bar', x: names, y: scores,
+                error_y: { type: 'data', array: errors, visible: true },
+                marker: { color: colors },
+            }], {
+                title: { text: 'モデル比較 (CVスコア)', font: { color: '#ccc' } },
+                yaxis: { title: r.scoring, color: '#ccc', gridcolor: 'rgba(255,255,255,0.05)' },
+                xaxis: { color: '#ccc' },
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#ccc' }, height: 300,
+                margin: { l: 60, r: 20, t: 40, b: 60 },
+            });
+        }
+    } catch (err) {
+        container.innerHTML = `<div class="alert alert-error">結果の読み込みに失敗: ${err.message}</div>`;
     }
 }
 </script>

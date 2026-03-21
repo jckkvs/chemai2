@@ -238,6 +238,118 @@ def calculate_descriptors(request, session_id):
         return JsonResponse({"error": str(e), "trace": traceback.format_exc()}, status=500)
 
 
+@csrf_exempt
+@require_POST
+def run_analysis(request, session_id):
+    """AutoMLで解析を実行"""
+    session = get_object_or_404(AnalysisSession, id=session_id)
+
+    if not session.target_col:
+        return JsonResponse({"error": "目的変数が設定されていません"}, status=400)
+    if session.status == "running":
+        return JsonResponse({"error": "既に解析が実行中です"}, status=400)
+
+    try:
+        # データ読み込み
+        df = pd.read_csv(session.uploaded_file.path)
+
+        # 記述子データがあれば結合
+        if session.precalc_data_path:
+            try:
+                desc_df = pd.read_parquet(session.precalc_data_path)
+                df = pd.concat([df, desc_df], axis=1)
+            except Exception:
+                pass
+
+        session.status = "running"
+        session.save()
+
+        # AutoML実行
+        from backend.models.automl import AutoMLEngine
+        data = json.loads(request.body) if request.body else {}
+        model_keys = data.get("model_keys", None)
+        cv_folds = data.get("cv_folds", 5)
+
+        engine = AutoMLEngine(
+            task=session.task_type,
+            cv_folds=cv_folds,
+            model_keys=model_keys,
+            selected_descriptors=session.selected_descriptors or None,
+        )
+
+        result = engine.run(
+            df,
+            target_col=session.target_col,
+            smiles_col=session.smiles_col or None,
+        )
+
+        # 結果をJSONシリアライズ可能な形式に変換
+        result_data = {
+            "task": result.task,
+            "best_model_key": result.best_model_key,
+            "best_score": float(result.best_score),
+            "scoring": result.scoring,
+            "model_scores": {k: float(v) for k, v in result.model_scores.items()},
+            "model_details": {
+                k: {
+                    "mean": float(v.get("mean", 0)),
+                    "std": float(v.get("std", 0)),
+                    "fit_time": float(v.get("fit_time", 0)),
+                    "fold_scores": [float(s) for s in v.get("fold_scores", [])],
+                }
+                for k, v in result.model_details.items()
+            },
+            "elapsed_seconds": float(result.elapsed_seconds),
+            "warnings": result.warnings,
+            "n_features": (
+                len(result.processed_X.columns)
+                if result.processed_X is not None
+                else 0
+            ),
+        }
+
+        session.status = "completed"
+        session.result_data = result_data
+        session.save()
+
+        return JsonResponse({
+            "success": True,
+            "result": result_data,
+        })
+
+    except Exception as e:
+        session.status = "error"
+        session.error_message = str(e)
+        session.save()
+        return JsonResponse({
+            "error": str(e),
+            "trace": traceback.format_exc(),
+        }, status=500)
+
+
+def get_results(request, session_id):
+    """セッションの解析結果をJSON返却"""
+    session = get_object_or_404(AnalysisSession, id=session_id)
+    if session.status != "completed":
+        return JsonResponse({
+            "status": session.status,
+            "error": session.error_message,
+        })
+    return JsonResponse({
+        "status": "completed",
+        "result": session.result_data,
+    })
+
+
+def check_status(request, session_id):
+    """セッションの現在ステータスをJSON返却"""
+    session = get_object_or_404(AnalysisSession, id=session_id)
+    return JsonResponse({
+        "status": session.status,
+        "error": session.error_message if session.status == "error" else "",
+    })
+
+
 def help_page(request):
     """ヘルプページ"""
     return render(request, "core/help.html")

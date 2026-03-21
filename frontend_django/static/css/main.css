@@ -469,3 +469,45 @@ input[type="checkbox"]:checked {
     .main-content { margin-left: 0; padding: 1rem; }
     .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
 }
+
+/* ── ミニメトリクスカード ──────────────────── */
+.metric-card-mini {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.7rem 1rem;
+    text-align: center;
+    min-width: 80px;
+}
+
+.metric-value-sm {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent-blue);
+}
+
+.metric-label-sm {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+}
+
+/* ── フォーム静的値 ────────────────────────── */
+.form-static {
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    font-size: 0.88rem;
+}
+
+/* ── ボタン状態 ────────────────────────────── */
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
+}
