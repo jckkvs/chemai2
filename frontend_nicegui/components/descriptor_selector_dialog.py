@@ -332,24 +332,50 @@ def _get_engine_badges(descriptors: list[str] | None) -> list[str]:
         return []
     engines = set()
     for d in descriptors:
-        if d.startswith("xtb_"):
+        dl = d.lower()
+        if dl.startswith("xtb_") or d in (
+            "HomoEnergy", "LumoEnergy", "HomoLumoGap",
+            "DipoleMoment", "Polarizability",
+        ):
             engines.add("XTB")
-        elif d.startswith("joback_"):
+        elif dl.startswith("joback_") or d in (
+            "CohesiveEnergy", "CohesiveEnergyDensity", "FreeVolume",
+        ):
             engines.add("基団寄与")
-        elif d.startswith("mu_") or d.startswith("ln_gamma"):
+        elif dl.startswith("mu_") or dl.startswith("ln_gamma") or dl.startswith("cosmo_"):
             engines.add("COSMO")
-        elif d.startswith("fr_") or d in ("MolWt", "MolLogP", "TPSA", "qed"):
+        elif dl.startswith("mordred_") or dl.startswith("mrd_"):
+            engines.add("Mordred")
+        elif dl.startswith("morgan") or dl.startswith("maccs") or dl.startswith("avalon"):
+            engines.add("scikit-FP")
+        elif dl.startswith("molfeat_"):
+            engines.add("Molfeat")
+        elif dl.startswith("mol2vec_"):
+            engines.add("Mol2Vec")
+        elif dl.startswith("chemprop_"):
+            engines.add("Chemprop")
+        elif dl.startswith("uma_"):
+            engines.add("UMA")
+        elif dl.startswith("padel_"):
+            engines.add("PaDEL")
+        elif dl.startswith("ds_"):
+            engines.add("DS")
+        elif dl.startswith("pka") or d == "pKa_pred":
+            engines.add("UniPKa")
+        elif dl.startswith("fr_") or d in ("MolWt", "MolLogP", "TPSA", "qed"):
             engines.add("RDKit")
-        elif d.startswith("gasteiger_"):
+        elif dl.startswith("gasteiger_"):
             engines.add("RDKit")
         else:
-            engines.add("他")
-    return sorted(engines)[:4]
+            engines.add("RDKit")
+    return sorted(engines)[:5]
 
 _ENGINE_BADGE_COLORS = {
     "RDKit": "green", "XTB": "orange", "COSMO": "purple",
     "基団寄与": "teal", "Mordred": "blue", "scikit-FP": "indigo",
-    "Molfeat": "pink", "他": "grey",
+    "Molfeat": "pink", "Mol2Vec": "deep-purple", "Chemprop": "red",
+    "UMA": "amber", "PaDEL": "light-blue", "DS": "lime",
+    "UniPKa": "cyan", "他": "grey",
 }
 
 
