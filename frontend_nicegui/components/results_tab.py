@@ -26,14 +26,81 @@ def render_results_tab(state: dict[str, Any]) -> None:
             ).classes("text-grey-6 q-mt-sm")
         return
 
-    # ── サマリーヘッダー ──
+    # ── 結果サマリーカード（ファーストビュー） ──
     with ui.card().classes("glass-card q-pa-md full-width q-mb-md"):
+        # 行1: 最良モデル + スコア
         with ui.row().classes("items-center q-gutter-md"):
             ui.icon("emoji_events", color="amber", size="lg")
             ui.label(f"最良モデル: {ar.best_model_key}").classes("text-h5 text-bold hero-gradient")
             ui.badge(f"{ar.best_score:.4f}", color="cyan").props("floating")
-            ui.label(f"タスク: {ar.task}").classes("text-grey-5")
-            ui.label(f"所要時間: {ar.elapsed_seconds:.1f}秒").classes("text-grey-5")
+
+        # 行2: 統計カード群
+        scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+        n_models = len(scores)
+        proc_X = getattr(ar, "processed_X", None)
+        n_feats = proc_X.shape[1] if proc_X is not None and hasattr(proc_X, "shape") else "?"
+
+        # 次点モデル差分
+        runner_up_text = ""
+        if n_models >= 2:
+            sorted_models = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+            runner_up_key, runner_up_score = sorted_models[1]
+            diff = ar.best_score - runner_up_score
+            runner_up_text = f"2位: {runner_up_key} ({runner_up_score:.4f}, 差: {diff:+.4f})"
+
+        with ui.row().classes("q-gutter-sm q-mt-sm"):
+            for val, lbl, icon_name in [
+                (ar.task, "タスク", "category"),
+                (f"{ar.elapsed_seconds:.1f}秒", "所要時間", "timer"),
+                (f"{n_models}個", "比較モデル数", "compare_arrows"),
+                (str(n_feats), "特徴量数", "functions"),
+            ]:
+                with ui.card().classes("q-pa-xs").style(
+                    "min-width: 90px; background: rgba(0,212,255,0.08); border-radius: 8px;"
+                ):
+                    with ui.row().classes("items-center q-gutter-xs"):
+                        ui.icon(icon_name, size="xs", color="cyan")
+                        ui.label(str(val)).classes("text-subtitle2 text-bold")
+                    ui.label(lbl).classes("text-caption text-grey-5").style("font-size: 0.65rem;")
+
+        if runner_up_text:
+            ui.label(runner_up_text).classes("text-caption text-grey-5 q-mt-xs")
+
+        # 行3: エクスポートボタン群
+        with ui.row().classes("q-gutter-sm q-mt-sm"):
+            async def _export_csv():
+                """モデル比較表 + OOF予測をCSVでダウンロード。"""
+                import io
+                import csv
+
+                buf = io.StringIO()
+                writer = csv.writer(buf)
+
+                # モデル比較
+                writer.writerow(["=== モデル比較 ==="])
+                writer.writerow(["モデル", "スコア"])
+                for mk, ms in sorted(scores.items(), key=lambda x: x[1], reverse=True):
+                    writer.writerow([mk, f"{ms:.6f}"])
+                writer.writerow([])
+
+                # OOF予測
+                y_true = getattr(ar, "oof_true", None)
+                y_pred = getattr(ar, "oof_predictions", None)
+                if y_true is not None and y_pred is not None:
+                    writer.writerow(["=== OOF予測 ==="])
+                    writer.writerow(["実測値", "予測値", "残差"])
+                    yt = np.asarray(y_true).ravel()
+                    yp = np.asarray(y_pred).ravel()
+                    for t, p in zip(yt, yp):
+                        writer.writerow([f"{t:.6f}", f"{p:.6f}", f"{t - p:.6f}"])
+
+                csv_text = buf.getvalue()
+                ui.download(csv_text.encode("utf-8-sig"), f"chemai_results_{ar.best_model_key}.csv")
+                ui.notify("📥 CSVダウンロードを開始しました", type="positive")
+
+            ui.button("📥 結果CSV", on_click=_export_csv).props(
+                "outline color=cyan size=sm no-caps icon=download"
+            ).tooltip("モデル比較表 + OOF予測値をCSVダウンロード")
 
     # ── 警告 ──
     if ar.warnings:

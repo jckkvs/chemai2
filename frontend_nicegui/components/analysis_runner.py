@@ -257,12 +257,86 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
 
     except Exception as ex:
         error_msg = str(ex)
+        tb_text = traceback.format_exc()
         short_msg = error_msg[:200] + "..." if len(error_msg) > 200 else error_msg
+
+        # エラー種別に応じた対処法
+        remedy = _get_error_remedy(error_msg, tb_text)
+
+        progress_pct.text = "❌"
         progress_label.text = "❌ エラーが発生しました"
         progress_detail.text = short_msg
+        progress_eta.text = ""
+
+        # 対処法パネル
+        with status_container:
+            with ui.card().classes("full-width q-pa-sm q-mt-sm").style(
+                "border: 1px solid rgba(248,113,113,0.3); border-radius: 8px; background: rgba(60,20,20,0.2);"
+            ):
+                ui.label("💡 対処法").classes("text-subtitle2 text-bold text-amber")
+                ui.label(remedy).classes("text-caption")
+                with ui.expansion("🔍 詳細エラー情報", icon="bug_report").classes("full-width q-mt-xs"):
+                    ui.code(tb_text[-1000:]).classes("full-width").style("font-size: 0.7rem;")
+
         ui.notify(f"解析エラー: {short_msg}", type="negative", timeout=8000)
-        logger.error(f"AutoML実行エラー: {traceback.format_exc()}")
+        logger.error(f"AutoML実行エラー: {tb_text}")
 
     finally:
         _analysis_running = False
         timer.deactivate()
+
+
+def _get_error_remedy(error_msg: str, tb_text: str) -> str:
+    """エラーメッセージからユーザー向けの対処法を生成する。"""
+    msg_lower = error_msg.lower()
+    tb_lower = tb_text.lower()
+
+    if "memory" in msg_lower or "memoryerror" in tb_lower:
+        return (
+            "メモリ不足です。以下を試してください:\n"
+            "• データの行数を減らす（サンプリング）\n"
+            "• 記述子エンジンを少なくする\n"
+            "• 使わない列を「除外」に設定する"
+        )
+    elif "smiles" in msg_lower or "rdkit" in tb_lower or "mol" in msg_lower:
+        return (
+            "SMILES列の解析に失敗しました:\n"
+            "• SMILES列に無効な分子構造が含まれている可能性があります\n"
+            "• SMILES列を「なし」に設定して再解析するか、データを確認してください"
+        )
+    elif "target" in msg_lower and ("not found" in msg_lower or "見つかりません" in msg_lower):
+        return (
+            "目的変数が見つかりません:\n"
+            "• 「列の役割」タブで目的変数が正しく設定されているか確認してください"
+        )
+    elif "timeout" in msg_lower or "timed out" in msg_lower:
+        return (
+            "解析がタイムアウトしました:\n"
+            "• タイムアウト値を増やしてください（パイプライン設定）\n"
+            "• モデル数を減らすと高速化できます"
+        )
+    elif "fit" in msg_lower or "convergence" in tb_lower:
+        return (
+            "モデルの学習に失敗しました:\n"
+            "• データに欠損値やInfが多い可能性があります — EDAタブで確認\n"
+            "• スケーラーを「robust」に変更してみてください"
+        )
+    elif "nan" in msg_lower or "inf" in msg_lower or "missing" in msg_lower:
+        return (
+            "データに NaN/Inf が含まれています:\n"
+            "• EDAタブの「欠損行削除」や「高欠損列削除」を試してください\n"
+            "• 前処理の欠損値補完方法を変更してみてください"
+        )
+    elif "shape" in msg_lower or "dimension" in msg_lower:
+        return (
+            "データの次元に問題があります:\n"
+            "• 全行が同じ値の定数列があれば「除外」してください\n"
+            "• 特徴量数がサンプル数より大きい場合、特徴量選択を有効にしてください"
+        )
+    else:
+        return (
+            "予期しないエラーが発生しました:\n"
+            "• データの形式やサイズを確認してください\n"
+            "• 詳細エラー情報（下）を展開して原因を確認してください\n"
+            "• 問題が解決しない場合は、設定を変更して再試行してください"
+        )
