@@ -323,14 +323,48 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
 
 
 # ═══════════════════════════════════════════════════════════
-# 記述子選択 — 3タブUI（目的変数/相関/エンジン）
+# 目的別プリセット定義（Streamlit版と統一）
+# ═══════════════════════════════════════════════════════════
+_PRESETS = {
+    "🧪 基本物性（沸点・密度等）": {
+        "engines": ["RDKitAdapter", "GroupContribAdapter"],
+        "desc": "MW, LogP, TPSA, 基団寄与法を中心に物性予測",
+    },
+    "🔑 構造活性相関（FP中心）": {
+        "engines": ["RDKitAdapter", "SkfpAdapter"],
+        "desc": "ECFP/MACCS等のフィンガープリントで活性予測・QSAR",
+    },
+    "📐 網羅的記述子（特徴量選択前提）": {
+        "engines": ["RDKitAdapter", "MordredAdapter"],
+        "desc": "Mordred 1800+記述子を全計算→特徴量選択で絞り込む",
+    },
+    "🧠 深層学習表現": {
+        "engines": ["MolAIAdapter", "Mol2VecAdapter"],
+        "desc": "CNN潜在ベクトル+Word2Vec分散表現",
+    },
+    "⚛️ 量子化学込み": {
+        "engines": ["RDKitAdapter", "XTBAdapter", "CosmoAdapter"],
+        "desc": "HOMO/LUMO, 溶媒和エネルギー等を加えた高精度モデル",
+    },
+    "🚀 フルセット（全エンジン）": {
+        "engines": [e["cls"] for e in _ENGINE_INFO],
+        "desc": "利用可能な全エンジンを一括ON（時間がかかります）",
+    },
+}
+
+
+# ═══════════════════════════════════════════════════════════
+# 記述子選択 — 6タブUI
 # ═══════════════════════════════════════════════════════════
 def _render_target_recommendations(state: dict, adapters: dict) -> None:
     """
-    記述子の選択方法を3つのタブで提供する。
-    1. 目的変数で選ぶ — recommender.pyの推奨DBから選択
-    2. 相関係数で選ぶ — 目的変数との相関上位を選択
-    3. エンジンから選ぶ — ライブラリ単位で選択
+    記述子のの選択方法を6つのタブで提供する。
+    1. 🎯 プリセットで選ぶ — 目的別ワンクリックプリセット
+    2. 🔬 目的変数で選ぶ — recommender.pyの推奨DBから選択
+    3. 📈 相関係数で選ぶ — 目的変数との相関上位を選択
+    4. ⚙️ エンジンから選ぶ — ライブラリ単位で選択
+    5. 🔍 テキスト検索 — 記述子名の部分一致検索
+    6. 📊 分散ベース — 情報量が大きい記述子を選択
     """
     precalc_df = state.get("precalc_df")
     if precalc_df is None:
@@ -343,23 +377,147 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
         "border: 1px solid rgba(0,188,212,0.3); border-radius: 12px;"
         "background: rgba(0,20,40,0.25);"
     ):
+        n_selected = len(state.get("selected_descriptors", all_descs))
         with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
             ui.icon("playlist_add_check", color="cyan").classes("text-h5")
             ui.label("記述子を選択する").classes("text-h6")
             ui.badge(f"{n_total}個利用可能", color="cyan").props("outline")
+            ui.badge(f"{n_selected}個選択中", color="green").props("outline")
 
-        # ── 3タブ ──
+        # ── 6タブ ──
         with ui.tabs().classes("full-width").props(
             "dense no-caps active-color=cyan indicator-color=cyan"
         ) as tabs:
-            tab_target = ui.tab("target", label="目的変数で選ぶ", icon="science")
-            tab_corr = ui.tab("corr", label="相関係数で選ぶ", icon="trending_up")
-            tab_engine = ui.tab("engine", label="エンジンから選ぶ", icon="settings")
+            tab_preset = ui.tab("preset", label="🎯 プリセット", icon="auto_awesome")
+            tab_target = ui.tab("target", label="🔬 目的変数", icon="science")
+            tab_corr = ui.tab("corr", label="📈 相関係数", icon="trending_up")
+            tab_engine = ui.tab("engine", label="⚙️ エンジン", icon="settings")
+            tab_search = ui.tab("search", label="🔍 検索", icon="search")
+            tab_variance = ui.tab("variance", label="📊 分散", icon="bar_chart")
 
-        with ui.tab_panels(tabs, value="target").classes("full-width"):
+        with ui.tab_panels(tabs, value="preset").classes("full-width"):
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # タブ1: 目的変数で選ぶ
+            # タブ1: プリセットで選ぶ（NEW）
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            with ui.tab_panel("preset"):
+                ui.label(
+                    "解析の目的に合わせてエンジンをまとめてON/OFFできます。"
+                    "ワンクリックで記述子セットが切り替わります。"
+                ).classes("text-caption text-grey q-mb-sm")
+
+                for preset_name, preset_info in _PRESETS.items():
+                    preset_engines = preset_info["engines"]
+                    preset_desc = preset_info["desc"]
+
+                    # 全エンジンが利用可能かチェック
+                    all_avail = all(
+                        _is_available(adapters, e) for e in preset_engines
+                    )
+                    n_avail = sum(
+                        1 for e in preset_engines if _is_available(adapters, e)
+                    )
+
+                    def _apply_preset(engines=preset_engines, pname=preset_name):
+                        # 全エンジンOFF → 選択エンジンのみON
+                        for eng in _ENGINE_INFO:
+                            key = f"use_{eng['cls'].replace('Adapter', '').lower()}"
+                            state[key] = eng["cls"] in engines
+                        # 選択エンジンに属する記述子のみを選択
+                        engine_cls_set = set(engines)
+                        engine_to_cls = {}
+                        for eng in _ENGINE_INFO:
+                            engine_to_cls[eng["cls"]] = eng["label"]
+                        selected = []
+                        for d in all_descs:
+                            dl = d.lower()
+                            matched = False
+                            if "RDKitAdapter" in engine_cls_set:
+                                if not any(dl.startswith(p) for p in [
+                                    "xtb_", "cosmo_", "mu_", "ln_gamma", "joback_",
+                                    "pka", "mordred_", "mrd_", "morgan", "maccs",
+                                    "avalon", "molfeat_", "mol2vec_", "chemprop_",
+                                    "uma_", "padel_", "ds_",
+                                ]):
+                                    matched = True
+                            if "XTBAdapter" in engine_cls_set and (
+                                dl.startswith("xtb_") or d in (
+                                    "HomoEnergy", "LumoEnergy", "HomoLumoGap",
+                                    "DipoleMoment", "Polarizability",
+                                )
+                            ):
+                                matched = True
+                            if "CosmoAdapter" in engine_cls_set and (
+                                dl.startswith("cosmo_") or dl.startswith("mu_")
+                            ):
+                                matched = True
+                            if "GroupContribAdapter" in engine_cls_set and (
+                                dl.startswith("joback_") or d in (
+                                    "CohesiveEnergy", "VanDerWaalsVolume",
+                                )
+                            ):
+                                matched = True
+                            if "MordredAdapter" in engine_cls_set and (
+                                dl.startswith("mordred_") or dl.startswith("mrd_")
+                            ):
+                                matched = True
+                            if "SkfpAdapter" in engine_cls_set and any(
+                                dl.startswith(p) for p in ["morgan", "maccs", "avalon"]
+                            ):
+                                matched = True
+                            if "MolfeatAdapter" in engine_cls_set and dl.startswith("molfeat_"):
+                                matched = True
+                            if "MolAIAdapter" in engine_cls_set and dl.startswith("molai_"):
+                                matched = True
+                            if "Mol2VecAdapter" in engine_cls_set and dl.startswith("mol2vec_"):
+                                matched = True
+                            if "ChempropAdapter" in engine_cls_set and dl.startswith("chemprop_"):
+                                matched = True
+                            if "UniPkaAdapter" in engine_cls_set and (dl.startswith("pka") or d == "pKa_pred"):
+                                matched = True
+                            if "UMAAdapter" in engine_cls_set and dl.startswith("uma_"):
+                                matched = True
+                            if "PaDELAdapter" in engine_cls_set and dl.startswith("padel_"):
+                                matched = True
+                            if "DescriptaStorusAdapter" in engine_cls_set and dl.startswith("ds_"):
+                                matched = True
+                            if matched:
+                                selected.append(d)
+
+                        if not selected:
+                            selected = list(all_descs)
+                        state["selected_descriptors"] = selected
+                        state["active_descriptors"] = selected
+                        ui.notify(
+                            f"✅ {pname} を適用 ({len(selected)}記述子選択)",
+                            type="positive",
+                        )
+
+                    border = "rgba(0,212,255,0.4)" if all_avail else "rgba(255,200,0,0.3)"
+                    with ui.card().classes("full-width q-pa-sm q-mb-xs").style(
+                        f"border: 1px solid {border}; border-radius: 8px;"
+                        "background: rgba(0,20,40,0.3); cursor: pointer;"
+                    ):
+                        with ui.row().classes("items-center full-width justify-between"):
+                            with ui.column().classes("q-gutter-none"):
+                                ui.label(preset_name).classes("text-body2 text-bold")
+                                ui.label(preset_desc).classes("text-caption text-grey").style(
+                                    "font-size: 0.7rem;"
+                                )
+                            with ui.row().classes("items-center q-gutter-xs"):
+                                ui.badge(
+                                    f"{n_avail}/{len(preset_engines)}",
+                                    color="green" if all_avail else "amber",
+                                ).props("outline")
+                                ui.button(
+                                    "適用", on_click=_apply_preset,
+                                ).props(
+                                    f"{'unelevated' if all_avail else 'outline'}"
+                                    " size=sm no-caps color=cyan"
+                                )
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # タブ2: 目的変数で選ぶ
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             with ui.tab_panel("target"):
                 ui.label(
@@ -381,7 +539,6 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             for rec in cat_recs:
                                 def _apply_rec(r=rec):
                                     desc_names = [d.name for d in r.descriptors]
-                                    # 計算済みの列のみフィルタ
                                     valid = [d for d in desc_names if d in all_descs]
                                     state["active_descriptors"] = valid
                                     state["selected_descriptors"] = valid
@@ -411,7 +568,6 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                         color="teal" if n_in == len(rec.descriptors) else "amber",
                                     ).props("outline")
 
-                                    # 記述子のツールチップ付きバッジ
                                     for d in rec.descriptors[:4]:
                                         with ui.badge(
                                             d.name, color="grey-8",
@@ -431,7 +587,7 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                     ui.label("recommender.py が利用できません").classes("text-warning")
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # タブ2: 相関係数で選ぶ
+            # タブ3: 相関係数で選ぶ
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             with ui.tab_panel("corr"):
                 target_col = state.get("target_col")
@@ -442,7 +598,6 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                         "目的変数が設定されていません。「列の役割」タブで目的変数を指定してください。"
                     ).classes("text-body2 text-amber")
                 else:
-                    # 相関計算
                     corr_dict: dict[str, float] = {}
                     try:
                         target_s = df[target_col]
@@ -466,7 +621,29 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             f"目的変数「{target_col}」との|r|で上位を選択できます。"
                         ).classes("text-caption text-grey q-mb-sm")
 
+                        # 相関閾値スライダー
+                        with ui.row().classes("items-center q-gutter-sm q-mb-sm full-width"):
+                            ui.label("相関閾値:").classes("text-body2")
+                            corr_thresh = ui.slider(
+                                min=0.0, max=1.0, value=0.1, step=0.05,
+                            ).props("label-always").classes("full-width")
+                            corr_thresh_label = ui.label("0.10").classes("text-caption text-cyan")
+
+                        def _update_thresh(e):
+                            corr_thresh_label.text = f"{e.value:.2f}"
+                        corr_thresh.on_value_change(_update_thresh)
+
+                        def _sel_by_thresh():
+                            t = corr_thresh.value
+                            sel = [d for d in sorted_descs if corr_dict.get(d, 0) >= t]
+                            state["selected_descriptors"] = sel
+                            state["active_descriptors"] = sel
+                            ui.notify(f"|r|≥{t:.2f} の {len(sel)}件を選択", type="positive")
+
                         with ui.row().classes("q-gutter-sm q-mb-sm"):
+                            ui.button(
+                                "閾値以上を選択", on_click=_sel_by_thresh,
+                            ).props("outline size=sm no-caps color=teal")
                             for n in [10, 20, 30, 50]:
                                 def _sel_top(n=n, descs=sorted_descs):
                                     state["selected_descriptors"] = list(descs[:n])
@@ -479,29 +656,21 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                 ).props("outline size=sm no-caps color=cyan")
 
                         # 上位20件のミニテーブル
-                        top_rows = []
                         for d in sorted_descs[:20]:
                             r_val = corr_dict[d]
-                            top_rows.append({
-                                "name": d,
-                                "corr": f"{r_val:.4f}",
-                                "bar": int(r_val * 100),
-                            })
-
-                        for row in top_rows:
                             with ui.row().classes(
                                 "items-center full-width q-py-xs"
                             ).style("border-bottom: 1px solid rgba(255,255,255,0.05);"):
-                                ui.label(row["name"]).classes("text-body2").style(
+                                ui.label(d).classes("text-body2").style(
                                     "min-width: 180px;"
                                 )
                                 ui.linear_progress(
-                                    value=row["bar"] / 100, color="cyan",
+                                    value=int(r_val * 100) / 100, color="cyan",
                                 ).style("width: 120px; height: 6px;").props("rounded")
-                                ui.label(row["corr"]).classes("text-caption text-cyan")
+                                ui.label(f"{r_val:.4f}").classes("text-caption text-cyan")
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # タブ3: エンジンから選ぶ（個別選択）
+            # タブ4: エンジンから選ぶ（個別選択）
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             with ui.tab_panel("engine"):
                 ui.label(
@@ -509,10 +678,9 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                     "サブカテゴリで分類されています。"
                 ).classes("text-caption text-grey q-mb-sm")
 
-                # 記述子名からエンジンを推定（L511-547と同じロジック）
                 engine_descs: dict[str, list[str]] = {}
                 for d in all_descs:
-                    eng = "RDKit"  # デフォルト
+                    eng = "RDKit"
                     dl = d.lower()
                     if dl.startswith("xtb_") or d in (
                         "HomoEnergy", "LumoEnergy", "HomoLumoGap",
@@ -559,7 +727,6 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                         f"🔧 {eng_name} ({n_sel}/{len(descs)})",
                         icon="memory",
                     ).classes("full-width q-mb-xs").props("dense"):
-                        # エンジン単位の一括操作
                         with ui.row().classes("q-gutter-sm q-mb-sm"):
                             def _sel_all_eng(ds=descs):
                                 s = set(state.get("selected_descriptors", []))
@@ -581,15 +748,12 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             )
                             ui.badge(f"{n_sel}/{len(descs)}", color=sel_color).props("outline")
 
-                        # サブカテゴリ分け
                         groups = _group_descriptors_by_subcategory(eng_name, descs)
-
                         for group_name, group_descs in groups.items():
                             g_sel = sum(1 for d in group_descs if d in selected)
                             with ui.expansion(
                                 f"  {group_name} ({g_sel}/{len(group_descs)})",
                             ).classes("full-width q-mb-xs").props("dense"):
-                                # グループ単位の一括操作
                                 with ui.row().classes("q-gutter-xs q-mb-xs"):
                                     def _sg(ds=group_descs):
                                         s = set(state.get("selected_descriptors", []))
@@ -608,7 +772,6 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                         "flat size=xs no-caps color=grey dense"
                                     )
 
-                                # 個別チェックボックス（横並び・コンパクト）
                                 with ui.row().classes("q-gutter-xs flex-wrap"):
                                     for desc_name in group_descs:
                                         is_on = desc_name in selected
@@ -626,6 +789,148 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                             value=is_on,
                                             on_change=lambda e, dn=desc_name: _toggle(e.value, dn),
                                         ).props("dense").classes("text-xs")
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # タブ5: テキスト検索（NEW）
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            with ui.tab_panel("search"):
+                ui.label(
+                    "記述子名を部分一致で検索し、まとめて選択/解除できます。"
+                ).classes("text-caption text-grey q-mb-sm")
+
+                search_input = ui.input(
+                    "記述子名を検索", placeholder="例: LogP, morgan, TPSA...",
+                ).props("outlined dense clearable").classes("full-width q-mb-sm")
+
+                search_results = ui.column().classes("full-width")
+
+                def _do_search():
+                    search_results.clear()
+                    query = (search_input.value or "").strip().lower()
+                    if not query:
+                        with search_results:
+                            ui.label("検索語を入力してください").classes("text-grey text-caption")
+                        return
+
+                    matches = [d for d in all_descs if query in d.lower()]
+                    cur_sel = set(state.get("selected_descriptors", []))
+
+                    with search_results:
+                        if not matches:
+                            ui.label(f"「{query}」に一致する記述子はありません").classes("text-amber")
+                            return
+
+                        ui.label(f"{len(matches)}件ヒット").classes("text-caption text-cyan q-mb-xs")
+
+                        with ui.row().classes("q-gutter-sm q-mb-sm"):
+                            def _add_all_search(ms=matches):
+                                s = set(state.get("selected_descriptors", []))
+                                s.update(ms)
+                                state["selected_descriptors"] = list(s)
+                                ui.notify(f"{len(ms)}件を選択に追加", type="positive")
+
+                            def _remove_all_search(ms=matches):
+                                s = set(state.get("selected_descriptors", []))
+                                s -= set(ms)
+                                state["selected_descriptors"] = list(s)
+                                ui.notify(f"{len(ms)}件を選択から除外", type="info")
+
+                            ui.button("全部追加", on_click=_add_all_search).props(
+                                "outline size=sm no-caps color=cyan"
+                            )
+                            ui.button("全部除外", on_click=_remove_all_search).props(
+                                "outline size=sm no-caps color=grey"
+                            )
+
+                        for m in matches[:50]:
+                            in_sel = m in cur_sel
+                            with ui.row().classes("items-center q-py-xs").style(
+                                "border-bottom: 1px solid rgba(255,255,255,0.05);"
+                            ):
+                                ui.icon(
+                                    "check_circle" if in_sel else "radio_button_unchecked",
+                                    color="green" if in_sel else "grey",
+                                ).classes("text-body2")
+                                ui.label(m).classes("text-body2")
+
+                        if len(matches) > 50:
+                            ui.label(f"...他 {len(matches) - 50}件").classes(
+                                "text-caption text-grey"
+                            )
+
+                search_input.on("keyup.enter", lambda: _do_search())
+                ui.button("検索", on_click=_do_search).props(
+                    "outline size=sm no-caps color=cyan"
+                )
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # タブ6: 分散ベース（NEW）
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            with ui.tab_panel("variance"):
+                ui.label(
+                    "分散（情報量）が大きい記述子を優先選択します。"
+                    "定数列や低情報量の記述子を自動除外できます。"
+                ).classes("text-caption text-grey q-mb-sm")
+
+                try:
+                    variances = precalc_df.var(numeric_only=True).dropna()
+                    # 正規化（0-1スケール）
+                    v_max = variances.max()
+                    if v_max > 0:
+                        norm_var = (variances / v_max).to_dict()
+                    else:
+                        norm_var = variances.to_dict()
+
+                    sorted_by_var = sorted(
+                        norm_var.keys(), key=lambda d: norm_var[d], reverse=True
+                    )
+
+                    # 定数列除外
+                    n_const = sum(1 for v in variances if v == 0)
+                    if n_const > 0:
+                        ui.label(
+                            f"⚠️ {n_const}個の定数列（分散=0）が検出されました"
+                        ).classes("text-amber text-caption q-mb-xs")
+
+                    def _remove_const():
+                        const_cols = [c for c, v in variances.items() if v == 0]
+                        s = set(state.get("selected_descriptors", all_descs))
+                        s -= set(const_cols)
+                        state["selected_descriptors"] = list(s)
+                        ui.notify(f"定数列 {len(const_cols)}件を除外", type="info")
+
+                    with ui.row().classes("q-gutter-sm q-mb-sm"):
+                        if n_const > 0:
+                            ui.button("定数列を除外", on_click=_remove_const).props(
+                                "outline size=sm no-caps color=amber"
+                            )
+                        for n in [10, 20, 50, 100]:
+                            if n <= len(sorted_by_var):
+                                def _sel_var_top(n=n, descs=sorted_by_var):
+                                    state["selected_descriptors"] = list(descs[:n])
+                                    state["active_descriptors"] = list(descs[:n])
+                                    ui.notify(f"分散上位{n}件を選択", type="positive")
+
+                                ui.button(
+                                    f"上位{n}件", on_click=_sel_var_top,
+                                ).props("outline size=sm no-caps color=teal")
+
+                    # 分散ランキング表示
+                    ui.label("分散ランキング（上位20件）").classes("text-subtitle2 q-mt-sm")
+                    for d in sorted_by_var[:20]:
+                        nv = norm_var[d]
+                        raw_v = variances.get(d, 0)
+                        with ui.row().classes(
+                            "items-center full-width q-py-xs"
+                        ).style("border-bottom: 1px solid rgba(255,255,255,0.05);"):
+                            ui.label(d).classes("text-body2").style("min-width: 180px;")
+                            ui.linear_progress(
+                                value=nv, color="teal",
+                            ).style("width: 120px; height: 6px;").props("rounded")
+                            ui.label(f"{raw_v:.4g}").classes("text-caption text-teal")
+
+                except Exception as ex:
+                    ui.label(f"分散計算エラー: {ex}").classes("text-red")
 
 
 
