@@ -817,15 +817,27 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                 ).props("outline size=sm no-caps color=cyan")
 
                         # 上位20件のミニテーブル
+                        _corr_selected = set(state.get("selected_descriptors", all_descs))
                         for d in sorted_descs[:20]:
                             r_val = corr_dict[d]
                             d_meaning = _catalog_meanings.get(d, "")
                             with ui.row().classes(
-                                "items-center full-width q-py-xs"
+                                "items-center full-width q-py-xs q-gutter-xs"
                             ).style("border-bottom: 1px solid rgba(255,255,255,0.05);"):
-                                ui.label(d).classes("text-body2").style(
-                                    "min-width: 180px;"
-                                )
+                                def _toggle_corr(val, dn=d):
+                                    s = set(state.get("selected_descriptors", []))
+                                    if val:
+                                        s.add(dn)
+                                    else:
+                                        s.discard(dn)
+                                    state["selected_descriptors"] = list(s)
+
+                                ui.checkbox(
+                                    d, value=(d in _corr_selected),
+                                    on_change=lambda e, dn=d: _toggle_corr(
+                                        e.value, dn
+                                    ),
+                                ).props("dense").style("min-width: 180px;")
                                 if d_meaning:
                                     ui.label(d_meaning).classes(
                                         "text-caption text-grey"
@@ -1086,14 +1098,25 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
 
                         for m in matches[:50]:
                             in_sel = m in cur_sel
-                            with ui.row().classes("items-center q-py-xs").style(
+                            with ui.row().classes(
+                                "items-center q-py-xs q-gutter-xs"
+                            ).style(
                                 "border-bottom: 1px solid rgba(255,255,255,0.05);"
                             ):
-                                ui.icon(
-                                    "check_circle" if in_sel else "radio_button_unchecked",
-                                    color="green" if in_sel else "grey",
-                                ).classes("text-body2")
-                                ui.label(m).classes("text-body2")
+                                def _toggle_search(val, dn=m):
+                                    s = set(state.get("selected_descriptors", []))
+                                    if val:
+                                        s.add(dn)
+                                    else:
+                                        s.discard(dn)
+                                    state["selected_descriptors"] = list(s)
+
+                                ui.checkbox(
+                                    m, value=in_sel,
+                                    on_change=lambda e, dn=m: _toggle_search(
+                                        e.value, dn
+                                    ),
+                                ).props("dense").style("min-width: 200px;")
                                 _m_meaning = _catalog_meanings.get(m, "")
                                 if _m_meaning:
                                     ui.label(_m_meaning).classes(
@@ -1164,13 +1187,25 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
 
                     # 分散ランキング表示
                     ui.label("分散ランキング（上位20件）").classes("text-subtitle2 q-mt-sm")
+                    _var_selected = set(state.get("selected_descriptors", all_descs))
                     for d in sorted_by_var[:20]:
                         nv = norm_var[d]
                         raw_v = variances.get(d, 0)
                         with ui.row().classes(
-                            "items-center full-width q-py-xs"
+                            "items-center full-width q-py-xs q-gutter-xs"
                         ).style("border-bottom: 1px solid rgba(255,255,255,0.05);"):
-                            ui.label(d).classes("text-body2").style("min-width: 180px;")
+                            def _toggle_var(val, dn=d):
+                                s = set(state.get("selected_descriptors", []))
+                                if val:
+                                    s.add(dn)
+                                else:
+                                    s.discard(dn)
+                                state["selected_descriptors"] = list(s)
+
+                            ui.checkbox(
+                                d, value=(d in _var_selected),
+                                on_change=lambda e, dn=d: _toggle_var(e.value, dn),
+                            ).props("dense").style("min-width: 180px;")
                             _v_meaning = _catalog_meanings.get(d, "")
                             if _v_meaning:
                                 ui.label(_v_meaning).classes(
