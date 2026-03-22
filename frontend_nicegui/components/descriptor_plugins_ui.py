@@ -832,17 +832,82 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             type="positive",
                         )
 
+                    # プリセットに含まれる記述子を事前計算
+                    _preview_descs = []
+                    for d in all_descs:
+                        dl = d.lower()
+                        _pm = False
+                        if "RDKitAdapter" in preset_engines and not any(dl.startswith(p) for p in [
+                            "xtb_", "cosmo_", "mu_", "ln_gamma", "joback_",
+                            "pka", "mordred_", "mrd_", "morgan", "maccs",
+                            "avalon", "molfeat_", "mol2vec_", "chemprop_",
+                            "uma_", "padel_", "ds_",
+                        ]):
+                            _pm = True
+                        if "XTBAdapter" in preset_engines and (dl.startswith("xtb_") or d in ("HomoEnergy", "LumoEnergy", "HomoLumoGap", "DipoleMoment", "Polarizability")):
+                            _pm = True
+                        if "GroupContribAdapter" in preset_engines and (dl.startswith("joback_") or d in ("CohesiveEnergy", "VanDerWaalsVolume")):
+                            _pm = True
+                        if "MordredAdapter" in preset_engines and (dl.startswith("mordred_") or dl.startswith("mrd_")):
+                            _pm = True
+                        if "SkfpAdapter" in preset_engines and any(dl.startswith(p) for p in ["morgan", "maccs", "avalon", "rdkitfp_", "atompairfp_", "topologicaltorsionfp_"]):
+                            _pm = True
+                        if "MolfeatAdapter" in preset_engines and dl.startswith("molfeat_"):
+                            _pm = True
+                        if "MolAIAdapter" in preset_engines and dl.startswith("molai_"):
+                            _pm = True
+                        if "Mol2VecAdapter" in preset_engines and dl.startswith("mol2vec_"):
+                            _pm = True
+                        if "CosmoAdapter" in preset_engines and (dl.startswith("cosmo_") or dl.startswith("mu_")):
+                            _pm = True
+                        if "ChempropAdapter" in preset_engines and dl.startswith("chemprop_"):
+                            _pm = True
+                        if "UMAAdapter" in preset_engines and dl.startswith("uma_"):
+                            _pm = True
+                        if _pm:
+                            _preview_descs.append(d)
+                    n_preview = len(_preview_descs)
+
+                    # FPグループ化して表示用に整理
+                    _pv_non_fp, _pv_fp_groups = _group_fp_descriptors(_preview_descs)
+                    _summary_parts = []
+                    for d in _pv_non_fp[:8]:
+                        _summary_parts.append(d)
+                    for gl, bits in sorted(_pv_fp_groups.items(), key=lambda x: -len(x[1])):
+                        _summary_parts.append(f"{gl}({len(bits)}bit)")
+                    _remaining = n_preview - len(_pv_non_fp[:8]) - sum(len(b) for b in _pv_fp_groups.values())
+                    preview_text = ", ".join(_summary_parts[:12])
+                    if len(_summary_parts) > 12:
+                        preview_text += f" 他{len(_summary_parts)-12}種"
+
+                    # エンジン名のラベルマップ
+                    _eng_label = {e["cls"]: e["label"] for e in _ENGINE_INFO}
+
                     border = "rgba(0,212,255,0.4)" if all_avail else "rgba(255,200,0,0.3)"
                     with ui.card().classes("full-width q-pa-sm q-mb-xs").style(
                         f"border: 1px solid {border}; border-radius: 8px;"
-                        "background: rgba(0,20,40,0.3); cursor: pointer;"
+                        "background: rgba(0,20,40,0.3);"
                     ):
                         with ui.row().classes("items-center full-width justify-between"):
-                            with ui.column().classes("q-gutter-none"):
+                            with ui.column().classes("q-gutter-none").style("flex: 1;"):
                                 ui.label(preset_name).classes("text-body2 text-bold")
                                 ui.label(preset_desc).classes("text-caption text-grey").style(
                                     "font-size: 0.7rem;"
                                 )
+                                # エンジンバッジ
+                                with ui.row().classes("q-gutter-xs q-mt-xs"):
+                                    for pe in preset_engines:
+                                        lbl = _eng_label.get(pe, pe.replace("Adapter", ""))
+                                        avl = _is_available(adapters, pe)
+                                        ui.badge(
+                                            lbl,
+                                            color="teal" if avl else "grey",
+                                        ).props("outline dense").style("font-size: 0.6rem;")
+                                # 含まれる記述子のプレビュー
+                                ui.label(
+                                    f"📋 {n_preview}記述子: {preview_text}"
+                                ).classes("text-caption text-grey-5").style("font-size: 0.65rem;")
+
                             with ui.row().classes("items-center q-gutter-xs"):
                                 ui.badge(
                                     f"{n_avail}/{len(preset_engines)}",
