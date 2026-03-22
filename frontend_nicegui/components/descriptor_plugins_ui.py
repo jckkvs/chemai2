@@ -1409,6 +1409,27 @@ def _render_descriptor_table(state: dict) -> None:
     except ImportError:
         pass
 
+    # ── カタログ情報でフォールバック補完 ──
+    from frontend_nicegui.components.descriptor_catalog import (
+        get_catalog as _gc, SUPPORTED_ENGINES as _se,
+    )
+    for _e in _se:
+        _c = _gc(_e)
+        if _c:
+            for _cat_name, _cat_items in _c.items():
+                for _ci in _cat_items:
+                    dname = _ci["name"]
+                    if dname.startswith("_"):
+                        continue
+                    if dname not in desc_meta:
+                        desc_meta[dname] = {
+                            "meaning": _ci.get("short", ""),
+                            "category": _ci.get("cat", _cat_name),
+                            "library": _e,
+                        }
+                    elif not desc_meta[dname].get("meaning"):
+                        desc_meta[dname]["meaning"] = _ci.get("short", "")
+
     # ── 記述子ごとのカーディナリティ ──
     cardinality: dict[str, int] = {}
     try:
