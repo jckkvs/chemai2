@@ -157,6 +157,30 @@ def render_results_tab(state: dict[str, Any]) -> None:
 def _render_model_evaluation(ar) -> None:
     """モデルスコア比較テーブルとFold別スコア"""
 
+    # ── パイプラインフロー図 ──
+    proc_X = getattr(ar, "processed_X", None)
+    n_feats = proc_X.shape[1] if proc_X is not None and hasattr(proc_X, "shape") else "?"
+    n_models = len(ar.model_scores) if hasattr(ar, "model_scores") else "?"
+
+    flow_steps = [
+        ("📂", "データ", f"{getattr(ar, 'n_samples', '?')}行"),
+        ("⚙️", "前処理", f"{n_feats}特徴量"),
+        ("🔄", f"CV({getattr(ar, 'cv_folds', '?')}fold)", f"{n_models}モデル"),
+        ("🏆", ar.best_model_key, f"{ar.best_score:.4f}"),
+    ]
+
+    with ui.row().classes("items-center q-gutter-none q-mb-md full-width justify-center"):
+        for i, (icon, label, detail) in enumerate(flow_steps):
+            with ui.card().classes("q-pa-xs text-center").style(
+                "min-width: 100px; background: rgba(0,212,255,0.08); border-radius: 8px;"
+                "border: 1px solid rgba(0,212,255,0.2);"
+            ):
+                ui.label(icon).style("font-size: 1.2rem;")
+                ui.label(label).classes("text-caption text-bold").style("font-size: 0.75rem;")
+                ui.label(detail).classes("text-caption text-grey").style("font-size: 0.65rem;")
+            if i < len(flow_steps) - 1:
+                ui.label("→").classes("text-grey-5 q-mx-xs").style("font-size: 1.2rem;")
+
     ui.label("🏆 モデル比較").classes("text-subtitle1")
     ui.label(f"スコアリング: {ar.scoring}").classes("text-caption text-grey-5 q-mb-md")
 
@@ -195,6 +219,9 @@ def _render_model_evaluation(ar) -> None:
                         f"Fold{i+1}: {s:.4f}" for i, s in enumerate(fold_scores)
                     )
                     ui.label(fold_text).classes("text-caption text-grey-5")
+
+    # ── モデル間統計検定 ──
+    _render_model_significance(ar)
 
     # ── OOF予測サマリー ──
     if ar.oof_predictions is not None and ar.oof_true is not None:
@@ -734,6 +761,73 @@ def _render_interpretability(ar, state: dict) -> None:
         ui.button(
             "📉 PDP を計算", on_click=_calc_pdp
         ).props("outline color=teal size=sm no-caps")
+
+
+# ================================================================
+# モデル間統計検定
+# ================================================================
+def _render_model_significance(ar) -> None:
+    """最良モデルと他モデルの対応t検定（Fold間スコア）。"""
+    best_key = ar.best_model_key
+    best_detail = ar.model_details.get(best_key, {})
+    best_folds = best_detail.get("fold_scores", [])
+
+    if len(best_folds) < 3 or len(ar.model_details) < 2:
+        return
+
+    ui.separator()
+    with ui.expansion("📐 モデル間統計検定（対応t検定）", icon="science").classes("full-width q-mt-sm"):
+        ui.label(f"基準モデル: 🏆 {best_key}").classes("text-caption text-grey q-mb-sm")
+
+        rows = []
+        for key, detail in ar.model_details.items():
+            if key == best_key:
+                continue
+            other_folds = detail.get("fold_scores", [])
+            if len(other_folds) != len(best_folds):
+                continue
+
+            try:
+                from scipy.stats import ttest_rel
+                t_stat, p_value = ttest_rel(best_folds, other_folds)
+
+                # Cohen's d (paired)
+                diffs = [b - o for b, o in zip(best_folds, other_folds)]
+                mean_diff = sum(diffs) / len(diffs)
+                std_diff = (sum((d - mean_diff) ** 2 for d in diffs) / (len(diffs) - 1)) ** 0.5
+                cohens_d = mean_diff / std_diff if std_diff > 0 else 0
+
+                sig = "✅ 有意差あり" if p_value < 0.05 else "⚠️ 有意差なし"
+                sig_color = "text-green" if p_value < 0.05 else "text-amber"
+                effect = "大" if abs(cohens_d) > 0.8 else ("中" if abs(cohens_d) > 0.5 else "小")
+
+                rows.append({
+                    "vs_model": key,
+                    "p_value": p_value,
+                    "t_stat": t_stat,
+                    "cohens_d": cohens_d,
+                    "sig": sig,
+                    "sig_color": sig_color,
+                    "effect": effect,
+                })
+            except Exception:
+                continue
+
+        if rows:
+            for r in rows:
+                with ui.card().classes("full-width q-pa-xs q-mb-xs glass-card"):
+                    with ui.row().classes("items-center full-width justify-between"):
+                        ui.label(f"🏆 {best_key} vs {r['vs_model']}").classes("text-caption text-bold")
+                        ui.label(r["sig"]).classes(f"text-caption {r['sig_color']}")
+                    with ui.row().classes("q-gutter-sm"):
+                        for val, lbl in [
+                            (f"p={r['p_value']:.4f}", "p値"),
+                            (f"t={r['t_stat']:.3f}", "t統計量"),
+                            (f"d={r['cohens_d']:.3f} ({r['effect']})", "Cohen's d"),
+                        ]:
+                            ui.label(f"{lbl}: {val}").classes("text-caption text-grey").style("font-size: 0.65rem;")
+        else:
+            ui.label("Fold数が一致するモデルペアがありません").classes("text-caption text-grey")
 
 
 # ================================================================
