@@ -931,6 +931,68 @@ def _render_pipeline(state: dict) -> None:
             ui.button("💾 保存", on_click=_do_save).props("outline color=cyan size=sm no-caps")
 
     # ────────────────────────────────────────────
+    # 📤 設定エクスポート / インポート
+    # ────────────────────────────────────────────
+    with ui.expansion("📤 設定エクスポート / インポート（YAML）", icon="import_export").classes("full-width q-mb-sm"):
+        from backend.preset_manager import export_config_yaml, import_config_yaml
+
+        # エクスポート
+        ui.label("📤 エクスポート（コピーして共有）").classes("text-subtitle2")
+        export_area = ui.textarea("YAML設定", value="").classes("full-width").props("outlined readonly rows=4")
+
+        def _do_export():
+            yaml_text = export_config_yaml(state)
+            export_area.value = yaml_text
+            ui.notify("✅ 設定をエクスポートしました — テキストをコピーしてください", type="positive")
+
+        ui.button("📤 エクスポート", on_click=_do_export).props("outline color=teal size=sm no-caps")
+
+        ui.separator().classes("q-my-sm")
+
+        # インポート
+        ui.label("📥 インポート（YAMLを貼り付け）").classes("text-subtitle2")
+        import_area = ui.textarea("YAML設定を貼り付け", value="").classes("full-width").props("outlined rows=4")
+
+        def _do_import():
+            text = import_area.value.strip()
+            if not text:
+                ui.notify("YAMLテキストを貼り付けてください", type="warning")
+                return
+            try:
+                count = import_config_yaml(text, state)
+                ui.notify(f"✅ {count}件の設定をインポートしました", type="positive")
+                import_area.value = ""
+            except Exception as ex:
+                ui.notify(f"インポートエラー: {ex}", type="negative")
+
+        ui.button("📥 インポート", on_click=_do_import).props("outline color=amber size=sm no-caps")
+
+    # ────────────────────────────────────────────
+    # 📜 解析履歴
+    # ────────────────────────────────────────────
+    with ui.expansion("📜 解析履歴", icon="history").classes("full-width q-mb-md"):
+        from backend.preset_manager import list_history
+
+        history = list_history(limit=10)
+        if not history:
+            ui.label("解析履歴はまだありません").classes("text-caption text-grey q-pa-sm")
+        else:
+            rows = []
+            for h in history:
+                rows.append({
+                    "日時": h.get("timestamp", "")[:16].replace("T", " "),
+                    "ファイル": h.get("filename", ""),
+                    "最良モデル": h.get("best_model", ""),
+                    "スコア": f"{h.get('best_score', 0):.4f}",
+                    "時間": f"{h.get('elapsed_seconds', 0):.1f}秒",
+                })
+            columns = [
+                {"name": c, "label": c, "field": c, "align": "left", "sortable": True}
+                for c in ["日時", "ファイル", "最良モデル", "スコア", "時間"]
+            ]
+            ui.table(columns=columns, rows=rows).classes("full-width").props("dense flat bordered")
+
+    # ────────────────────────────────────────────
     # 1. 交差検証設定
     # ────────────────────────────────────────────
     ui.label("🔄 交差検証（CV）設定").classes("text-subtitle1")

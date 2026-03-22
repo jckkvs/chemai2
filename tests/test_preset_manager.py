@@ -156,3 +156,73 @@ class TestMakeSerializable:
         assert _make_serializable("hello") == "hello"
         assert _make_serializable(42) == 42
         assert _make_serializable(None) is None
+
+
+class TestRecordAnalysis:
+    def test_record_creates_file(self, tmp_path, sample_state):
+        from backend.preset_manager import record_analysis
+
+        class MockResult:
+            task = "regression"
+            best_model_key = "LGBM"
+            best_score = 0.85
+            model_scores = {"LGBM": 0.85, "RF": 0.80}
+            elapsed_seconds = 30.0
+            processed_X = None
+
+        import pandas as pd
+        sample_state["df"] = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        path = record_analysis(sample_state, MockResult(), history_dir=tmp_path)
+        assert path.exists()
+        import json
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["best_model"] == "LGBM"
+        assert data["best_score"] == 0.85
+
+
+class TestListHistory:
+    def test_list_empty(self, tmp_path):
+        from backend.preset_manager import list_history
+        assert list_history(history_dir=tmp_path) == []
+
+    def test_list_after_record(self, tmp_path, sample_state):
+        from backend.preset_manager import record_analysis, list_history
+        import pandas as pd
+
+        class MockResult:
+            task = "regression"
+            best_model_key = "RF"
+            best_score = 0.80
+            model_scores = {"RF": 0.80}
+            elapsed_seconds = 10.0
+            processed_X = None
+
+        sample_state["df"] = pd.DataFrame({"x": [1]})
+        record_analysis(sample_state, MockResult(), history_dir=tmp_path)
+        records = list_history(history_dir=tmp_path)
+        assert len(records) == 1
+        assert records[0]["best_model"] == "RF"
+
+
+class TestExportImportConfigYaml:
+    def test_export_yaml(self, sample_state):
+        from backend.preset_manager import export_config_yaml
+        yaml_text = export_config_yaml(sample_state)
+        assert "cv_folds" in yaml_text
+        assert "chemai2_config" in yaml_text
+
+    def test_import_yaml(self, sample_state):
+        from backend.preset_manager import export_config_yaml, import_config_yaml
+        yaml_text = export_config_yaml(sample_state)
+        new_state: dict = {}
+        count = import_config_yaml(yaml_text, new_state)
+        assert count > 0
+        assert new_state.get("cv_folds") == 5
+
+    def test_roundtrip(self, sample_state):
+        from backend.preset_manager import export_config_yaml, import_config_yaml
+        yaml_text = export_config_yaml(sample_state)
+        new_state: dict = {}
+        import_config_yaml(yaml_text, new_state)
+        assert new_state.get("num_scaler") == sample_state["num_scaler"]
+        assert new_state.get("selected_models") == sample_state["selected_models"]

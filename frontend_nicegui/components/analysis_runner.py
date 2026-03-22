@@ -255,6 +255,13 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         if on_complete:
             on_complete()
 
+        # 解析履歴を自動記録
+        try:
+            from backend.preset_manager import record_analysis
+            record_analysis(state, result)
+        except Exception as hist_ex:
+            logger.warning("解析履歴の保存に失敗: %s", hist_ex)
+
     except Exception as ex:
         error_msg = str(ex)
         tb_text = traceback.format_exc()

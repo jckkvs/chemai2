@@ -264,3 +264,140 @@ def _make_serializable(obj: Any) -> Any:
         return obj
     else:
         return str(obj)
+
+
+# ================================================================
+# 解析履歴管理
+# ================================================================
+DEFAULT_HISTORY_DIR = Path.home() / ".chemai2" / "history"
+
+
+def record_analysis(
+    state: dict[str, Any],
+    result: Any,
+    *,
+    history_dir: Path | None = None,
+) -> Path:
+    """解析結果を履歴として保存する。
+
+    Args:
+        state: ステート辞書
+        result: AutoMLEngineの結果オブジェクト
+        history_dir: 保存先ディレクトリ
+
+    Returns:
+        保存先パス
+    """
+    import json
+
+    d = history_dir or DEFAULT_HISTORY_DIR
+    d.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = d / f"run_{ts}.json"
+
+    record = {
+        "timestamp": datetime.now().isoformat(),
+        "filename": state.get("filename", ""),
+        "data_shape": list(state["df"].shape) if state.get("df") is not None else None,
+        "target_col": state.get("target_col", ""),
+        "task_type": getattr(result, "task", state.get("task_type", "")),
+        "best_model": getattr(result, "best_model_key", ""),
+        "best_score": float(getattr(result, "best_score", 0)),
+        "model_scores": _make_serializable(
+            getattr(result, "model_scores", {})
+        ),
+        "elapsed_seconds": float(getattr(result, "elapsed_seconds", 0)),
+        "n_features": (
+            result.processed_X.shape[1]
+            if hasattr(result, "processed_X") and result.processed_X is not None
+            else None
+        ),
+        "config": _make_serializable(export_state_summary(state)),
+    }
+
+    filepath.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    logger.info("解析履歴保存: %s", filepath)
+    return filepath
+
+
+def list_history(
+    *,
+    history_dir: Path | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """保存済み解析履歴をから新しい順に返す。
+
+    Args:
+        history_dir: 保存先ディレクトリ
+        limit: 最大件数
+
+    Returns:
+        履歴レコードのリスト
+    """
+    import json
+
+    d = history_dir or DEFAULT_HISTORY_DIR
+    if not d.exists():
+        return []
+
+    records: list[dict[str, Any]] = []
+    for fp in sorted(d.glob("run_*.json"), reverse=True)[:limit]:
+        try:
+            data = json.loads(fp.read_text(encoding="utf-8"))
+            data["_filepath"] = str(fp)
+            records.append(data)
+        except Exception as ex:
+            logger.warning("履歴読込エラー: %s - %s", fp, ex)
+
+    return records
+
+
+def export_config_yaml(state: dict[str, Any]) -> str:
+    """stateからパイプライン設定をYAMLテキストとしてエクスポートする。
+
+    Returns:
+        YAML形式の設定テキスト
+    """
+    config = export_state_summary(state)
+    config_ser = _make_serializable(config)
+
+    try:
+        import yaml
+        return yaml.dump(
+            {"chemai2_config": config_ser},
+            allow_unicode=True, default_flow_style=False, sort_keys=False,
+        )
+    except ImportError:
+        import json
+        return json.dumps({"chemai2_config": config_ser}, ensure_ascii=False, indent=2)
+
+
+def import_config_yaml(yaml_text: str, state: dict[str, Any]) -> int:
+    """YAMLテキストからパイプライン設定をstateに読み込む。
+
+    Args:
+        yaml_text: YAML形式の設定テキスト
+        state: 書き込み先ステート辞書
+
+    Returns:
+        読み込んだ設定項目数
+    """
+    try:
+        import yaml
+        data = yaml.safe_load(yaml_text)
+    except ImportError:
+        import json
+        data = json.loads(yaml_text)
+
+    config = data.get("chemai2_config", data)
+    count = 0
+    for k, v in config.items():
+        if k in PIPELINE_KEYS:
+            state[k] = v
+            count += 1
+
+    logger.info("YAML設定インポート: %d件", count)
+    return count
