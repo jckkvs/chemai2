@@ -521,6 +521,19 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
     all_descs = list(precalc_df.columns)
     n_total = len(all_descs)
 
+    # ── カタログから化学的意味を収集（全タブ共有） ──
+    from frontend_nicegui.components.descriptor_catalog import (
+        get_catalog as _get_catalog, SUPPORTED_ENGINES as _SUPP_ENGINES,
+    )
+    _catalog_meanings: dict[str, str] = {}  # name → short説明
+    for _ec in _SUPP_ENGINES:
+        _cat = _get_catalog(_ec)
+        if _cat:
+            for _cat_items in _cat.values():
+                for _ci in _cat_items:
+                    if not _ci["name"].startswith("_"):
+                        _catalog_meanings[_ci["name"]] = _ci.get("short", "")
+
     with ui.card().classes("full-width q-pa-md q-mb-sm").style(
         "border: 1px solid rgba(0,188,212,0.3); border-radius: 12px;"
         "background: rgba(0,20,40,0.25);"
@@ -806,12 +819,17 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                         # 上位20件のミニテーブル
                         for d in sorted_descs[:20]:
                             r_val = corr_dict[d]
+                            d_meaning = _catalog_meanings.get(d, "")
                             with ui.row().classes(
                                 "items-center full-width q-py-xs"
                             ).style("border-bottom: 1px solid rgba(255,255,255,0.05);"):
                                 ui.label(d).classes("text-body2").style(
                                     "min-width: 180px;"
                                 )
+                                if d_meaning:
+                                    ui.label(d_meaning).classes(
+                                        "text-caption text-grey"
+                                    ).style("font-size: 0.68rem; min-width: 140px;")
                                 ui.linear_progress(
                                     value=int(r_val * 100) / 100, color="cyan",
                                 ).style("width: 120px; height: 6px;").props("rounded")
@@ -825,19 +843,6 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                     "計算エンジンごとに記述子を化学カテゴリ別に表示。"
                     "各記述子の化学的意味を確認しながら個別にON/OFFできます。"
                 ).classes("text-caption text-grey q-mb-sm")
-
-                # ── カタログから化学的意味を収集 ──
-                from frontend_nicegui.components.descriptor_catalog import (
-                    get_catalog, SUPPORTED_ENGINES,
-                )
-                _all_catalog_info: dict[str, str] = {}  # name → short説明
-                for _eng_cat in SUPPORTED_ENGINES:
-                    cat = get_catalog(_eng_cat)
-                    if cat:
-                        for cat_descs in cat.values():
-                            for d_info in cat_descs:
-                                if not d_info["name"].startswith("_"):
-                                    _all_catalog_info[d_info["name"]] = d_info.get("short", "")
 
                 # ── 記述子をエンジン別に分類 ──
                 engine_descs: dict[str, list[str]] = {}
@@ -940,7 +945,7 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
 
                         # ── カタログベースのグループ分け ──
                         # カタログがあるエンジンはカタログのカテゴリを使用
-                        catalog = get_catalog(eng_name)
+                        catalog = _get_catalog(eng_name)
                         if catalog:
                             # カタログのカテゴリ→記述子名のマッピングを構築
                             cat_to_descs: dict[str, list[tuple[str, str]]] = {}
@@ -958,7 +963,7 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             uncataloged = [d for d in descs if d not in cataloged_names]
                             if uncataloged:
                                 cat_to_descs["📋 その他（カタログ未登録）"] = [
-                                    (d, _all_catalog_info.get(d, "")) for d in uncataloged
+                                    (d, _catalog_meanings.get(d, "")) for d in uncataloged
                                 ]
                         else:
                             # カタログがないエンジン→名前推定でグループ分け
@@ -966,7 +971,7 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             cat_to_descs = {}
                             for gname, gdescs in groups.items():
                                 cat_to_descs[gname] = [
-                                    (d, _all_catalog_info.get(d, "")) for d in gdescs
+                                    (d, _catalog_meanings.get(d, "")) for d in gdescs
                                 ]
 
                         # ── グループ別展開+個別チェックボックス+化学的意味 ──
@@ -1089,6 +1094,11 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                     color="green" if in_sel else "grey",
                                 ).classes("text-body2")
                                 ui.label(m).classes("text-body2")
+                                _m_meaning = _catalog_meanings.get(m, "")
+                                if _m_meaning:
+                                    ui.label(_m_meaning).classes(
+                                        "text-caption text-grey"
+                                    ).style("font-size: 0.68rem;")
 
                         if len(matches) > 50:
                             ui.label(f"...他 {len(matches) - 50}件").classes(
@@ -1161,6 +1171,11 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             "items-center full-width q-py-xs"
                         ).style("border-bottom: 1px solid rgba(255,255,255,0.05);"):
                             ui.label(d).classes("text-body2").style("min-width: 180px;")
+                            _v_meaning = _catalog_meanings.get(d, "")
+                            if _v_meaning:
+                                ui.label(_v_meaning).classes(
+                                    "text-caption text-grey"
+                                ).style("font-size: 0.68rem; min-width: 140px;")
                             ui.linear_progress(
                                 value=nv, color="teal",
                             ).style("width: 120px; height: 6px;").props("rounded")
