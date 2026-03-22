@@ -163,6 +163,12 @@ def _render_model_evaluation(ar) -> None:
         except Exception as ex:
             ui.label(f"OOFメトリクス計算エラー: {ex}").classes("text-caption text-red")
 
+        # ── 残差分析プロット ──
+        if ar.task == "regression":
+            ui.separator()
+            with ui.expansion("📉 残差分析（OOF）", icon="scatter_plot").classes("full-width q-mt-sm"):
+                _render_residual_analysis(ar)
+
 
 # ================================================================
 # 前処理後データ
@@ -661,3 +667,126 @@ def _render_interpretability(ar, state: dict) -> None:
         ui.button(
             "📉 PDP を計算", on_click=_calc_pdp
         ).props("outline color=teal size=sm no-caps")
+
+
+# ================================================================
+# 残差分析（OOF予測）
+# ================================================================
+def _render_residual_analysis(ar) -> None:
+    """OOF実測vs予測の残差分析プロット群。"""
+    y_true = ar.oof_true
+    y_pred = ar.oof_predictions
+
+    if y_true is None or y_pred is None:
+        ui.label("OOFデータが利用できません").classes("text-grey")
+        return
+
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        from sklearn.metrics import mean_absolute_percentage_error
+
+        y_t = np.asarray(y_true).ravel()
+        y_p = np.asarray(y_pred).ravel()
+        residuals = y_t - y_p
+
+        # ── 3プロットを横並び ──
+        fig = make_subplots(
+            rows=1, cols=3,
+            subplot_titles=["実測 vs 予測", "残差ヒストグラム", "残差 vs 予測値"],
+        )
+
+        # 1. 実測 vs 予測 散布図
+        fig.add_trace(
+            go.Scatter(
+                x=y_t, y=y_p, mode="markers",
+                marker=dict(size=4, color="rgba(0,212,255,0.6)"),
+                name="データ点",
+            ),
+            row=1, col=1,
+        )
+        # y=x 基準線
+        rng = [min(y_t.min(), y_p.min()), max(y_t.max(), y_p.max())]
+        fig.add_trace(
+            go.Scatter(
+                x=rng, y=rng, mode="lines",
+                line=dict(color="rgba(255,255,255,0.3)", dash="dash"),
+                name="y=x",
+            ),
+            row=1, col=1,
+        )
+
+        # 2. 残差ヒストグラム
+        fig.add_trace(
+            go.Histogram(
+                x=residuals, nbinsx=30,
+                marker_color="rgba(123,47,247,0.6)",
+                name="残差分布",
+            ),
+            row=1, col=2,
+        )
+
+        # 3. 残差 vs 予測値
+        fig.add_trace(
+            go.Scatter(
+                x=y_p, y=residuals, mode="markers",
+                marker=dict(size=4, color="rgba(74,222,128,0.6)"),
+                name="残差",
+            ),
+            row=1, col=3,
+        )
+        # 零線
+        fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)", row=1, col=3)
+
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            height=320,
+            margin=dict(l=10, r=10, t=40, b=30),
+            showlegend=False,
+        )
+        fig.update_xaxes(title_text="実測値", row=1, col=1)
+        fig.update_yaxes(title_text="予測値", row=1, col=1)
+        fig.update_xaxes(title_text="残差", row=1, col=2)
+        fig.update_xaxes(title_text="予測値", row=1, col=3)
+        fig.update_yaxes(title_text="残差", row=1, col=3)
+
+        ui.plotly(fig).classes("full-width")
+
+        # ── 統計量カード ──
+        try:
+            mape = mean_absolute_percentage_error(y_t, y_p) * 100
+        except Exception:
+            mape = float("nan")
+        max_res = float(np.max(np.abs(residuals)))
+        mean_res = float(np.mean(residuals))
+        std_res = float(np.std(residuals))
+
+        # 正規性検定
+        try:
+            from scipy.stats import shapiro
+            if len(residuals) <= 5000:
+                _, p_sw = shapiro(residuals)
+            else:
+                _, p_sw = shapiro(np.random.choice(residuals, 5000, replace=False))
+            normality_text = f"p={p_sw:.4f} ({'正規分布' if p_sw > 0.05 else '非正規分布'})"
+        except Exception:
+            normality_text = "計算不可"
+
+        with ui.row().classes("q-gutter-sm q-mt-sm"):
+            for val, lbl in [
+                (f"{mape:.1f}%", "MAPE"),
+                (f"{max_res:.4g}", "最大|残差|"),
+                (f"{mean_res:.4g}", "残差平均"),
+                (f"{std_res:.4g}", "残差σ"),
+                (normality_text, "Shapiro-Wilk"),
+            ]:
+                with ui.card().classes("glass-card q-pa-xs"):
+                    ui.label(str(val)).classes("text-subtitle2 text-bold hero-gradient")
+                    ui.label(lbl).classes("text-caption text-grey-5").style("font-size: 0.7rem;")
+
+    except ImportError:
+        ui.label("Plotlyが必要です: pip install plotly").classes("text-amber")
+    except Exception as ex:
+        ui.label(f"残差分析エラー: {ex}").classes("text-red text-caption")

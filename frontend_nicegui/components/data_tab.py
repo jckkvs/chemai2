@@ -398,34 +398,93 @@ def _on_target_change(val: str, state: dict) -> None:
 
 
 def _render_column_summary(state: dict) -> None:
-    """列役割のサマリーテーブルを表示"""
+    """列役割のカード形式ビジュアルサマリー + 欠損値ヒートマップ。"""
     if state["df"] is None:
         return
 
-    rows = []
-    for c in state["df"].columns:
-        if c == state.get("target_col"):
-            role = "🎯 目的変数"
-        elif c == state.get("smiles_col"):
-            role = "🧬 SMILES"
-        elif c in state.get("exclude_cols", []):
-            role = "🚫 除外"
-        elif c == state.get("group_col"):
-            role = "👥 グループ"
-        elif c == state.get("time_col"):
-            role = "📅 時系列"
-        elif c == state.get("weight_col"):
-            role = "⚖️ weight"
-        else:
-            role = "✅ 説明変数"
-        rows.append({"列名": c, "役割": role, "型": str(state["df"][c].dtype)})
+    df = state["df"]
 
-    columns = [
-        {"name": "列名", "label": "列名", "field": "列名", "align": "left", "sortable": True},
-        {"name": "役割", "label": "役割", "field": "役割", "align": "left"},
-        {"name": "型", "label": "データ型", "field": "型"},
-    ]
-    ui.table(columns=columns, rows=rows).classes("full-width").props("dense flat bordered")
+    # 役割→色・アイコン・ラベルのマップ
+    ROLE_MAP = {
+        "target":  {"icon": "🎯", "label": "目的変数", "color": "rgba(0,212,255,0.25)",  "border": "#00d4ff"},
+        "smiles":  {"icon": "🧬", "label": "SMILES",   "color": "rgba(123,47,247,0.25)", "border": "#7b2ff7"},
+        "exclude": {"icon": "🚫", "label": "除外",     "color": "rgba(180,60,60,0.15)",  "border": "#b43c3c"},
+        "group":   {"icon": "👥", "label": "グループ", "color": "rgba(100,200,200,0.15)", "border": "#64c8c8"},
+        "time":    {"icon": "📅", "label": "時系列",   "color": "rgba(200,180,100,0.15)", "border": "#c8b464"},
+        "weight":  {"icon": "⚖️", "label": "weight",   "color": "rgba(160,160,200,0.15)", "border": "#a0a0c8"},
+        "feature": {"icon": "✅", "label": "説明変数", "color": "rgba(74,222,128,0.12)",  "border": "rgba(74,222,128,0.3)"},
+    }
+
+    def _get_role(col: str) -> str:
+        if col == state.get("target_col"):
+            return "target"
+        elif col == state.get("smiles_col"):
+            return "smiles"
+        elif col in state.get("exclude_cols", []):
+            return "exclude"
+        elif col == state.get("group_col"):
+            return "group"
+        elif col == state.get("time_col"):
+            return "time"
+        elif col == state.get("weight_col"):
+            return "weight"
+        return "feature"
+
+    # ── 欠損ヒートマップ概要 ──
+    total_na = df.isna().sum().sum()
+    total_cells = df.shape[0] * df.shape[1]
+    overall_rate = total_na / total_cells * 100 if total_cells > 0 else 0
+
+    if total_na > 0:
+        na_color = "red" if overall_rate > 20 else ("amber" if overall_rate > 5 else "green")
+        with ui.card().classes("full-width q-pa-sm q-mb-sm").style(
+            f"border: 1px solid rgba(251,191,36,0.3); border-radius: 8px;"
+            f"background: rgba(50,40,0,0.15);"
+        ):
+            with ui.row().classes("items-center q-gutter-sm"):
+                ui.icon("warning", color=na_color)
+                ui.label(f"欠損値: {total_na:,}セル ({overall_rate:.1f}%)").classes(f"text-body2 text-{na_color}")
+                ui.label(f"— {df.isna().any(axis=1).sum():,}行に欠損あり").classes("text-caption text-grey")
+
+    # ── カード形式グリッド ──
+    with ui.row().classes("full-width q-gutter-xs").style("flex-wrap: wrap;"):
+        for col in df.columns:
+            role_key = _get_role(col)
+            role = ROLE_MAP[role_key]
+            col_data = df[col]
+            na_count = int(col_data.isna().sum())
+            na_pct = na_count / len(col_data) * 100 if len(col_data) > 0 else 0
+            n_unique = int(col_data.nunique(dropna=True))
+            dtype_str = str(col_data.dtype)
+
+            # 欠損バーの色
+            bar_color = "#4ade80" if na_pct == 0 else ("#fbbf24" if na_pct < 20 else "#f87171")
+            bar_width = max(2, min(100, 100 - na_pct))  # 充填率
+
+            with ui.card().classes("q-pa-xs cursor-pointer").style(
+                f"min-width: 130px; max-width: 180px; flex: 1 1 130px;"
+                f"border: 1px solid {role['border']}; border-radius: 8px;"
+                f"background: {role['color']};"
+            ).tooltip(
+                f"列名: {col}\n型: {dtype_str}\n欠損: {na_count}/{len(col_data)} ({na_pct:.1f}%)\n"
+                f"ユニーク値: {n_unique}"
+            ):
+                # 役割アイコン + 列名
+                with ui.row().classes("items-center q-gutter-none").style("overflow: hidden;"):
+                    ui.label(role["icon"]).style("font-size: 0.8rem;")
+                    ui.label(col).classes("text-caption text-bold").style(
+                        "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px;"
+                    )
+
+                # データ型 + ユニーク数
+                ui.label(f"{dtype_str} | {n_unique}種").classes("text-caption text-grey").style("font-size: 0.65rem;")
+
+                # 欠損率バー
+                ui.html(
+                    f'<div style="width:100%;height:3px;border-radius:2px;background:rgba(255,255,255,0.1);margin-top:2px;">'
+                    f'<div style="width:{bar_width}%;height:100%;border-radius:2px;background:{bar_color};"></div>'
+                    f'</div>'
+                )
 
 
 # ================================================================

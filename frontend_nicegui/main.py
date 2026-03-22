@@ -227,6 +227,23 @@ def main_page():
             ui.label("ChemAI ML Studio").classes("text-h5 text-bold hero-gradient")
             ui.badge("NiceGUI", color="purple").props("floating")
 
+        # ── コンテキストヘルプ ──
+        with ui.button(icon="help_outline").props("flat round size=sm color=grey").tooltip(
+            "ショートカット: Ctrl+Enter=解析開始 | ?=ヘルプ"
+        ):
+            with ui.menu().props("anchor='bottom right' self='top right'"):
+                with ui.card().classes("q-pa-sm").style("min-width: 280px;"):
+                    ui.label("⌨️ キーボードショートカット").classes("text-subtitle2 text-bold")
+                    for key, desc in [
+                        ("Ctrl + Enter", "解析開始"),
+                        ("Ctrl + 1", "データ設定タブ"),
+                        ("Ctrl + 2", "結果確認タブ"),
+                        ("Ctrl + 3", "逆解析タブ"),
+                    ]:
+                        with ui.row().classes("items-center q-gutter-xs"):
+                            ui.badge(key, color="grey-8").props("dense")
+                            ui.label(desc).classes("text-caption")
+
         # ── ワンクリック解析ボタン（ヘッダー常設） ──
         analysis_status_container = ui.column().classes("full-width")
 
@@ -331,6 +348,14 @@ def main_page():
                     ui.separator().classes("q-my-xs")
                     ui.label(state.get("filename", "")).classes("text-caption text-grey-6")
                     ui.label(f"{df.shape[0]:,}行 × {df.shape[1]}列").classes("text-caption text-grey-6")
+                    # ミニダッシュボード
+                    na_pct = df.isna().mean().mean() * 100
+                    n_numeric = df.select_dtypes(include='number').shape[1]
+                    na_color = "text-green" if na_pct < 1 else ("text-amber" if na_pct < 10 else "text-red")
+                    ui.label(f"欠損: {na_pct:.1f}% | 数値列: {n_numeric}").classes(f"text-caption {na_color}")
+                    if state.get("target_col") and state["target_col"] in df.columns:
+                        tc = df[state["target_col"]]
+                        ui.label(f"目的変数: {tc.nunique()}種, 欠損{tc.isna().sum()}").classes("text-caption text-grey-7")
 
                 if has_result:
                     ar = state["automl_result"]
@@ -369,7 +394,13 @@ def main_page():
         ui.space()
         ui.separator()
         ui.link("❓ ヘルプ", "/help").classes("text-white")
-        ui.label("v2.1 — NiceGUI Edition").classes("text-caption text-grey-7 q-mt-sm")
+        ui.link("📚 記述子辞書", "/help/descriptors").classes("text-white text-caption")
+        ui.label("v2.2 — NiceGUI Edition").classes("text-caption text-grey-7 q-mt-sm")
+
+        # ── 環境情報 ──
+        import sys as _sys
+        py_ver = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"
+        ui.label(f"Python {py_ver}").classes("text-caption text-grey-8").style("font-size: 0.6rem;")
 
     # ═══════════════════════════════════════════════════════════
     # メインコンテンツ — 2タブ構造
