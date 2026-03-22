@@ -281,10 +281,17 @@ def _render_target_settings(state: dict, inv: dict) -> None:
 
 
 # ═══════════════════════════════════════════════════════════
-# 説明変数の制約設定
+# 説明変数の制約設定（6種制約タイプ対応）
 # ═══════════════════════════════════════════════════════════
 def _render_constraint_settings(state: dict, inv: dict) -> None:
-    """各説明変数の探索範囲・固定値・ON/OFFを設定するテーブル。"""
+    """説明変数の制約設定 — 6種制約タイプ対応の高機能UI。"""
+    from frontend_nicegui.components.constraint_ui_helpers import (
+        CONSTRAINT_TYPES, SUM_PRESETS, RATIO_OPERATORS,
+        describe_constraint, validate_constraints,
+        save_template, list_templates, load_template, delete_template,
+        get_column_stats,
+    )
+
     df = state.get("df")
     target_col = state.get("target_col", "")
     precalc_df = state.get("precalc_df")
@@ -292,7 +299,7 @@ def _render_constraint_settings(state: dict, inv: dict) -> None:
     if df is None:
         return
 
-    # 説明変数列を特定（目的変数・SMILES列・除外列以外）
+    # 説明変数列を特定
     exclude = set(state.get("exclude_cols", []))
     smiles_col = state.get("smiles_col", "")
     feature_cols = [
@@ -300,8 +307,6 @@ def _render_constraint_settings(state: dict, inv: dict) -> None:
         if c != target_col and c != smiles_col and c not in exclude
         and pd.api.types.is_numeric_dtype(df[c])
     ]
-
-    # SMILES記述子も候補に追加
     if precalc_df is not None:
         selected_descs = state.get("selected_descriptors", [])
         if selected_descs:
@@ -311,27 +316,41 @@ def _render_constraint_settings(state: dict, inv: dict) -> None:
         ui.label("数値型の説明変数がありません").classes("text-amber")
         return
 
+    # データソース
+    source_df = precalc_df if precalc_df is not None else df
+
+    # ── 制約システムの初期化 ──
+    inv.setdefault("constraint_items", [])
+    inv.setdefault("constraint_mode", "simple")  # simple / advanced
+    inv.setdefault("constraints", {})  # 後方互換
+
     with ui.card().classes("full-width q-pa-md q-mb-sm").style(
         "border: 1px solid rgba(74,222,128,0.3); border-radius: 10px;"
         "background: rgba(10,40,20,0.25);"
     ):
-        with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+        # ── ヘッダー + モード切替 ──
+        with ui.row().classes("items-center q-gutter-sm q-mb-sm full-width"):
             ui.icon("tune", color="green").classes("text-h6")
-            ui.label("説明変数の制約范囲").classes("text-subtitle1 text-bold")
+            ui.label("制約設定").classes("text-subtitle1 text-bold")
             ui.badge(f"{len(feature_cols)}変数", color="green").props("outline")
+            ui.space()
+            ui.toggle(
+                {"simple": "🟢 シンプル", "advanced": "🔵 詳細"},
+                value=inv.get("constraint_mode", "simple"),
+                on_change=lambda e: inv.update({"constraint_mode": e.value}),
+            ).props("dense no-caps size=sm").tooltip(
+                "シンプル: 範囲制約のみ / 詳細: 6種制約タイプ全て"
+            )
 
-        ui.label(
-            "各説明変数の探索範囲を設定します。固定するとその値に固定されます。"
-        ).classes("text-caption text-grey q-mb-sm")
+        is_advanced = inv.get("constraint_mode") == "advanced"
 
-        # ── 一括操作 ──
+        # ── 一括操作ボタン ──
         with ui.row().classes("q-gutter-sm q-mb-sm"):
             def _auto_range():
-                """データの最小最大を自動設定"""
                 for col in feature_cols:
-                    source = precalc_df if precalc_df is not None and col in precalc_df.columns else df
-                    if col in source.columns:
-                        col_data = source[col].dropna()
+                    src = source_df if col in source_df.columns else df
+                    if col in src.columns:
+                        col_data = src[col].dropna()
                         if len(col_data) > 0:
                             inv["constraints"][col] = {
                                 "min": float(col_data.min()),
@@ -340,104 +359,679 @@ def _render_constraint_settings(state: dict, inv: dict) -> None:
                                 "fixed_val": float(col_data.median()),
                                 "active": True,
                             }
-                ui.notify(f"✅ {len(feature_cols)}変数のデータ範囲を自動設定", type="positive")
+                ui.notify(f"✅ {len(feature_cols)}変数の範囲を自動設定", type="positive")
 
             ui.button("📊 データ範囲を自動設定", on_click=_auto_range).props(
                 "outline size=sm no-caps color=green"
             )
 
             def _expand_range():
-                """範囲を±20%拡張"""
                 for col, c in inv.get("constraints", {}).items():
                     span = (c.get("max", 0) - c.get("min", 0)) * 0.2
                     c["min"] = c.get("min", 0) - span
                     c["max"] = c.get("max", 0) + span
                 ui.notify("範囲を±20%拡張しました", type="info")
 
-            ui.button("↔️ 範囲を±20%拡張", on_click=_expand_range).props(
+            ui.button("↔️ ±20%拡張", on_click=_expand_range).props(
                 "flat size=sm no-caps color=grey"
             )
 
-        # 制約テーブル（最初の20変数を表示、残りは折りたたみ）
-        display_cols = feature_cols[:20]
-        remaining = feature_cols[20:]
+        # ══════════ 範囲制約テーブル（常に表示） ══════════
+        with ui.expansion("📏 変数ごとの範囲制約", icon="straighten").classes(
+            "full-width q-mb-sm"
+        ).props("default-opened dense"):
+            display_cols = feature_cols[:20]
+            remaining = feature_cols[20:]
+            _render_constraint_table(display_cols, df, precalc_df, inv, source_df)
+            if remaining:
+                with ui.expansion(
+                    f"📋 残り{len(remaining)}変数", icon="expand_more",
+                ).classes("full-width"):
+                    _render_constraint_table(remaining, df, precalc_df, inv, source_df)
 
-        _render_constraint_table(display_cols, df, precalc_df, inv)
+        # ══════════ 高度な制約（詳細モードのみ） ══════════
+        if is_advanced:
+            ui.separator().classes("q-my-sm")
+            with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+                ui.icon("add_circle", color="cyan").classes("text-h6")
+                ui.label("高度な制約を追加").classes("text-subtitle2 text-bold")
 
-        if remaining:
-            with ui.expansion(
-                f"📋 残り{len(remaining)}変数を表示", icon="expand_more",
-            ).classes("full-width"):
-                _render_constraint_table(remaining, df, precalc_df, inv)
+            # 制約タイプ選択カード
+            _render_advanced_constraint_adder(inv, feature_cols, source_df)
+
+            # 追加済み高度制約の一覧
+            _render_constraint_list(inv)
+
+        # ══════════ 制約検証パネル ══════════
+        _render_validation_panel(inv, df, source_df, feature_cols)
+
+        # ══════════ テンプレート保存/読込 ══════════
+        if is_advanced:
+            _render_template_panel(inv)
 
 
 def _render_constraint_table(
-    cols: list[str], df: pd.DataFrame, precalc_df: pd.DataFrame | None, inv: dict,
+    cols: list[str], df: pd.DataFrame, precalc_df: pd.DataFrame | None,
+    inv: dict, source_df: pd.DataFrame,
 ) -> None:
-    """制約設定テーブルのレンダリング。"""
+    """範囲制約テーブル — クイック設定ボタン付き。"""
+    from frontend_nicegui.components.constraint_ui_helpers import get_column_stats
+
     for col in cols:
-        # データソースからデフォルト値を取得
         source = precalc_df if precalc_df is not None and col in precalc_df.columns else df
         if col not in source.columns:
             continue
-
         col_data = source[col].dropna()
         if len(col_data) == 0:
             continue
 
-        data_min = float(col_data.min())
-        data_max = float(col_data.max())
-        data_median = float(col_data.median())
+        stats = get_column_stats(source, col)
 
-        # 既存の制約またはデフォルト
         constraint = inv.setdefault("constraints", {}).setdefault(col, {
-            "min": data_min,
-            "max": data_max,
+            "min": stats["min"],
+            "max": stats["max"],
             "fixed": False,
-            "fixed_val": data_median,
+            "fixed_val": stats["median"],
             "active": True,
         })
 
         with ui.row().classes(
             "items-center full-width q-py-xs"
         ).style("border-bottom: 1px solid rgba(255,255,255,0.05);"):
-            # 変数名
-            ui.label(col).classes("text-body2").style("min-width: 160px; max-width: 200px;")
+            # 変数名 + ツールチップ
+            lbl = ui.label(col).classes("text-body2").style(
+                "min-width: 140px; max-width: 180px; overflow: hidden; text-overflow: ellipsis;"
+            )
+            lbl.tooltip(
+                f"Min={stats['min']:.4g} | Q1={stats['q1']:.4g} | "
+                f"Med={stats['median']:.4g} | Q3={stats['q3']:.4g} | Max={stats['max']:.4g}"
+            )
 
             # 固定チェック
-            fixed_cb = ui.checkbox(
+            ui.checkbox(
                 "固定",
                 value=constraint.get("fixed", False),
                 on_change=lambda e, c=constraint: c.update({"fixed": e.value}),
-            ).props("dense").classes("q-mr-sm")
+            ).props("dense").classes("q-mr-xs")
 
             if not constraint.get("fixed", False):
-                # 最小値
+                # Min
                 ui.number(
                     "Min",
-                    value=constraint.get("min", data_min),
+                    value=constraint.get("min", stats["min"]),
                     on_change=lambda e, c=constraint: c.update({"min": e.value}),
-                ).props("dense outlined").style("width: 100px;")
+                ).props("dense outlined").style("width: 90px;")
 
-                # 最大値
+                # クイック下限ボタン
+                with ui.button_group().props("flat dense"):
+                    ui.button(
+                        "min", on_click=lambda c=constraint, s=stats: c.update({"min": s["min"]}),
+                    ).props("flat dense size=xs no-caps").tooltip("データ最小値")
+                    ui.button(
+                        "Q1", on_click=lambda c=constraint, s=stats: c.update({"min": s["q1"]}),
+                    ).props("flat dense size=xs no-caps").tooltip("25%点")
+
+                # Max
                 ui.number(
                     "Max",
-                    value=constraint.get("max", data_max),
+                    value=constraint.get("max", stats["max"]),
                     on_change=lambda e, c=constraint: c.update({"max": e.value}),
-                ).props("dense outlined").style("width: 100px;")
+                ).props("dense outlined").style("width: 90px;")
 
-                # データ範囲参考
-                ui.label(f"(データ: {data_min:.3g}~{data_max:.3g})").classes(
+                # クイック上限ボタン
+                with ui.button_group().props("flat dense"):
+                    ui.button(
+                        "Q3", on_click=lambda c=constraint, s=stats: c.update({"max": s["q3"]}),
+                    ).props("flat dense size=xs no-caps").tooltip("75%点")
+                    ui.button(
+                        "max", on_click=lambda c=constraint, s=stats: c.update({"max": s["max"]}),
+                    ).props("flat dense size=xs no-caps").tooltip("データ最大値")
+
+                # 範囲表示
+                ui.label(f"({stats['min']:.3g}~{stats['max']:.3g})").classes(
                     "text-caption text-grey"
                 )
             else:
-                # 固定値
                 ui.number(
                     "固定値",
-                    value=constraint.get("fixed_val", data_median),
+                    value=constraint.get("fixed_val", stats["median"]),
                     on_change=lambda e, c=constraint: c.update({"fixed_val": e.value}),
                 ).props("dense outlined").style("width: 120px;")
-                ui.label(f"(中央値: {data_median:.3g})").classes("text-caption text-grey")
+
+                with ui.button_group().props("flat dense"):
+                    ui.button(
+                        "Med", on_click=lambda c=constraint, s=stats: c.update({"fixed_val": s["median"]}),
+                    ).props("flat dense size=xs no-caps").tooltip("中央値")
+                    ui.button(
+                        "Mean", on_click=lambda c=constraint, s=stats: c.update({"fixed_val": s["mean"]}),
+                    ).props("flat dense size=xs no-caps").tooltip("平均値")
+
+
+# ═══════════════════════════════════════════════════════════
+# 高度な制約追加UI
+# ═══════════════════════════════════════════════════════════
+def _render_advanced_constraint_adder(
+    inv: dict, feature_cols: list[str], source_df: pd.DataFrame,
+) -> None:
+    """6種制約タイプ選択 + 追加ダイアログ。"""
+    from frontend_nicegui.components.constraint_ui_helpers import (
+        CONSTRAINT_TYPES, SUM_PRESETS, RATIO_OPERATORS, describe_constraint,
+    )
+
+    # 制約タイプカード
+    for ct in CONSTRAINT_TYPES:
+        if ct.get("simple"):
+            continue  # 範囲は上のテーブルで対応済み
+
+        with ui.card().classes("full-width q-pa-sm q-mb-xs cursor-pointer").style(
+            f"border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;"
+            f"background: rgba(30,30,40,0.3);"
+        ):
+            with ui.row().classes("items-center q-gutter-sm full-width"):
+                ui.icon(ct["icon"], color=ct["color"]).classes("text-h6")
+                with ui.column().classes("q-gutter-none"):
+                    ui.label(ct["label"]).classes("text-body2 text-bold")
+                    ui.label(ct["desc"]).classes("text-caption text-grey")
+                ui.space()
+
+                if ct["key"] == "sum":
+                    _add_sum_btn(inv, feature_cols, source_df)
+                elif ct["key"] == "ratio":
+                    _add_ratio_btn(inv, feature_cols)
+                elif ct["key"] == "exclusion":
+                    _add_exclusion_btn(inv, feature_cols)
+                elif ct["key"] == "conditional":
+                    _add_conditional_btn(inv, feature_cols)
+                elif ct["key"] == "formula":
+                    _add_formula_btn(inv, feature_cols)
+
+
+def _add_sum_btn(inv: dict, feature_cols: list[str], source_df: pd.DataFrame) -> None:
+    """合計制約追加ダイアログ。"""
+    from frontend_nicegui.components.constraint_ui_helpers import SUM_PRESETS
+
+    async def _open_dialog():
+        with ui.dialog() as dlg, ui.card().classes("q-pa-md").style("min-width: 500px;"):
+            ui.label("➕ 合計制約の追加").classes("text-h6 q-mb-sm")
+
+            # 変数選択
+            selected = {"cols": [], "target": 100.0, "tolerance": 0.1, "name": ""}
+
+            ui.input(
+                "グループ名", placeholder="例: 原料配合比率",
+                on_change=lambda e: selected.update({"name": e.value}),
+            ).props("dense outlined").classes("full-width q-mb-sm")
+
+            ui.select(
+                feature_cols, multiple=True, label="変数を選択",
+                on_change=lambda e: selected.update({"cols": e.value}),
+            ).props("dense outlined use-chips").classes("full-width q-mb-sm")
+
+            ui.number(
+                "合計値", value=100.0,
+                on_change=lambda e: selected.update({"target": e.value}),
+            ).props("dense outlined").classes("q-mb-sm")
+
+            ui.number(
+                "許容誤差", value=0.1, step=0.01, min=0, max=10,
+                on_change=lambda e: selected.update({"tolerance": e.value}),
+            ).props("dense outlined").classes("q-mb-sm")
+
+            # プリセット
+            ui.label("プリセット:").classes("text-caption text-grey")
+            with ui.row().classes("q-gutter-xs q-mb-sm"):
+                for p in SUM_PRESETS:
+                    ui.button(
+                        p["label"],
+                        on_click=lambda p=p: selected.update(
+                            {"target": p["target"], "tolerance": p["tolerance"]}
+                        ),
+                    ).props("flat size=xs no-caps")
+
+            with ui.row().classes("justify-end q-gutter-sm"):
+                ui.button("キャンセル", on_click=dlg.close).props("flat no-caps")
+
+                def _add():
+                    if selected["cols"]:
+                        inv["constraint_items"].append({
+                            "type": "sum",
+                            "columns": selected["cols"],
+                            "target": selected["target"],
+                            "tolerance": selected["tolerance"],
+                            "group_name": selected["name"],
+                        })
+                        ui.notify(f"合計制約を追加: {selected['name'] or '無名'}", type="positive")
+                    dlg.close()
+
+                ui.button("追加", on_click=_add).props("unelevated no-caps color=blue")
+        dlg.open()
+
+    ui.button("＋追加", on_click=_open_dialog).props("outline size=sm no-caps color=blue")
+
+
+def _add_ratio_btn(inv: dict, feature_cols: list[str]) -> None:
+    """比率制約追加ダイアログ。"""
+    from frontend_nicegui.components.constraint_ui_helpers import RATIO_OPERATORS
+
+    async def _open_dialog():
+        with ui.dialog() as dlg, ui.card().classes("q-pa-md").style("min-width: 450px;"):
+            ui.label("⚖️ 比率制約の追加").classes("text-h6 q-mb-sm")
+
+            selected = {"target_var": "", "base_var": "", "ratio": 2.0, "operator": "ge"}
+
+            ui.select(
+                feature_cols, label="対象変数（左辺）",
+                on_change=lambda e: selected.update({"target_var": e.value}),
+            ).props("dense outlined").classes("full-width q-mb-sm")
+
+            op_options = {k: v["label"] for k, v in RATIO_OPERATORS.items()}
+            ui.select(
+                op_options, value="ge", label="演算子",
+                on_change=lambda e: selected.update({"operator": e.value}),
+            ).props("dense outlined").classes("full-width q-mb-sm")
+
+            ui.number(
+                "比率", value=2.0, step=0.1,
+                on_change=lambda e: selected.update({"ratio": e.value}),
+            ).props("dense outlined").classes("q-mb-sm")
+
+            ui.label("× ").classes("text-body1")
+
+            ui.select(
+                feature_cols, label="基準変数（右辺）",
+                on_change=lambda e: selected.update({"base_var": e.value}),
+            ).props("dense outlined").classes("full-width q-mb-sm")
+
+            # プレビュー
+            ui.label("").bind_text_from(
+                selected, "target_var",
+                backward=lambda _: (
+                    f"プレビュー: {selected['target_var']} "
+                    f"{RATIO_OPERATORS.get(selected['operator'], {}).get('symbol', '≥')} "
+                    f"{selected['ratio']} × {selected['base_var']}"
+                ),
+            ).classes("text-caption text-purple q-mb-sm")
+
+            with ui.row().classes("justify-end q-gutter-sm"):
+                ui.button("キャンセル", on_click=dlg.close).props("flat no-caps")
+
+                def _add():
+                    if selected["target_var"] and selected["base_var"]:
+                        inv["constraint_items"].append({
+                            "type": "ratio",
+                            "target_var": selected["target_var"],
+                            "base_var": selected["base_var"],
+                            "ratio": selected["ratio"],
+                            "operator": selected["operator"],
+                        })
+                        ui.notify("比率制約を追加しました", type="positive")
+                    dlg.close()
+
+                ui.button("追加", on_click=_add).props("unelevated no-caps color=purple")
+        dlg.open()
+
+    ui.button("＋追加", on_click=_open_dialog).props("outline size=sm no-caps color=purple")
+
+
+def _add_exclusion_btn(inv: dict, feature_cols: list[str]) -> None:
+    """排他制約追加ダイアログ。"""
+    async def _open_dialog():
+        with ui.dialog() as dlg, ui.card().classes("q-pa-md").style("min-width: 450px;"):
+            ui.label("🚫 排他制約の追加").classes("text-h6 q-mb-sm")
+            selected = {"cols": [], "mode": "exactly_one", "threshold": 0.01, "name": ""}
+
+            ui.input(
+                "グループ名", placeholder="例: 溶媒タイプ",
+                on_change=lambda e: selected.update({"name": e.value}),
+            ).props("dense outlined").classes("full-width q-mb-sm")
+
+            ui.select(
+                feature_cols, multiple=True, label="変数を選択",
+                on_change=lambda e: selected.update({"cols": e.value}),
+            ).props("dense outlined use-chips").classes("full-width q-mb-sm")
+
+            ui.select(
+                {
+                    "exactly_one": "ちょうど1つのみ使用（排他選択）",
+                    "at_most_one": "最大1つまで使用（任意選択）",
+                    "at_least_one": "最小1つは使用（必須選択）",
+                },
+                value="exactly_one", label="制約タイプ",
+                on_change=lambda e: selected.update({"mode": e.value}),
+            ).props("dense outlined").classes("full-width q-mb-sm")
+
+            ui.slider(
+                min=0.001, max=1.0, step=0.001, value=0.01,
+                on_change=lambda e: selected.update({"threshold": e.value}),
+            ).props("label-always").classes("q-mb-sm")
+            ui.label("閾値: この値未満を「使用なし」とみなす").classes("text-caption text-grey")
+
+            with ui.row().classes("justify-end q-gutter-sm"):
+                ui.button("キャンセル", on_click=dlg.close).props("flat no-caps")
+
+                def _add():
+                    if selected["cols"]:
+                        inv["constraint_items"].append({
+                            "type": "exclusion",
+                            "columns": selected["cols"],
+                            "mode": selected["mode"],
+                            "threshold": selected["threshold"],
+                            "group_name": selected["name"],
+                        })
+                        ui.notify("排他制約を追加しました", type="positive")
+                    dlg.close()
+
+                ui.button("追加", on_click=_add).props("unelevated no-caps color=orange")
+        dlg.open()
+
+    ui.button("＋追加", on_click=_open_dialog).props("outline size=sm no-caps color=orange")
+
+
+def _add_conditional_btn(inv: dict, feature_cols: list[str]) -> None:
+    """条件付き制約追加ダイアログ。"""
+    async def _open_dialog():
+        with ui.dialog() as dlg, ui.card().classes("q-pa-md").style("min-width: 500px;"):
+            ui.label("🔀 条件付き制約の追加").classes("text-h6 q-mb-sm")
+            selected = {
+                "if_var": "", "if_op": ">", "if_val": 0,
+                "then_var": "", "then_op": ">=", "then_val": 0,
+            }
+
+            ui.label("IF（条件部）").classes("text-subtitle2 text-teal")
+            with ui.row().classes("q-gutter-xs full-width q-mb-sm"):
+                ui.select(
+                    feature_cols, label="変数",
+                    on_change=lambda e: selected.update({"if_var": e.value}),
+                ).props("dense outlined").style("width: 150px;")
+                ui.select(
+                    [">", "<", ">=", "<=", "=="], value=">", label="演算子",
+                    on_change=lambda e: selected.update({"if_op": e.value}),
+                ).props("dense outlined").style("width: 80px;")
+                ui.number(
+                    "値", value=0,
+                    on_change=lambda e: selected.update({"if_val": e.value}),
+                ).props("dense outlined").style("width: 100px;")
+
+            ui.label("THEN（結論部）").classes("text-subtitle2 text-teal")
+            with ui.row().classes("q-gutter-xs full-width q-mb-sm"):
+                ui.select(
+                    feature_cols, label="変数",
+                    on_change=lambda e: selected.update({"then_var": e.value}),
+                ).props("dense outlined").style("width: 150px;")
+                ui.select(
+                    [">=", "<=", ">", "<", "=="], value=">=", label="演算子",
+                    on_change=lambda e: selected.update({"then_op": e.value}),
+                ).props("dense outlined").style("width: 80px;")
+                ui.number(
+                    "値", value=0,
+                    on_change=lambda e: selected.update({"then_val": e.value}),
+                ).props("dense outlined").style("width: 100px;")
+
+            ui.label(
+                f"IF {selected.get('if_var','?')} {selected.get('if_op','>')} {selected.get('if_val',0)} "
+                f"THEN {selected.get('then_var','?')} {selected.get('then_op','>=')} {selected.get('then_val',0)}"
+            ).classes("text-caption text-teal q-mb-sm")
+
+            with ui.row().classes("justify-end q-gutter-sm"):
+                ui.button("キャンセル", on_click=dlg.close).props("flat no-caps")
+
+                def _add():
+                    if selected["if_var"] and selected["then_var"]:
+                        inv["constraint_items"].append({"type": "conditional", **selected})
+                        ui.notify("条件付き制約を追加しました", type="positive")
+                    dlg.close()
+
+                ui.button("追加", on_click=_add).props("unelevated no-caps color=teal")
+        dlg.open()
+
+    ui.button("＋追加", on_click=_open_dialog).props("outline size=sm no-caps color=teal")
+
+
+def _add_formula_btn(inv: dict, feature_cols: list[str]) -> None:
+    """数式制約追加ダイアログ。"""
+    async def _open_dialog():
+        with ui.dialog() as dlg, ui.card().classes("q-pa-md").style("min-width: 550px;"):
+            ui.label("📐 数式制約の追加").classes("text-h6 q-mb-sm")
+
+            selected = {"expression": "", "operator": "<=", "rhs": 0}
+
+            ui.textarea(
+                "Python数式", placeholder="例: A**2 + B*C",
+                on_change=lambda e: selected.update({"expression": e.value}),
+            ).props("outlined").classes("full-width q-mb-xs").style("font-family: monospace;")
+
+            # 変数挿入ボタン
+            ui.label("変数を挿入:").classes("text-caption text-grey")
+            with ui.row().classes("q-gutter-xs q-mb-sm").style("flex-wrap: wrap;"):
+                for col in feature_cols[:20]:
+                    ui.button(
+                        col,
+                        on_click=lambda c=col: selected.update(
+                            {"expression": selected["expression"] + c}
+                        ),
+                    ).props("flat size=xs no-caps color=red")
+
+            with ui.row().classes("q-gutter-sm q-mb-sm items-center"):
+                ui.select(
+                    {"<=": "≤", ">=": "≥", "==": "="}, value="<=", label="演算子",
+                    on_change=lambda e: selected.update({"operator": e.value}),
+                ).props("dense outlined").style("width: 80px;")
+                ui.number(
+                    "右辺値", value=0,
+                    on_change=lambda e: selected.update({"rhs": e.value}),
+                ).props("dense outlined").style("width: 120px;")
+
+            # 構文チェック
+            ui.label("※ Python式として評価されます。列名は変数名として使用可能。").classes(
+                "text-caption text-grey q-mb-sm"
+            )
+
+            with ui.row().classes("justify-end q-gutter-sm"):
+                ui.button("キャンセル", on_click=dlg.close).props("flat no-caps")
+
+                def _add():
+                    expr = selected["expression"].strip()
+                    if expr:
+                        inv["constraint_items"].append({
+                            "type": "formula",
+                            "expression": expr,
+                            "operator": selected["operator"],
+                            "rhs": selected["rhs"],
+                        })
+                        ui.notify("数式制約を追加しました", type="positive")
+                    dlg.close()
+
+                ui.button("追加", on_click=_add).props("unelevated no-caps color=red")
+        dlg.open()
+
+    ui.button("＋追加", on_click=_open_dialog).props("outline size=sm no-caps color=red")
+
+
+# ═══════════════════════════════════════════════════════════
+# 追加済み制約一覧
+# ═══════════════════════════════════════════════════════════
+def _render_constraint_list(inv: dict) -> None:
+    """追加済みの高度な制約を一覧表示。"""
+    from frontend_nicegui.components.constraint_ui_helpers import describe_constraint
+
+    items = inv.get("constraint_items", [])
+    if not items:
+        return
+
+    ui.separator().classes("q-my-sm")
+    with ui.row().classes("items-center q-gutter-sm q-mb-xs"):
+        ui.icon("list", color="cyan")
+        ui.label(f"追加済み制約 ({len(items)}件)").classes("text-subtitle2")
+
+    for i, item in enumerate(items):
+        with ui.row().classes("items-center full-width q-py-xs").style(
+            "border-bottom: 1px solid rgba(255,255,255,0.05);"
+        ):
+            # タイプアイコン
+            type_info = {
+                "sum": ("functions", "blue"),
+                "ratio": ("balance", "purple"),
+                "exclusion": ("block", "orange"),
+                "conditional": ("call_split", "teal"),
+                "formula": ("calculate", "red"),
+            }.get(item.get("type", ""), ("help", "grey"))
+            ui.icon(type_info[0], color=type_info[1]).classes("text-body1")
+
+            # 説明
+            ui.label(describe_constraint(item)).classes("text-body2")
+
+            ui.space()
+
+            # 削除ボタン
+            def _delete(idx=i):
+                inv["constraint_items"].pop(idx)
+                ui.notify("制約を削除しました", type="info")
+
+            ui.button(icon="delete", on_click=_delete).props(
+                "flat round size=sm color=red"
+            )
+
+
+# ═══════════════════════════════════════════════════════════
+# 制約検証パネル
+# ═══════════════════════════════════════════════════════════
+def _render_validation_panel(
+    inv: dict, df: pd.DataFrame, source_df: pd.DataFrame,
+    feature_cols: list[str],
+) -> None:
+    """制約の競合検出と充足率を表示。"""
+    from frontend_nicegui.components.constraint_ui_helpers import (
+        validate_constraints, ui_constraints_to_backend,
+    )
+
+    items = inv.get("constraint_items", [])
+
+    # 範囲制約もitemsに含めてバリデーション
+    all_items = list(items)
+    for col, c in inv.get("constraints", {}).items():
+        if c.get("active", True) and not c.get("fixed", False):
+            all_items.append({
+                "type": "range",
+                "column": col,
+                "lo": c.get("min"),
+                "hi": c.get("max"),
+            })
+
+    if not all_items:
+        return
+
+    with ui.expansion("🔍 制約検証", icon="fact_check").classes(
+        "full-width q-mt-sm"
+    ).props("dense"):
+        def _validate():
+            result = validate_constraints(all_items, df)
+            n_conflicts = len(result.get("conflicts", []))
+            rate = result.get("overall_rate", 1.0)
+            n_sat = result.get("n_satisfied", 0)
+            n_total = result.get("n_total", 0)
+
+            if n_conflicts > 0:
+                ui.notify(
+                    f"⚠️ {n_conflicts}件の制約競合を検出",
+                    type="warning", timeout=5000,
+                )
+                for conflict in result["conflicts"]:
+                    ui.label(f"❌ {conflict['detail']}").classes("text-body2 text-red")
+            else:
+                ui.label("✅ 制約競合: なし").classes("text-body2 text-green")
+
+            if n_total > 0:
+                pct = rate * 100
+                color = "green" if pct > 80 else ("amber" if pct > 50 else "red")
+                ui.label(
+                    f"📊 学習データ充足率: {n_sat}/{n_total}行 ({pct:.1f}%)"
+                ).classes(f"text-body2 text-{color}")
+            else:
+                ui.label("📊 学習データが未読込のため検証できません").classes("text-caption text-grey")
+
+        ui.button("制約を検証", on_click=_validate).props(
+            "outline size=sm no-caps color=cyan"
+        )
+
+
+# ═══════════════════════════════════════════════════════════
+# テンプレート保存/読込
+# ═══════════════════════════════════════════════════════════
+def _render_template_panel(inv: dict) -> None:
+    """制約テンプレートの保存と読込UI。"""
+    from frontend_nicegui.components.constraint_ui_helpers import (
+        save_template, list_templates, load_template, delete_template,
+    )
+    from pathlib import Path
+
+    with ui.expansion("💾 テンプレート", icon="bookmark").classes(
+        "full-width q-mt-sm"
+    ).props("dense"):
+        with ui.row().classes("q-gutter-sm q-mb-sm"):
+            template_name = ui.input(
+                "テンプレート名", placeholder="例: 配合最適化_v1",
+            ).props("dense outlined").style("width: 200px;")
+
+            def _save():
+                name = template_name.value
+                if name:
+                    items = inv.get("constraint_items", [])
+                    # 範囲制約も含める
+                    all_items = list(items)
+                    for col, c in inv.get("constraints", {}).items():
+                        if c.get("active", True):
+                            all_items.append({
+                                "type": "range",
+                                "column": col,
+                                "lo": c.get("min"),
+                                "hi": c.get("max"),
+                                "fixed": c.get("fixed", False),
+                                "fixed_val": c.get("fixed_val"),
+                            })
+                    save_template(name, all_items)
+                    ui.notify(f"テンプレート '{name}' を保存しました", type="positive")
+
+            ui.button("保存", on_click=_save).props("outline size=sm no-caps color=green")
+
+        # 一覧表示
+        templates = list_templates()
+        if templates:
+            ui.label(f"保存済み: {len(templates)}件").classes("text-caption text-grey")
+            for t in templates:
+                with ui.row().classes("items-center q-gutter-xs"):
+                    ui.label(f"📁 {t['name']} ({t['n_constraints']}制約)").classes(
+                        "text-body2"
+                    )
+                    tags_str = ", ".join(t.get("tags", []))
+                    if tags_str:
+                        ui.badge(tags_str).props("outline dense")
+
+                    def _load(p=t["path"]):
+                        data = load_template(Path(p))
+                        loaded = data.get("constraints", [])
+                        # 範囲制約とそれ以外を分離
+                        for item in loaded:
+                            if item.get("type") == "range":
+                                col = item.get("column")
+                                if col:
+                                    inv.setdefault("constraints", {})[col] = {
+                                        "min": item.get("lo"),
+                                        "max": item.get("hi"),
+                                        "fixed": item.get("fixed", False),
+                                        "fixed_val": item.get("fixed_val"),
+                                        "active": True,
+                                    }
+                            else:
+                                inv.setdefault("constraint_items", []).append(item)
+                        ui.notify(f"テンプレートを読み込みました ({len(loaded)}制約)", type="positive")
+
+                    ui.button(icon="download", on_click=_load).props("flat round size=xs")
+
+                    def _del(p=t["path"]):
+                        delete_template(Path(p))
+                        ui.notify("テンプレートを削除しました", type="info")
+
+                    ui.button(icon="delete", on_click=_del).props("flat round size=xs color=red")
 
 
 # ═══════════════════════════════════════════════════════════
