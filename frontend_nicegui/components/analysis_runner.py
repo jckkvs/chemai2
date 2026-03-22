@@ -176,9 +176,6 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         # SMILES列
         smiles_col = state.get("smiles_col") or None
 
-        # 記述子選択
-        selected_desc = state.get("selected_descriptors")
-
         # 除外列の処理
         exclude_cols = state.get("exclude_cols", [])
         df_work = df.copy()
@@ -186,7 +183,6 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             df_work = df_work.drop(columns=[c for c in exclude_cols if c in df_work.columns], errors="ignore")
 
         # ── パイプライン設定をstateから抽出 ──
-        # 前処理パラメータ
         preprocess_params = {}
         for key in [
             "num_scaler", "num_imputer", "num_transform",
@@ -197,60 +193,134 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             if key in state:
                 preprocess_params[key] = state[key]
 
-        # モデルパラメータ（動的UI）
         model_params = state.get("model_params") or None
-
-        # 単調制約（0以外の制約のみ）
         mono_raw = state.get("monotonic_constraints", {})
         monotonic_constraints = {k: v for k, v in mono_raw.items() if v != 0} or None
-
-        # CV方式
         cv_key = state.get("cv_key", "auto")
 
         # ══════════════════════════════════════════════════════
-        # run.io_bound でバックグラウンドスレッドにオフロード
+        # 複数セット対応: active=True のセットをループ
         # ══════════════════════════════════════════════════════
-        result = await run.io_bound(
-            _run_engine_sync,
-            df_work,
-            target_col,
-            smiles_col if smiles_col and smiles_col in df_work.columns else None,
-            state.get("group_col"),
-            task,
-            model_keys if model_keys else None,
-            state.get("cv_folds", 5),
-            state.get("timeout", 300),
-            selected_desc,
-            progress_queue,
-            cv_key=cv_key,
-            model_params=model_params,
-            preprocess_params=preprocess_params if preprocess_params else None,
-            monotonic_constraints=monotonic_constraints,
-        )
+        desc_sets = state.get("descriptor_sets", {})
+        active_sets = {
+            name: info for name, info in desc_sets.items()
+            if info.get("active", True)
+        }
 
-        # 結果の保存
-        state["automl_result"] = result
-        state["pipeline_result"] = type("PipelineResult", (), {"elapsed": result.elapsed_seconds})()
+        # activeセットがなければ現在の選択で1回実行
+        if not active_sets:
+            active_sets = {"デフォルト": {"descriptors": state.get("selected_descriptors")}}
+
+        all_results: dict[str, Any] = {}
+        best_result = None
+        best_set_name = ""
+        best_score = -float("inf")
+        total_sets = len(active_sets)
+
+        for set_idx, (set_name, set_info) in enumerate(active_sets.items()):
+            set_descs = set_info.get("descriptors")
+            # None = 全記述子
+            selected_desc = list(set_descs) if set_descs else state.get("selected_descriptors")
+
+            # 進捗更新
+            progress_label.text = f"⏳ [{set_idx + 1}/{total_sets}] セット「{set_name}」を解析中..."
+            progress_bar.value = set_idx / total_sets
+            progress_pct.text = f"{int(set_idx / total_sets * 100)}%"
+
+            set_queue: queue.Queue = queue.Queue(maxsize=100)
+
+            # セット固有の進捗ポーリング
+            def _poll_set_progress(sq=set_queue, sn=set_name, si=set_idx):
+                latest = None
+                while True:
+                    try:
+                        item = sq.get_nowait()
+                        if item[0] == "progress":
+                            latest = item
+                    except queue.Empty:
+                        break
+                if latest:
+                    _, step, total, msg = latest
+                    set_pct = (si + step / max(total, 1)) / total_sets
+                    progress_bar.value = set_pct
+                    progress_pct.text = f"{int(set_pct * 100)}%"
+                    progress_label.text = f"⏳ [{si + 1}/{total_sets}] {sn}: {msg}"
+                    progress_detail.text = f"セット {si + 1}/{total_sets} | ステップ {step}/{total}"
+                    elapsed = time.time() - _start_time
+                    if set_pct > 0.05:
+                        eta_sec = elapsed / set_pct * (1 - set_pct)
+                        progress_eta.text = f"残り約{eta_sec:.0f}秒" if eta_sec < 60 else f"残り約{eta_sec/60:.1f}分"
+
+            set_timer = ui.timer(0.5, _poll_set_progress)
+
+            try:
+                result = await run.io_bound(
+                    _run_engine_sync,
+                    df_work,
+                    target_col,
+                    smiles_col if smiles_col and smiles_col in df_work.columns else None,
+                    state.get("group_col"),
+                    task,
+                    model_keys if model_keys else None,
+                    state.get("cv_folds", 5),
+                    state.get("timeout", 300),
+                    selected_desc,
+                    set_queue,
+                    cv_key=cv_key,
+                    model_params=model_params,
+                    preprocess_params=preprocess_params if preprocess_params else None,
+                    monotonic_constraints=monotonic_constraints,
+                )
+                all_results[set_name] = result
+
+                # ベストスコア追跡
+                if hasattr(result, "best_score") and result.best_score > best_score:
+                    best_score = result.best_score
+                    best_result = result
+                    best_set_name = set_name
+
+            except Exception as set_ex:
+                logger.warning(f"セット「{set_name}」の解析エラー: {set_ex}")
+                all_results[set_name] = None
+            finally:
+                set_timer.deactivate()
+
+        # ── 結果の保存 ──
+        state["automl_results"] = all_results  # 全セット結果
+        # 後方互換: 最良セットを automl_result にも保存
+        if best_result:
+            state["automl_result"] = best_result
+            state["best_set_name"] = best_set_name
+            state["pipeline_result"] = type("PipelineResult", (), {"elapsed": best_result.elapsed_seconds})()
 
         # 成功表示
         elapsed_total = time.time() - _start_time
         progress_bar.value = 1.0
         progress_pct.text = "100%"
-        progress_label.text = f"✅ 解析完了！ 最良モデル: {result.best_model_key}"
-        n_models = len(result.model_scores)
-        proc_X = getattr(result, "processed_X", None)
-        n_feats = proc_X.shape[1] if proc_X is not None and hasattr(proc_X, "shape") else "?"
-        progress_detail.text = (
-            f"スコア: {result.best_score:.4f} | "
-            f"所要時間: {elapsed_total:.1f}秒 | "
-            f"{n_models}モデル比較 | {n_feats}特徴量"
-        )
-        progress_eta.text = f"タスク: {result.task}"
-        ui.notify(
-            f"✅ 解析完了！ 最良: {result.best_model_key} (スコア: {result.best_score:.4f})",
-            type="positive",
-            timeout=5000,
-        )
+
+        n_success = sum(1 for v in all_results.values() if v is not None)
+        if best_result:
+            progress_label.text = (
+                f"✅ 解析完了！ {n_success}/{total_sets}セット成功 | "
+                f"最良: {best_set_name} → {best_result.best_model_key}"
+            )
+            n_models = len(best_result.model_scores)
+            proc_X = getattr(best_result, "processed_X", None)
+            n_feats = proc_X.shape[1] if proc_X is not None and hasattr(proc_X, "shape") else "?"
+            progress_detail.text = (
+                f"スコア: {best_result.best_score:.4f} | "
+                f"所要時間: {elapsed_total:.1f}秒 | "
+                f"{n_models}モデル比較 | {n_feats}特徴量"
+            )
+            progress_eta.text = f"タスク: {best_result.task}"
+            ui.notify(
+                f"✅ {n_success}セット解析完了！ 最良: {best_set_name} ({best_result.best_score:.4f})",
+                type="positive",
+                timeout=5000,
+            )
+        else:
+            progress_label.text = "❌ 全セットの解析に失敗しました"
+            progress_detail.text = "設定を確認して再実行してください"
 
         if on_complete:
             on_complete()
@@ -258,7 +328,8 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         # 解析履歴を自動記録
         try:
             from backend.preset_manager import record_analysis
-            record_analysis(state, result)
+            if best_result:
+                record_analysis(state, best_result)
         except Exception as hist_ex:
             logger.warning("解析履歴の保存に失敗: %s", hist_ex)
 

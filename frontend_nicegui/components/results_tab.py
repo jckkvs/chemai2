@@ -15,9 +15,12 @@ from nicegui import ui
 def render_results_tab(state: dict[str, Any]) -> None:
     """結果確認タブ全体を描画する。"""
 
-    ar = state.get("automl_result")
+    # ── 複数セット対応: セット選択UI ──
+    all_results = state.get("automl_results", {})
+    single_ar = state.get("automl_result")
 
-    if ar is None:
+    # 結果が全くない場合
+    if not all_results and single_ar is None:
         with ui.card().classes("glass-card q-pa-xl full-width"):
             ui.icon("analytics", color="grey-7", size="xl").classes("q-mb-md")
             ui.label("解析結果がまだありません").classes("text-h6 text-grey-5")
@@ -25,6 +28,63 @@ def render_results_tab(state: dict[str, Any]) -> None:
                 "「📂 データ設定」タブでデータを読み込み、画面上部の「🚀 解析開始」ボタンを押してください。"
             ).classes("text-grey-6 q-mt-sm")
         return
+
+    # 成功したセットのみ抽出
+    success_results = {k: v for k, v in all_results.items() if v is not None}
+    if not success_results and single_ar:
+        success_results = {"デフォルト": single_ar}
+
+    # ── セット比較テーブル（2セット以上の場合） ──
+    if len(success_results) >= 2:
+        with ui.card().classes("glass-card q-pa-md full-width q-mb-md"):
+            ui.label("📊 記述子セット比較").classes("text-h6 q-mb-sm")
+            comp_rows = []
+            for sn, sr in success_results.items():
+                proc_X = getattr(sr, "processed_X", None)
+                n_f = proc_X.shape[1] if proc_X is not None and hasattr(proc_X, "shape") else "?"
+                is_best = (sn == state.get("best_set_name", ""))
+                comp_rows.append({
+                    "set_name": ("🏆 " + sn) if is_best else sn,
+                    "best_model": sr.best_model_key,
+                    "score": f"{sr.best_score:.4f}",
+                    "n_models": len(sr.model_scores),
+                    "n_features": str(n_f),
+                    "elapsed": f"{sr.elapsed_seconds:.1f}s",
+                })
+            comp_cols = [
+                {"name": "set_name", "label": "セット", "field": "set_name"},
+                {"name": "best_model", "label": "最良モデル", "field": "best_model"},
+                {"name": "score", "label": "スコア", "field": "score", "sortable": True},
+                {"name": "n_models", "label": "モデル数", "field": "n_models"},
+                {"name": "n_features", "label": "特徴量", "field": "n_features"},
+                {"name": "elapsed", "label": "時間", "field": "elapsed"},
+            ]
+            ui.table(
+                columns=comp_cols, rows=comp_rows, row_key="set_name",
+            ).classes("full-width").props("dense flat bordered")
+
+    # ── セット切替ドロップダウン ──
+    set_names = list(success_results.keys())
+    if not set_names:
+        return
+
+    current_view = state.get("_viewing_set", state.get("best_set_name", set_names[0]))
+    if current_view not in success_results:
+        current_view = set_names[0]
+
+    if len(set_names) >= 2:
+        with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+            ui.icon("layers", color="cyan")
+            ui.label("表示セット:").classes("text-body2")
+            ui.select(
+                set_names, value=current_view,
+                on_change=lambda e: state.update({"_viewing_set": e.value}),
+            ).props("outlined dense options-dense").style("min-width: 200px;")
+            ui.label(
+                "※ セットを切り替えるとページ下部の詳細結果が変わります"
+            ).classes("text-caption text-grey-6")
+
+    ar = success_results.get(current_view, single_ar)
 
     # ── 結果サマリーカード（ファーストビュー） ──
     with ui.card().classes("glass-card q-pa-md full-width q-mb-md"):

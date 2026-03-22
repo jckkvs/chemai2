@@ -48,20 +48,12 @@ _ALL_ENGINES: list[tuple[str, str, str, dict]] = [
 def render_data_tab(state: dict[str, Any]) -> None:
     """データ設定タブ全体を描画する。"""
 
-    is_advanced = state.get("user_mode", "beginner") == "advanced"
-
     with ui.tabs().classes("full-width").props("dense active-color=cyan indicator-color=cyan") as sub_tabs:
         tab_load = ui.tab("load", label="📂 データ読込", icon="upload_file")
         tab_cols = ui.tab("columns", label="🏷️ 列の役割", icon="settings")
         tab_smiles = ui.tab("smiles", label="⚗️ SMILES特徴量", icon="science")
-        if not is_advanced:
-            tab_smiles.set_visibility(False)
         tab_eda = ui.tab("eda", label="📊 EDA", icon="analytics")
-        if not is_advanced:
-            tab_eda.set_visibility(False)
         tab_pipeline = ui.tab("pipeline", label="⚙️ パイプライン", icon="tune")
-        if not is_advanced:
-            tab_pipeline.set_visibility(False)
 
     # ── 各タブ内のコンテナ（遅延レンダリング用） ──
     containers: dict[str, ui.column] = {}

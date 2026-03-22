@@ -229,14 +229,7 @@ def main_page():
             ui.label("ChemAI ML Studio").classes("text-h5 text-bold hero-gradient")
             ui.badge("NiceGUI", color="purple").props("floating")
 
-        # ── モード切替 + コンテキストヘルプ ──
-        ui.toggle(
-            {"beginner": "🔰 初心者", "advanced": "🔬 上級者"},
-            value=state.get("user_mode", "beginner"),
-            on_change=lambda e: state.update({"user_mode": e.value}),
-        ).props("dense no-caps size=sm rounded").tooltip(
-            "初心者: 2クリック解析 / 上級者: 全設定項目"
-        )
+
 
         with ui.button(icon="help_outline").props("flat round size=sm color=grey").tooltip(
             "ショートカット: Ctrl+Enter=解析開始 | ?=ヘルプ"
