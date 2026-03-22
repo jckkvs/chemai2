@@ -859,6 +859,78 @@ def _render_pipeline(state: dict) -> None:
         task = "regression" if (target_col and pd.api.types.is_float_dtype(df[target_col])) else "classification"
 
     # ────────────────────────────────────────────
+    # 💾 設定プリセット管理
+    # ────────────────────────────────────────────
+    with ui.expansion("💾 設定プリセット（保存/読込）", icon="bookmark").classes("full-width q-mb-md"):
+        from backend.preset_manager import save_preset as _save_preset
+        from backend.preset_manager import load_preset as _load_preset
+        from backend.preset_manager import list_presets as _list_presets
+        from backend.preset_manager import delete_preset as _delete_preset
+
+        preset_list_container = ui.column().classes("full-width")
+
+        def _refresh_preset_list():
+            preset_list_container.clear()
+            presets = _list_presets()
+            with preset_list_container:
+                if not presets:
+                    ui.label("保存済みプリセットはありません").classes("text-caption text-grey q-pa-sm")
+                else:
+                    for p in presets:
+                        with ui.card().classes("full-width q-pa-xs q-mb-xs glass-card"):
+                            with ui.row().classes("items-center full-width justify-between"):
+                                with ui.column().classes("q-gutter-none"):
+                                    ui.label(p["name"]).classes("text-subtitle2 text-bold")
+                                    desc = p.get("description", "")
+                                    if desc:
+                                        ui.label(desc).classes("text-caption text-grey").style("font-size: 0.7rem;")
+                                    ui.label(f"{p['n_settings']}個の設定 | {p.get('created_at', '')[:10]}").classes(
+                                        "text-caption text-grey"
+                                    ).style("font-size: 0.65rem;")
+                                with ui.row().classes("q-gutter-xs"):
+                                    pname = p["name"]
+
+                                    def _do_load(name=pname):
+                                        try:
+                                            meta = _load_preset(name, state)
+                                            ui.notify(f"✅ プリセット '{name}' を読み込みました ({len(meta['keys_loaded'])}件)", type="positive")
+                                        except Exception as ex:
+                                            ui.notify(f"エラー: {ex}", type="negative")
+
+                                    def _do_delete(name=pname):
+                                        _delete_preset(name)
+                                        ui.notify(f"🗑️ '{name}' を削除しました", type="info")
+                                        _refresh_preset_list()
+
+                                    ui.button("📥", on_click=_do_load).props("flat dense size=xs color=cyan").tooltip("読込")
+                                    ui.button("🗑️", on_click=_do_delete).props("flat dense size=xs color=red").tooltip("削除")
+
+        _refresh_preset_list()
+
+        # 保存フォーム
+        ui.separator()
+        ui.label("新規プリセット保存").classes("text-subtitle2 q-mt-sm")
+        with ui.row().classes("items-end q-gutter-sm full-width"):
+            preset_name_input = ui.input("プリセット名", placeholder="例: ADMET予測用").classes("col-4")
+            preset_desc_input = ui.input("説明（任意）", placeholder="例: 単調性制約あり").classes("col-4")
+
+            def _do_save():
+                name = preset_name_input.value
+                if not name:
+                    ui.notify("プリセット名を入力してください", type="warning")
+                    return
+                try:
+                    _save_preset(name, state, description=preset_desc_input.value or "")
+                    ui.notify(f"✅ '{name}' を保存しました", type="positive")
+                    preset_name_input.value = ""
+                    preset_desc_input.value = ""
+                    _refresh_preset_list()
+                except Exception as ex:
+                    ui.notify(f"保存エラー: {ex}", type="negative")
+
+            ui.button("💾 保存", on_click=_do_save).props("outline color=cyan size=sm no-caps")
+
+    # ────────────────────────────────────────────
     # 1. 交差検証設定
     # ────────────────────────────────────────────
     ui.label("🔄 交差検証（CV）設定").classes("text-subtitle1")
