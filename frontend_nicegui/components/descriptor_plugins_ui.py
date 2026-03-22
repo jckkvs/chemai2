@@ -1577,6 +1577,107 @@ def _group_mordred(descs: list[str]) -> dict[str, list[str]]:
 # ═══════════════════════════════════════════════════════════
 # 記述子テーブル（メイン表示）
 # ═══════════════════════════════════════════════════════════
+# ─── フィンガープリント系記述子の化学的意味を自動推定 ───
+import re as _re
+
+# プレフィクス → (化学的意味, カテゴリ, ソース)
+_FP_MEANING_MAP: list[tuple[str, str, str, str]] = [
+    # Morgan / ECFP系 — 円形の部分構造パターン
+    ("Morgan_r2_", "半径2の原子近傍パターン（ECFP4相当）— 原子を中心に結合2つ分の局所構造をハッシュ化。活性に寄与する官能基・骨格断片の有無を捉える", "フィンガープリント", "RDKit"),
+    ("Morgan_r3_", "半径3の広域部分構造（ECFP6相当）— 半径2より広い文脈で官能基配置を捕捉。立体選択性や結合部位の認識に有効", "フィンガープリント", "RDKit"),
+    ("Morgan_r1_", "半径1の近接原子パターン（ECFP2相当）— 各原子の直接結合環境をコード化。原子タイプ別の存在・頻度を反映", "フィンガープリント", "RDKit"),
+    ("ECFP4_", "拡張接続性FP(半径2) — Morgan FPと同等、原子の円環境を半径2でハッシュ化。QSAR標準指標", "フィンガープリント", "RDKit"),
+    ("ECFP6_", "拡張接続性FP(半径3) — より広い局所環境を捉え、類似骨格の識別精度が向上", "フィンガープリント", "RDKit"),
+    ("ECFP2_", "拡張接続性FP(半径1) — 最小範囲の原子環境。計算が軽く大規模スクリーニング向き", "フィンガープリント", "RDKit"),
+    ("FCFP4_", "薬理学的特徴FP(半径2) — 原子タイプの代わりに薬理学的特徴(HBD/HBA/正負電荷/疎水性/芳香族)を用いたMorgan変種", "フィンガープリント", "RDKit"),
+    ("FCFP6_", "薬理学的特徴FP(半径3) — FCFP4の広域版。より広い薬理学的文脈を反映", "フィンガープリント", "RDKit"),
+    ("FCFP2_", "薬理学的特徴FP(半径1) — 最小範囲の薬理学的特徴環境", "フィンガープリント", "RDKit"),
+
+    # RDKitFP — パス型フィンガープリント
+    ("RDKitFP_", "結合パスFP — 分子グラフ上の1-7結合の線形パスをハッシュ化。分子骨格の接続パターンを表現し、構造類似性検索の基盤", "フィンガープリント", "RDKit"),
+
+    # MACCS — 事前定義の構造鍵
+    ("MACCS_", "MACCSキー — MDLが定義した166個の部分構造パターンの有無。製薬で広く使用される標準的な構造フィルター", "フィンガープリント", "RDKit"),
+
+    # AtomPair — 原子ペア
+    ("AtomPairFP_", "原子ペアFP — 全原子ペアの(原子タイプ, パス長, 原子タイプ)三つ組をコード化。分子の大域的な原子配置を捉える", "フィンガープリント", "RDKit"),
+
+    # TopologicalTorsion — ねじれ角
+    ("TopologicalTorsionFP_", "トポロジカルねじれFP — 連続4原子のパス(A-B-C-D)をコード化。分子の局所的な三次元形状を間接的に反映", "フィンガープリント", "RDKit"),
+    ("TorsionFP_", "ねじれFP — 4原子パスの部分構造パターン。立体配座の多様性を間接的に表現", "フィンガープリント", "RDKit"),
+
+    # Avalon
+    ("AvalonFP_", "AvalonFP — パスベース＋構造鍵のハイブリッド。高速な類似性検索と部分構造マッチングの両立に最適化", "フィンガープリント", "RDKit"),
+
+    # scikit-fingerprints系
+    ("MHFP_", "MinHash FP — 分子グラフのMinHashベース表現。ハミング距離で高速な類似性評価が可能", "フィンガープリント", "scikit-fingerprints"),
+    ("MAP4_", "MinHash原子ペアFP — 原子ペアのMinHash。分子サイズに不変で大小様々な分子の比較に適する", "フィンガープリント", "scikit-fingerprints"),
+    ("ErG_", "拡張削減グラフFP — 薬理学的特徴ノードの距離行列から導出。ファーマコフォア型の構造表現", "フィンガープリント", "scikit-fingerprints"),
+    ("Lingo_", "Lingo FP — SMILES文字列のq-gramベース表現。2D構造に依存しないテキスト的類似性", "フィンガープリント", "scikit-fingerprints"),
+    ("Layered_", "レイヤードFP — 結合タイプ・環帰属等の複数レイヤーを組合せたリッチな表現", "フィンガープリント", "RDKit"),
+    ("Pattern_", "パターンFP — SMARTS定義の部分構造パターンの存在を検出", "フィンガープリント", "RDKit"),
+    ("E3FP_", "3D拡張接続性FP — 3D座標から原子環境を球状にコード化。立体構造を直接反映", "フィンガープリント", "scikit-fingerprints"),
+
+    # Molfeat/DeepChem系
+    ("molfeat_", "Molfeat特徴量 — 学習済みモデルによる分子埋め込み表現", "深層学習特徴量", "molfeat"),
+    ("mol2vec_", "Mol2Vec — Word2Vecで学習した部分構造のベクトル表現。意味的類似性を捕捉", "深層学習特徴量", "mol2vec"),
+    ("chemprop_", "Chemprop — メッセージパッシングNNによる分子グラフ埋め込み", "深層学習特徴量", "chemprop"),
+    ("molai_", "MolAI — 自社深層学習モデルのPCA圧縮特徴量", "深層学習特徴量", "MolAI"),
+    ("uma_", "UMA — Universal Molecular Attention。大規模事前学習モデルの分子表現", "深層学習特徴量", "UMA"),
+
+    # PaDEL
+    ("PaDEL_", "PaDEL記述子 — Javaベースの記述子計算ライブラリ由来の特徴量", "記述子", "PaDEL"),
+
+    # DescriptaStorus
+    ("DescriptaStorus_", "DescriptaStorus記述子 — 高速な記述子計算ライブラリの特徴量", "記述子", "DescriptaStorus"),
+]
+
+_FP_BIT_PATTERN = _re.compile(r"^(.+?_)(\d+)$")
+
+
+def _infer_fp_meaning(desc_name: str) -> tuple[str, str, str] | None:
+    """記述子名からフィンガープリント系の意味を推定する。
+
+    Returns:
+        (meaning, category, library) or None
+    """
+    # まずプレフィクス完全一致
+    for prefix, meaning, cat, lib in _FP_MEANING_MAP:
+        if desc_name.startswith(prefix):
+            return meaning, cat, lib
+
+    # それでもなければ _数字 パターンで汎用FPとして扱う
+    m = _FP_BIT_PATTERN.match(desc_name)
+    if m:
+        prefix = m.group(1).rstrip("_")
+        return f"{prefix}系フィンガープリントのビット特徴量", "フィンガープリント", ""
+
+    return None
+
+
+def _group_fp_descriptors(desc_names: list[str]) -> tuple[list[str], dict[str, list[str]]]:
+    """記述子リストをFPグループとその他に分離する。
+
+    Returns:
+        (non_fp_list, fp_groups_dict)
+        fp_groups_dict: {group_label: [bit_names]}
+    """
+    fp_groups: dict[str, list[str]] = {}
+    non_fp: list[str] = []
+
+    for d in desc_names:
+        m = _FP_BIT_PATTERN.match(d)
+        if m:
+            prefix = m.group(1)
+            # グループラベル
+            label = prefix.rstrip("_")
+            fp_groups.setdefault(label, []).append(d)
+        else:
+            non_fp.append(d)
+
+    return non_fp, fp_groups
+
+
 def _render_descriptor_table(state: dict) -> None:
     """計算済み記述子の一覧テーブル。相関・意味・カーディナリティを表示。"""
     precalc_df = state.get("precalc_df")
@@ -1702,9 +1803,23 @@ def _render_descriptor_table(state: dict) -> None:
             reverse=True,
         ) if corr_dict else all_descs
 
+        # FPグループ化: 個別ビットは折りたたみ、グループサマリーを1行で表示
+        non_fp, fp_groups = _group_fp_descriptors(sorted_list)
+
         rows = []
-        for d in sorted_list:
+        # ─── 通常記述子（FP以外）───
+        for d in non_fp:
             meta = desc_meta.get(d, {})
+            meaning = meta.get("meaning", "")
+            category = meta.get("category", "")
+            library = meta.get("library", "")
+
+            # 意味がない場合にFP推定でフォールバック
+            if not meaning:
+                inferred = _infer_fp_meaning(d)
+                if inferred:
+                    meaning, category, library = inferred
+
             r_val = corr_dict.get(d)
             rows.append({
                 "name": d,
@@ -1712,11 +1827,41 @@ def _render_descriptor_table(state: dict) -> None:
                 "corr": f"{r_val:.3f}" if r_val is not None else "—",
                 "corr_raw": r_val or 0,
                 "cardinality": cardinality.get(d, 0),
-                "meaning": meta.get("meaning", ""),
-                "category": meta.get("category", ""),
-                "library": meta.get("library", ""),
+                "meaning": meaning,
+                "category": category,
+                "library": library,
                 "recommended": "⭐" if d in rec_names else "",
             })
+
+        # ─── FPグループ行（各タイプ1行にまとめる）───
+        for group_label, bits in sorted(fp_groups.items(), key=lambda x: -len(x[1])):
+            n_bits = len(bits)
+            n_selected = sum(1 for b in bits if b in selected)
+            # グループ平均相関
+            corrs = [corr_dict.get(b, 0) for b in bits if b in corr_dict]
+            avg_corr = sum(corrs) / len(corrs) if corrs else 0
+            max_corr = max(corrs) if corrs else 0
+
+            # FP系の意味を取得
+            fp_info = _infer_fp_meaning(bits[0]) if bits else None
+            meaning = fp_info[0] if fp_info else f"{group_label}系FP"
+            category = fp_info[1] if fp_info else "フィンガープリント"
+            library = fp_info[2] if fp_info else ""
+
+            rows.append({
+                "name": f"📦 {group_label} ({n_bits}ビット, {n_selected}選択)",
+                "selected": "✅" if n_selected == n_bits else ("⬜" if n_selected > 0 else ""),
+                "corr": f"avg:{avg_corr:.3f} max:{max_corr:.3f}" if corrs else "—",
+                "corr_raw": avg_corr,
+                "cardinality": n_bits,
+                "meaning": meaning,
+                "category": category,
+                "library": library,
+                "recommended": "",
+            })
+
+        # 相関降順でソート
+        rows.sort(key=lambda r: r["corr_raw"], reverse=True)
 
         columns = [
             {"name": "selected", "label": "✓", "field": "selected", "sortable": True, "align": "center"},
@@ -1729,7 +1874,6 @@ def _render_descriptor_table(state: dict) -> None:
             {"name": "category", "label": "分類", "field": "category", "sortable": True},
         ]
 
-        # 最大50行を表示（ページネーション）
         table = ui.table(
             columns=columns,
             rows=rows,
@@ -1738,14 +1882,45 @@ def _render_descriptor_table(state: dict) -> None:
             pagination={"rowsPerPage": 30, "sortBy": "corr", "descending": True},
         ).classes("full-width").props("dense flat bordered")
 
-        # 選択状態をテーブルに反映
-        table.selected = [r for r in rows if r["name"] in selected]
+        # FPグループ行はselectionに含めない（グループは個別選択不可）
+        non_group_rows = [r for r in rows if not r["name"].startswith("📦")]
+        table.selected = [r for r in non_group_rows if r["name"] in selected]
 
         def _on_selection_change(e):
-            sel_names = [r["name"] for r in e.selection]
-            state["selected_descriptors"] = sel_names
+            sel_names = [r["name"] for r in e.selection if not r["name"].startswith("📦")]
+            # FPグループの選択状態は維持
+            existing_fp = [d for d in state.get("selected_descriptors", [])
+                           if _FP_BIT_PATTERN.match(d)]
+            state["selected_descriptors"] = sel_names + existing_fp
 
         table.on_select(_on_selection_change)
+
+        # ── FPグループの一括ON/OFFボタン ──
+        if fp_groups:
+            with ui.row().classes("q-gutter-sm q-mt-sm"):
+                ui.label("📦 FPグループ一括:").classes("text-caption text-grey-5")
+                for gl, bits in sorted(fp_groups.items(), key=lambda x: -len(x[1])):
+                    n = len(bits)
+                    n_sel = sum(1 for b in bits if b in selected)
+                    is_all_on = (n_sel == n)
+
+                    def _toggle_group(group_bits=bits, group_name=gl, all_on=is_all_on):
+                        cur = set(state.get("selected_descriptors", []))
+                        if all_on:
+                            cur -= set(group_bits)
+                            ui.notify(f"📦 {group_name} 全{len(group_bits)}ビットOFF", type="info")
+                        else:
+                            cur |= set(group_bits)
+                            ui.notify(f"📦 {group_name} 全{len(group_bits)}ビットON", type="positive")
+                        state["selected_descriptors"] = list(cur)
+
+                    ui.button(
+                        f"{gl} ({n_sel}/{n})",
+                        on_click=_toggle_group,
+                    ).props(
+                        f"{'unelevated' if is_all_on else 'outline'} dense size=sm no-caps "
+                        f"color={'cyan' if is_all_on else 'grey-6'}"
+                    ).classes("text-xs")
 
 
 # ═══════════════════════════════════════════════════════════
