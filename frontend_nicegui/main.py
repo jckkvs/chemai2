@@ -171,6 +171,8 @@ def main_page():
     # ── ページスコープの共有ステート ──
     # 空の状態で開始。ユーザーがデータを読み込むまで待機。
     state = {
+        # UIモード
+        "user_mode": "beginner",  # beginner / advanced
         # データ（未読み込み）
         "df": None,
         "filename": None,
@@ -227,7 +229,15 @@ def main_page():
             ui.label("ChemAI ML Studio").classes("text-h5 text-bold hero-gradient")
             ui.badge("NiceGUI", color="purple").props("floating")
 
-        # ── コンテキストヘルプ ──
+        # ── モード切替 + コンテキストヘルプ ──
+        ui.toggle(
+            {"beginner": "🔰 初心者", "advanced": "🔬 上級者"},
+            value=state.get("user_mode", "beginner"),
+            on_change=lambda e: state.update({"user_mode": e.value}),
+        ).props("dense no-caps size=sm rounded").tooltip(
+            "初心者: 2クリック解析 / 上級者: 全設定項目"
+        )
+
         with ui.button(icon="help_outline").props("flat round size=sm color=grey").tooltip(
             "ショートカット: Ctrl+Enter=解析開始 | ?=ヘルプ"
         ):
@@ -272,7 +282,49 @@ def main_page():
         run_btn = ui.button(
             "🚀 解析開始", on_click=_run_analysis,
         ).classes("btn-primary").props("size=md icon=rocket_launch no-caps")
-        run_btn.tooltip("EDA → 前処理 → AutoML → 評価 → SHAP まで自動実行")
+        run_btn.tooltip("データ読込 → 自動設定 → AutoML → 評価 → SHAP まで自動実行")
+
+    # ═════════════════════════════════════════════════
+    # スマートデフォルト（データ特性に基づく自動設定）
+    # ═════════════════════════════════════════════════
+    def _apply_smart_defaults():
+        """st = state のデータ特性に基づく自動設定。"""
+        df = state.get("df")
+        target_col = state.get("target_col")
+        if df is None or not target_col:
+            return
+
+        n = len(df)
+        # CV分割数: データサイズに応じて調整
+        state["cv_folds"] = 5 if n > 200 else (3 if n > 50 else 2)
+
+        # モデル選択: データサイズで絞る
+        if n > 1000:
+            state["selected_models"] = []  # 全モデル
+        elif n > 200:
+            state.setdefault("selected_models", [])
+        else:
+            # 少量データ: 軽量モデルのみ
+            from backend.models.factory import get_default_automl_models
+            task_type = state.get("task_type", "regression")
+            if task_type == "auto":
+                task_type = "regression" if pd.api.types.is_float_dtype(df[target_col]) else "classification"
+            defaults = get_default_automl_models(task=task_type)
+            fast_models = [m for m in defaults if "Ridge" in m or "RF" in m or "LGBM" in m or "Lasso" in m]
+            state["selected_models"] = fast_models or defaults[:3]
+
+        # スケーラー: 目的変数の分布で判断
+        if target_col in df.columns and pd.api.types.is_numeric_dtype(df[target_col]):
+            target_s = df[target_col].dropna()
+            if len(target_s) > 10:
+                skewness = abs(target_s.skew())
+                state["num_scaler"] = "standard" if skewness < 1.5 else "robust"
+
+        # タイムアウト: データサイズに応じて
+        state["timeout"] = 600 if n > 2000 else (300 if n > 500 else 120)
+
+    # stateにスマートデフォルト関数を登録
+    state["_apply_smart_defaults"] = _apply_smart_defaults
 
     # ═══════════════════════════════════════════════════════════
     # サイドバー — ステップインジケーター + ジャンプ + 次のステップ

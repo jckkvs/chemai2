@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import time
 import traceback
 from typing import Any
 
@@ -114,12 +115,19 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
     # 進捗表示の構築
     status_container.clear()
     with status_container:
-        progress_label = ui.label("⏳ 解析を開始しています...").classes("text-lg q-mb-sm")
-        progress_bar = ui.linear_progress(value=0, show_value=False).classes("q-mb-sm")
-        progress_detail = ui.label("").classes("text-caption text-grey-5")
+        with ui.card().classes("full-width glass-card q-pa-md q-mb-sm"):
+            progress_header = ui.row().classes("items-center full-width justify-between")
+            with progress_header:
+                progress_label = ui.label("⏳ 解析を開始しています...").classes("text-lg")
+                progress_pct = ui.label("").classes("text-h6 text-bold hero-gradient")
+            progress_bar = ui.linear_progress(value=0, show_value=False).classes("q-mb-xs").props("color=cyan rounded")
+            with ui.row().classes("justify-between full-width"):
+                progress_detail = ui.label("").classes("text-caption text-grey-5")
+                progress_eta = ui.label("").classes("text-caption text-grey-5")
 
     # 進捗キュー（スレッドセーフ）
     progress_queue: queue.Queue = queue.Queue(maxsize=100)
+    _start_time = time.time()
 
     # 進捗ポーリングタイマー（最新のステップのみ表示、羅列しない）
     def _poll_progress():
@@ -134,9 +142,21 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                 break
         if latest:
             _, step, total, msg = latest
-            progress_bar.value = step / total if total > 0 else 0
+            pct = step / total if total > 0 else 0
+            progress_bar.value = pct
+            progress_pct.text = f"{int(pct * 100)}%"
             progress_label.text = f"⏳ {msg}"
             progress_detail.text = f"ステップ {step}/{total}"
+            # 推定残り時間
+            elapsed = time.time() - _start_time
+            if pct > 0.05:
+                eta_sec = elapsed / pct * (1 - pct)
+                if eta_sec < 60:
+                    progress_eta.text = f"残り約{eta_sec:.0f}秒"
+                else:
+                    progress_eta.text = f"残り約{eta_sec/60:.1f}分"
+            else:
+                progress_eta.text = "推定中..."
 
     timer = ui.timer(0.5, _poll_progress)
 
@@ -213,13 +233,19 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         state["pipeline_result"] = type("PipelineResult", (), {"elapsed": result.elapsed_seconds})()
 
         # 成功表示
+        elapsed_total = time.time() - _start_time
         progress_bar.value = 1.0
+        progress_pct.text = "100%"
         progress_label.text = f"✅ 解析完了！ 最良モデル: {result.best_model_key}"
+        n_models = len(result.model_scores)
+        proc_X = getattr(result, "processed_X", None)
+        n_feats = proc_X.shape[1] if proc_X is not None and hasattr(proc_X, "shape") else "?"
         progress_detail.text = (
             f"スコア: {result.best_score:.4f} | "
-            f"所要時間: {result.elapsed_seconds:.1f}秒 | "
-            f"タスク: {result.task}"
+            f"所要時間: {elapsed_total:.1f}秒 | "
+            f"{n_models}モデル比較 | {n_feats}特徴量"
         )
+        progress_eta.text = f"タスク: {result.task}"
         ui.notify(
             f"✅ 解析完了！ 最良: {result.best_model_key} (スコア: {result.best_score:.4f})",
             type="positive",
