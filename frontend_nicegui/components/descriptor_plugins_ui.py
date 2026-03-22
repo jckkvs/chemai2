@@ -338,153 +338,163 @@ def _ensure_default_sets(state: dict) -> None:
 
     全セットで n_descriptors < n_samples を保証。
     """
+    import logging as _log
+    _logger = _log.getLogger(__name__)
+
     if state.get("_default_sets_generated"):
         return  # 既に生成済み
 
     precalc_df = state.get("precalc_df")
     if precalc_df is None or precalc_df.empty:
+        _logger.warning("_ensure_default_sets: precalc_df is None/empty, skipping")
         return
 
-    import numpy as np
+    _logger.info("_ensure_default_sets: 生成開始 (cols=%d, rows=%d)", precalc_df.shape[1], len(precalc_df))
 
-    all_descs = list(precalc_df.columns)
-    n_samples = len(precalc_df)
+    try:
+        import numpy as np
 
-    # セット辞書の初期化
-    if "descriptor_sets" not in state:
-        state["descriptor_sets"] = {}
-    sets = state["descriptor_sets"]
+        all_descs = list(precalc_df.columns)
+        n_samples = len(precalc_df)
 
-    # ─── セットA: 🧠 MolAI+PCA ───
-    dl_prefixes = ("molai_", "chemprop_", "mol2vec_", "uma_", "molfeat_")
-    dl_descs = [d for d in all_descs if d.lower().startswith(dl_prefixes)]
-    if dl_descs:
-        max_dl = min(n_samples // 5, len(dl_descs), 50)
-        sets["🧠 MolAI+PCA"] = {
-            "engines": ["MolAI"],
-            "active": True,
-            "descriptors": dl_descs[:max(max_dl, 5)],
-        }
+        # セット辞書の初期化
+        if "descriptor_sets" not in state:
+            state["descriptor_sets"] = {}
+        sets = state["descriptor_sets"]
 
-    # ─── セットB: 🎯 汎用QSPR ───
-    # 化学的に重要な記述子の優先リスト（存在するものだけ使用）
-    _universal_candidates = [
-        # 物理化学
-        "MolWt", "MolLogP", "TPSA", "MolMR",
-        "HeavyAtomCount", "NumHAcceptors", "NumHDonors",
-        "NumRotatableBonds", "FractionCSP3",
-        # 電子状態
-        "MaxPartialCharge", "MinPartialCharge",
-        "MaxAbsPartialCharge", "MinAbsPartialCharge",
-        # トポロジー
-        "BertzCT", "Chi0v", "Chi1v", "Kappa1", "Kappa2",
-        "HallKierAlpha", "BalabanJ",
-        # 構造
-        "RingCount", "NumAromaticRings",
-        "NumSaturatedRings", "NumAliphaticRings",
-        "NumAromaticHeterocycles",
-        # 溶解度・分配
-        "LabuteASA",
-        # フラグメント
-        "fr_Al_OH", "fr_Ar_OH", "fr_NH2", "fr_ether",
-        # XTB（あれば）
-        "HomoEnergy", "LumoEnergy", "HomoLumoGap",
-        "DipoleMoment", "Polarizability",
-        # 基団寄与法（あれば）
-        "joback_Tc", "joback_Pc", "joback_Vc",
-    ]
-    available_set = set(all_descs)
-    universal_descs = [d for d in _universal_candidates if d in available_set]
-
-    # 足りない場合: 名前でソートして補充
-    if len(universal_descs) < 10:
-        remaining = [d for d in sorted(all_descs) if d not in universal_descs]
-        universal_descs.extend(remaining[:30])
-
-    max_univ = min(n_samples // 3, len(universal_descs))
-    universal_descs = universal_descs[:max(max_univ, 5)]
-    sets["🎯 汎用QSPR"] = {
-        "engines": [],
-        "active": True,
-        "descriptors": universal_descs,
-    }
-
-    # ─── セットC: 📈 相関Top-N（多重共線性除外）───
-    target_col = state.get("target_col")
-    df = state.get("df")
-
-    if target_col and df is not None and target_col in df.columns:
-        try:
-            import pandas as pd
-            target_s = df[target_col]
-            if pd.api.types.is_numeric_dtype(target_s):
-                aligned = target_s.iloc[:n_samples].reset_index(drop=True)
-                corr_abs = precalc_df.iloc[:len(aligned)].corrwith(
-                    aligned, method="pearson"
-                ).abs().dropna()
-
-                # |r|降順にソート
-                sorted_by_corr = corr_abs.sort_values(ascending=False).index.tolist()
-
-                # 多重共線性 |r| > 0.9 を除外しながら選択
-                max_corr_n = min(n_samples // 5, 50)
-                selected_corr: list[str] = []
-                # 説明変数同士の相関計算（必要な列のみ）
-                top_candidates = sorted_by_corr[:min(200, len(sorted_by_corr))]
-                if len(top_candidates) > 1:
-                    inter_corr = precalc_df[top_candidates].corr().abs()
-
-                    for d in top_candidates:
-                        if len(selected_corr) >= max_corr_n:
-                            break
-                        # 既に選択された記述子との相関が0.9未満か確認
-                        is_redundant = False
-                        for s in selected_corr:
-                            if s in inter_corr.columns and d in inter_corr.index:
-                                if inter_corr.loc[d, s] > 0.9:
-                                    is_redundant = True
-                                    break
-                        if not is_redundant:
-                            selected_corr.append(d)
-
-                if selected_corr:
-                    sets["📈 相関Top-N"] = {
-                        "engines": [],
-                        "active": True,
-                        "descriptors": selected_corr,
-                    }
-        except Exception:
-            pass
-
-    # 相関セットが作れなかった場合: 分散ベースにフォールバック
-    if "📈 相関Top-N" not in sets:
-        try:
-            variances = precalc_df.var(numeric_only=True).dropna()
-            sorted_var = variances.sort_values(ascending=False).index.tolist()
-            max_var_n = min(n_samples // 5, 50)
-            sets["📊 分散Top-N"] = {
-                "engines": [],
+        # ─── セットA: 🧠 MolAI+PCA ───
+        dl_prefixes = ("molai_", "chemprop_", "mol2vec_", "uma_", "molfeat_")
+        dl_descs = [d for d in all_descs if d.lower().startswith(dl_prefixes)]
+        if dl_descs:
+            max_dl = min(n_samples // 5, len(dl_descs), 50)
+            sets["🧠 MolAI+PCA"] = {
+                "engines": ["MolAI"],
                 "active": True,
-                "descriptors": sorted_var[:max(max_var_n, 5)],
+                "descriptors": dl_descs[:max(max_dl, 5)],
             }
-        except Exception:
-            pass
 
-    # デフォルトセット（全記述子）も維持
-    if "デフォルト" not in sets:
-        sets["デフォルト"] = {
+        # ─── セットB: 🎯 汎用QSPR ───
+        _universal_candidates = [
+            # 物理化学
+            "MolWt", "MolLogP", "TPSA", "MolMR",
+            "HeavyAtomCount", "NumHAcceptors", "NumHDonors",
+            "NumRotatableBonds", "FractionCSP3",
+            # 電子状態
+            "MaxPartialCharge", "MinPartialCharge",
+            "MaxAbsPartialCharge", "MinAbsPartialCharge",
+            # トポロジー
+            "BertzCT", "Chi0v", "Chi1v", "Kappa1", "Kappa2",
+            "HallKierAlpha", "BalabanJ",
+            # 構造
+            "RingCount", "NumAromaticRings",
+            "NumSaturatedRings", "NumAliphaticRings",
+            "NumAromaticHeterocycles",
+            # 溶解度・分配
+            "LabuteASA",
+            # フラグメント
+            "fr_Al_OH", "fr_Ar_OH", "fr_NH2", "fr_ether",
+            # XTB（あれば）
+            "HomoEnergy", "LumoEnergy", "HomoLumoGap",
+            "DipoleMoment", "Polarizability",
+            # 基団寄与法（あれば）
+            "joback_Tc", "joback_Pc", "joback_Vc",
+        ]
+        available_set = set(all_descs)
+        universal_descs = [d for d in _universal_candidates if d in available_set]
+
+        # 足りない場合: 名前でソートして補充
+        if len(universal_descs) < 10:
+            remaining = [d for d in sorted(all_descs) if d not in universal_descs]
+            universal_descs.extend(remaining[:30])
+
+        max_univ = min(n_samples // 3, len(universal_descs))
+        universal_descs = universal_descs[:max(max_univ, 5)]
+        sets["🎯 汎用QSPR"] = {
             "engines": [],
             "active": True,
-            "descriptors": None,
+            "descriptors": universal_descs,
         }
 
-    # 現在のセット名が未設定なら汎用QPSRに
-    if "current_set_name" not in state or state["current_set_name"] == "デフォルト":
-        if "🎯 汎用QSPR" in sets:
-            state["current_set_name"] = "🎯 汎用QSPR"
-            state["selected_descriptors"] = list(sets["🎯 汎用QSPR"]["descriptors"])
+        # ─── セットC: 📈 相関Top-N（多重共線性除外）───
+        target_col = state.get("target_col")
+        df = state.get("df")
 
-    state["_default_sets_generated"] = True
+        if target_col and df is not None and target_col in df.columns:
+            try:
+                import pandas as pd
+                target_s = df[target_col]
+                if pd.api.types.is_numeric_dtype(target_s):
+                    aligned = target_s.iloc[:n_samples].reset_index(drop=True)
+                    corr_abs = precalc_df.iloc[:len(aligned)].corrwith(
+                        aligned, method="pearson"
+                    ).abs().dropna()
+
+                    sorted_by_corr = corr_abs.sort_values(ascending=False).index.tolist()
+
+                    max_corr_n = min(n_samples // 5, 50)
+                    selected_corr: list[str] = []
+                    top_candidates = sorted_by_corr[:min(200, len(sorted_by_corr))]
+                    if len(top_candidates) > 1:
+                        inter_corr = precalc_df[top_candidates].corr().abs()
+
+                        for d in top_candidates:
+                            if len(selected_corr) >= max_corr_n:
+                                break
+                            is_redundant = False
+                            for s in selected_corr:
+                                if s in inter_corr.columns and d in inter_corr.index:
+                                    if inter_corr.loc[d, s] > 0.9:
+                                        is_redundant = True
+                                        break
+                            if not is_redundant:
+                                selected_corr.append(d)
+
+                    if selected_corr:
+                        sets["📈 相関Top-N"] = {
+                            "engines": [],
+                            "active": True,
+                            "descriptors": selected_corr,
+                        }
+            except Exception as e:
+                _logger.warning("相関Top-Nセット生成エラー: %s", e)
+
+        # 相関セットが作れなかった場合: 分散ベースにフォールバック
+        if "📈 相関Top-N" not in sets:
+            try:
+                variances = precalc_df.var(numeric_only=True).dropna()
+                sorted_var = variances.sort_values(ascending=False).index.tolist()
+                max_var_n = min(n_samples // 5, 50)
+                sets["📊 分散Top-N"] = {
+                    "engines": [],
+                    "active": True,
+                    "descriptors": sorted_var[:max(max_var_n, 5)],
+                }
+            except Exception as e:
+                _logger.warning("分散Top-Nセット生成エラー: %s", e)
+
+        # デフォルトセット（全記述子）も維持
+        if "デフォルト" not in sets:
+            sets["デフォルト"] = {
+                "engines": [],
+                "active": True,
+                "descriptors": None,
+            }
+
+        # 現在のセット名が未設定なら汎用QPSRに
+        if "current_set_name" not in state or state["current_set_name"] == "デフォルト":
+            if "🎯 汎用QSPR" in sets:
+                state["current_set_name"] = "🎯 汎用QSPR"
+                state["selected_descriptors"] = list(sets["🎯 汎用QSPR"]["descriptors"])
+
+        _logger.info(
+            "_ensure_default_sets: 生成完了 — %d セット: %s",
+            len(sets), list(sets.keys()),
+        )
+        state["_default_sets_generated"] = True
+
+    except Exception as e:
+        _logger.error("_ensure_default_sets 全体エラー: %s", e, exc_info=True)
+        state["_default_sets_generated"] = True  # 無限リトライ防止
 
 
 # ═══════════════════════════════════════════════════════════
@@ -529,24 +539,27 @@ def _render_set_management_bar(state: dict) -> None:
         ui.icon("layers", color="cyan").classes("text-body1")
         ui.label("セット:").classes("text-caption text-grey")
 
-        # ── セット切替ドロップダウン ──
+        # ── セット切替チップボタン ──
         set_names = list(sets.keys())
-        if len(set_names) > 1:
-            def _on_switch(e):
-                name = e.value
+        for sn in set_names:
+            is_active = (sn == current)
+            s_descs = sets[sn].get("descriptors")
+            s_count = len(s_descs) if s_descs else total_available
+
+            def _switch(name=sn):
                 state["current_set_name"] = name
                 if sets[name].get("descriptors"):
                     state["active_descriptors"] = list(sets[name]["descriptors"])
                     state["selected_descriptors"] = list(sets[name]["descriptors"])
                 ui.notify(f"🔄 セット「{name}」に切替", type="info")
 
-            ui.select(
-                set_names, value=current, on_change=_on_switch,
-            ).props("dense outlined borderless").style(
-                "min-width: 140px; max-width: 200px;"
-            ).classes("text-body2")
-        else:
-            ui.badge(current, color="cyan").props("outline").classes("text-body2")
+            btn = ui.button(
+                f"{sn} ({s_count})",
+                on_click=_switch,
+            ).props(
+                f"{'unelevated' if is_active else 'outline'} dense size=sm no-caps "
+                f"color={'cyan' if is_active else 'grey-6'}"
+            ).classes("text-xs")
 
         # ── 記述子数バッジ ──
         ui.badge(
