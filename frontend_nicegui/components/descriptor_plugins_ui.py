@@ -247,11 +247,11 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
     # 「計算→選択→ML」の流れを守る
     # ─────────────────────────────────────────────────────
     if has_precalc:
-        # セクション2: 推薦記述子（目的変数ベース）
-        _render_target_recommendations(state, adapters)
+        # ── セット管理: コンパクトバー（sticky・6タブより上） ──
+        _render_set_management_bar(state)
 
-        # セクション2.5: 記述子セット管理（複数パターン同時試行）
-        render_descriptor_sets_panel(state)
+        # セクション2: 推薦記述子（目的変数ベース）+ 6タブ選択UI
+        _render_target_recommendations(state, adapters)
 
         # セクション3: 計算済み記述子テーブル（メインコンテンツ）
         _render_descriptor_table(state)
@@ -320,6 +320,154 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
 
     with ui.expansion("📁 カスタムプラグイン管理", icon="folder_open").classes("full-width"):
         _render_custom_plugins(state)
+
+
+# ═══════════════════════════════════════════════════════════
+# 記述子セット管理 — コンパクト sticky バー
+# ═══════════════════════════════════════════════════════════
+def _render_set_management_bar(state: dict) -> None:
+    """
+    記述子セット管理をコンパクトな1行バーとして表示。
+    position: sticky で上部に固定し、スクロールしても常に見える。
+    """
+    import copy
+
+    # セット管理の初期化
+    if "descriptor_sets" not in state:
+        state["descriptor_sets"] = {
+            "デフォルト": {
+                "engines": [],
+                "active": True,
+                "descriptors": None,
+            }
+        }
+    if "current_set_name" not in state:
+        state["current_set_name"] = "デフォルト"
+
+    sets = state["descriptor_sets"]
+    current = state["current_set_name"]
+    precalc_df = state.get("precalc_df")
+    total_available = precalc_df.shape[1] if precalc_df is not None else 0
+
+    # 現在のセットの記述子数
+    cur_descs = sets.get(current, {}).get("descriptors")
+    n_cur = len(cur_descs) if cur_descs else total_available
+
+    with ui.row().classes(
+        "items-center full-width q-gutter-sm q-pa-xs q-mb-sm"
+    ).style(
+        "position: sticky; top: 0; z-index: 100;"
+        "background: rgba(10,15,30,0.95); border-bottom: 1px solid rgba(0,212,255,0.3);"
+        "border-radius: 8px; min-height: 40px; backdrop-filter: blur(10px);"
+    ):
+        # ── アイコン + ラベル ──
+        ui.icon("layers", color="cyan").classes("text-body1")
+        ui.label("セット:").classes("text-caption text-grey")
+
+        # ── セット切替ドロップダウン ──
+        set_names = list(sets.keys())
+        if len(set_names) > 1:
+            def _on_switch(e):
+                name = e.value
+                state["current_set_name"] = name
+                if sets[name].get("descriptors"):
+                    state["active_descriptors"] = list(sets[name]["descriptors"])
+                    state["selected_descriptors"] = list(sets[name]["descriptors"])
+                ui.notify(f"🔄 セット「{name}」に切替", type="info")
+
+            ui.select(
+                set_names, value=current, on_change=_on_switch,
+            ).props("dense outlined borderless").style(
+                "min-width: 140px; max-width: 200px;"
+            ).classes("text-body2")
+        else:
+            ui.badge(current, color="cyan").props("outline").classes("text-body2")
+
+        # ── 記述子数バッジ ──
+        ui.badge(
+            f"{n_cur}/{total_available}", color="teal",
+        ).props("outline").tooltip("選択中/利用可能な記述子数")
+
+        # ── 保存ボタン ──
+        def _save_current():
+            active = state.get("active_descriptors", state.get("selected_descriptors", []))
+            sets[current]["descriptors"] = list(active)
+            ui.notify(f"💾 「{current}」に {len(active)} 記述子を保存", type="positive")
+
+        ui.button(icon="save", on_click=_save_current).props(
+            "flat round dense size=sm color=cyan"
+        ).tooltip("現在の選択をセットに保存")
+
+        # ── 新規セット ──
+        def _add_set():
+            idx = len(sets) + 1
+            name = f"セット{idx}"
+            while name in sets:
+                idx += 1
+                name = f"セット{idx}"
+            active = state.get("active_descriptors", state.get("selected_descriptors", []))
+            sets[name] = {
+                "engines": [],
+                "active": True,
+                "descriptors": list(active) if active else None,
+            }
+            state["current_set_name"] = name
+            ui.notify(f"➕ セット「{name}」を作成", type="positive")
+
+        ui.button(icon="add", on_click=_add_set).props(
+            "flat round dense size=sm color=green"
+        ).tooltip("現在の選択を新しいセットとして保存")
+
+        # ── 複製ボタン ──
+        def _dup_current():
+            new_name = f"{current}_コピー"
+            i = 2
+            while new_name in sets:
+                new_name = f"{current}_コピー{i}"
+                i += 1
+            sets[new_name] = copy.deepcopy(sets[current])
+            state["current_set_name"] = new_name
+            ui.notify(f"📋 「{new_name}」を作成", type="info")
+
+        ui.button(icon="content_copy", on_click=_dup_current).props(
+            "flat round dense size=sm color=grey"
+        ).tooltip("現在のセットを複製")
+
+        # ── 削除ボタン（デフォルト以外） ──
+        if current != "デフォルト" and len(sets) > 1:
+            def _del_current():
+                del sets[current]
+                state["current_set_name"] = "デフォルト"
+                ui.notify(f"🗑️ 「{current}」を削除", type="info")
+
+            ui.button(icon="delete_outline", on_click=_del_current).props(
+                "flat round dense size=sm color=red-4"
+            ).tooltip("現在のセットを削除")
+
+        # ── 全セット管理（ダイアログで詳細） ──
+        def _open_full_mgmt():
+            from frontend_nicegui.components.descriptor_selector_dialog import (
+                render_descriptor_sets_panel,
+            )
+            with ui.dialog() as dlg, ui.card().classes("q-pa-md").style(
+                "width: 90vw; max-width: 1200px; max-height: 85vh;"
+            ):
+                ui.label("📊 記述子セット管理（全セット表示）").classes("text-h6 q-mb-sm")
+                render_descriptor_sets_panel(state)
+                ui.separator().classes("q-my-sm")
+                ui.button("閉じる", on_click=dlg.close).props("outline no-caps color=cyan")
+            dlg.open()
+
+        ui.button(icon="dashboard", on_click=_open_full_mgmt).props(
+            "flat round dense size=sm color=amber"
+        ).tooltip("全セットの比較・管理ダイアログ")
+
+        # ── アクティブセット数（2以上の場合） ──
+        active_sets = [n for n, info in sets.items() if info.get("active", True)]
+        if len(active_sets) > 1:
+            ui.badge(
+                f"🔬 {len(active_sets)}セット比較", color="amber",
+            ).props("outline dense").classes("text-xs")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -670,14 +818,28 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                 ui.label(f"{r_val:.4f}").classes("text-caption text-cyan")
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # タブ4: エンジンから選ぶ（個別選択）
+            # タブ4: エンジンから選ぶ（カタログ統合・個別選択）
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             with ui.tab_panel("engine"):
                 ui.label(
-                    "計算エンジンごとに記述子を個別に選択できます。"
-                    "サブカテゴリで分類されています。"
+                    "計算エンジンごとに記述子を化学カテゴリ別に表示。"
+                    "各記述子の化学的意味を確認しながら個別にON/OFFできます。"
                 ).classes("text-caption text-grey q-mb-sm")
 
+                # ── カタログから化学的意味を収集 ──
+                from frontend_nicegui.components.descriptor_catalog import (
+                    get_catalog, SUPPORTED_ENGINES,
+                )
+                _all_catalog_info: dict[str, str] = {}  # name → short説明
+                for _eng_cat in SUPPORTED_ENGINES:
+                    cat = get_catalog(_eng_cat)
+                    if cat:
+                        for cat_descs in cat.values():
+                            for d_info in cat_descs:
+                                if not d_info["name"].startswith("_"):
+                                    _all_catalog_info[d_info["name"]] = d_info.get("short", "")
+
+                # ── 記述子をエンジン別に分類 ──
                 engine_descs: dict[str, list[str]] = {}
                 for d in all_descs:
                     eng = "RDKit"
@@ -717,16 +879,44 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
 
                 selected = set(state.get("selected_descriptors", all_descs))
 
+                # ── エンジン情報マップ ──
+                _eng_info_map = {e["cls"].replace("Adapter", ""): e for e in _ENGINE_INFO}
+                _eng_display = {
+                    "RDKit": ("🧪", "物理化学的性質", "⚡高速", "~200"),
+                    "XTB": ("⚛️", "量子化学", "🔴低速", "~20"),
+                    "COSMO-RS": ("🌊", "溶媒和熱力学", "🔴低速", "~10"),
+                    "原子団寄与法": ("🔬", "基団寄与法", "⚡高速", "~15"),
+                    "Mordred": ("📐", "包括的2D記述子", "🟡中速", "~1800"),
+                    "scikit-FP": ("🔑", "分子FP", "⚡高速", "~2200"),
+                    "Molfeat": ("🔗", "統合FP", "⚡高速", "可変"),
+                    "Mol2Vec": ("🤖", "Word2Vec表現", "🟡中速", "300"),
+                    "Chemprop": ("🧠", "GNN表現", "🔴低速", "可変"),
+                    "UMA": ("⚛️", "DFT物性", "🔴低速", "~7"),
+                    "PaDEL": ("📐", "PaDEL互換", "🟡中速", "~1800"),
+                    "DescriptaStorus": ("💊", "Merck記述子", "⚡高速", "~200"),
+                    "UniPKa": ("🧪", "酸解離定数", "🟡中速", "~5"),
+                }
+
                 for eng_name, descs in sorted(
                     engine_descs.items(), key=lambda x: -len(x[1])
                 ):
                     n_sel = sum(1 for d in descs if d in selected)
                     sel_color = "green" if n_sel == len(descs) else "amber" if n_sel > 0 else "grey"
+                    icon, purpose, speed, dims = _eng_display.get(
+                        eng_name, ("🔧", "", "", "")
+                    )
 
                     with ui.expansion(
-                        f"🔧 {eng_name} ({n_sel}/{len(descs)})",
+                        f"{icon} {eng_name} ({n_sel}/{len(descs)})",
                         icon="memory",
                     ).classes("full-width q-mb-xs").props("dense"):
+                        # ── エンジン情報ヘッダー ──
+                        if purpose:
+                            ui.label(
+                                f"{purpose} | {speed} | {dims}次元"
+                            ).classes("text-caption text-grey").style("font-size: 0.7rem;")
+
+                        # ── エンジン単位の一括操作 ──
                         with ui.row().classes("q-gutter-sm q-mb-sm"):
                             def _sel_all_eng(ds=descs):
                                 s = set(state.get("selected_descriptors", []))
@@ -748,19 +938,54 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             )
                             ui.badge(f"{n_sel}/{len(descs)}", color=sel_color).props("outline")
 
-                        groups = _group_descriptors_by_subcategory(eng_name, descs)
-                        for group_name, group_descs in groups.items():
-                            g_sel = sum(1 for d in group_descs if d in selected)
+                        # ── カタログベースのグループ分け ──
+                        # カタログがあるエンジンはカタログのカテゴリを使用
+                        catalog = get_catalog(eng_name)
+                        if catalog:
+                            # カタログのカテゴリ→記述子名のマッピングを構築
+                            cat_to_descs: dict[str, list[tuple[str, str]]] = {}
+                            cataloged_names: set[str] = set()
+                            for cat_name, cat_items in catalog.items():
+                                for item in cat_items:
+                                    if item["name"].startswith("_"):
+                                        continue
+                                    if item["name"] in set(descs):
+                                        cat_to_descs.setdefault(cat_name, []).append(
+                                            (item["name"], item.get("short", ""))
+                                        )
+                                        cataloged_names.add(item["name"])
+                            # カタログにない記述子は「その他」に
+                            uncataloged = [d for d in descs if d not in cataloged_names]
+                            if uncataloged:
+                                cat_to_descs["📋 その他（カタログ未登録）"] = [
+                                    (d, _all_catalog_info.get(d, "")) for d in uncataloged
+                                ]
+                        else:
+                            # カタログがないエンジン→名前推定でグループ分け
+                            groups = _group_descriptors_by_subcategory(eng_name, descs)
+                            cat_to_descs = {}
+                            for gname, gdescs in groups.items():
+                                cat_to_descs[gname] = [
+                                    (d, _all_catalog_info.get(d, "")) for d in gdescs
+                                ]
+
+                        # ── グループ別展開+個別チェックボックス+化学的意味 ──
+                        for group_name, group_items in cat_to_descs.items():
+                            g_names = [t[0] for t in group_items]
+                            g_sel = sum(1 for d in g_names if d in selected)
+                            g_color = "green" if g_sel == len(g_names) else "amber" if g_sel > 0 else "grey"
+
                             with ui.expansion(
-                                f"  {group_name} ({g_sel}/{len(group_descs)})",
+                                f"  {group_name} ({g_sel}/{len(g_names)})",
                             ).classes("full-width q-mb-xs").props("dense"):
+                                # グループ単位の一括操作
                                 with ui.row().classes("q-gutter-xs q-mb-xs"):
-                                    def _sg(ds=group_descs):
+                                    def _sg(ds=g_names):
                                         s = set(state.get("selected_descriptors", []))
                                         s.update(ds)
                                         state["selected_descriptors"] = list(s)
 
-                                    def _dg(ds=group_descs):
+                                    def _dg(ds=g_names):
                                         s = set(state.get("selected_descriptors", []))
                                         s -= set(ds)
                                         state["selected_descriptors"] = list(s)
@@ -771,24 +996,36 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                     ui.button("✕全", on_click=_dg).props(
                                         "flat size=xs no-caps color=grey dense"
                                     )
+                                    ui.badge(
+                                        f"{g_sel}/{len(g_names)}", color=g_color,
+                                    ).props("outline dense").classes("text-xs")
 
-                                with ui.row().classes("q-gutter-xs flex-wrap"):
-                                    for desc_name in group_descs:
-                                        is_on = desc_name in selected
+                                # 個別チェックボックス+化学的意味
+                                for desc_name, desc_short in group_items:
+                                    is_on = desc_name in selected
 
-                                        def _toggle(val, dn=desc_name):
-                                            s = set(state.get("selected_descriptors", []))
-                                            if val:
-                                                s.add(dn)
-                                            else:
-                                                s.discard(dn)
-                                            state["selected_descriptors"] = list(s)
+                                    def _toggle(val, dn=desc_name):
+                                        s = set(state.get("selected_descriptors", []))
+                                        if val:
+                                            s.add(dn)
+                                        else:
+                                            s.discard(dn)
+                                        state["selected_descriptors"] = list(s)
 
+                                    with ui.row().classes(
+                                        "items-center q-gutter-xs"
+                                    ).style("min-height: 26px;"):
                                         ui.checkbox(
                                             desc_name,
                                             value=is_on,
-                                            on_change=lambda e, dn=desc_name: _toggle(e.value, dn),
-                                        ).props("dense").classes("text-xs")
+                                            on_change=lambda e, dn=desc_name: _toggle(
+                                                e.value, dn
+                                            ),
+                                        ).props("dense").style("min-width: 200px;")
+                                        if desc_short:
+                                            ui.label(desc_short).classes(
+                                                "text-caption text-grey"
+                                            ).style("font-size: 0.7rem;")
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # タブ5: テキスト検索（NEW）

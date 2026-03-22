@@ -505,6 +505,125 @@ def get_cosmo_catalog() -> dict[str, list[dict]]:
     }
 
 
+def get_descriptastorus_catalog() -> dict[str, list[dict]]:
+    """DescriptaStorus（Merck製 200+2D記述子）カタログ。"""
+    return {
+        "物理化学的性質": [
+            {"name": "ds_MolWt", "short": "分子量(Da)", "cat": "物性"},
+            {"name": "ds_MolLogP", "short": "油水分配係数LogP", "cat": "物性"},
+            {"name": "ds_TPSA", "short": "極性表面積(Å²)", "cat": "物性"},
+            {"name": "ds_MolMR", "short": "分子屈折率(分極率)", "cat": "物性"},
+            {"name": "ds_HeavyAtomMolWt", "short": "H除外骨格質量", "cat": "物性"},
+            {"name": "ds_ExactMolWt", "short": "同位体精密質量", "cat": "物性"},
+            {"name": "ds_FractionCSP3", "short": "sp3混成炭素の割合", "cat": "物性"},
+        ],
+        "電子状態・電荷": [
+            {"name": "ds_MaxPartialCharge", "short": "最大部分電荷", "cat": "電荷"},
+            {"name": "ds_MinPartialCharge", "short": "最小部分電荷", "cat": "電荷"},
+            {"name": "ds_MaxAbsPartialCharge", "short": "電荷偏り最大", "cat": "電荷"},
+            {"name": "ds_MinAbsPartialCharge", "short": "電荷偏り最小", "cat": "電荷"},
+            {"name": "ds_NumRadicalElectrons", "short": "不対電子数", "cat": "電荷"},
+            {"name": "ds_NumValenceElectrons", "short": "価電子の総数", "cat": "電荷"},
+        ],
+        "水素結合・極性": [
+            {"name": "ds_NumHAcceptors", "short": "H結合受容部位数", "cat": "水素結合"},
+            {"name": "ds_NumHDonors", "short": "H結合供与部位数", "cat": "水素結合"},
+            {"name": "ds_NHOHCount", "short": "NH/OHの数", "cat": "水素結合"},
+            {"name": "ds_NOCount", "short": "N+O原子の合計", "cat": "水素結合"},
+        ],
+        "トポロジー・環構造": [
+            {"name": "ds_NumRotatableBonds", "short": "回転可能結合数", "cat": "トポロジー"},
+            {"name": "ds_RingCount", "short": "環の総数", "cat": "トポロジー"},
+            {"name": "ds_NumAromaticRings", "short": "芳香環の数", "cat": "トポロジー"},
+            {"name": "ds_NumAliphaticRings", "short": "非芳香環の数", "cat": "トポロジー"},
+            {"name": "ds_NumSaturatedRings", "short": "飽和環の数", "cat": "トポロジー"},
+            {"name": "ds_NumHeterocycles", "short": "ヘテロ環の数", "cat": "トポロジー"},
+            {"name": "ds_HeavyAtomCount", "short": "非水素原子数", "cat": "トポロジー"},
+            {"name": "ds_NumAmideBonds", "short": "アミド結合数", "cat": "トポロジー"},
+        ],
+        "薬品適性": [
+            {"name": "ds_qed", "short": "薬品としての適性(0-1)", "cat": "薬品適性"},
+        ],
+        "位相的指数": [
+            {"name": "ds_BalabanJ", "short": "Balaban対称性指数", "cat": "位相的"},
+            {"name": "ds_BertzCT", "short": "Bertz複雑度", "cat": "位相的"},
+            {"name": "ds_HallKierAlpha", "short": "Hall-Kier形状値", "cat": "位相的"},
+            {"name": "ds_Kappa1", "short": "κ形状指数1次", "cat": "位相的"},
+            {"name": "ds_Kappa2", "short": "κ形状指数2次", "cat": "位相的"},
+            {"name": "ds_Kappa3", "short": "κ形状指数3次", "cat": "位相的"},
+        ],
+        "BCUT・表面積分布": [
+            {"name": "ds_BCUT2D_MWHI", "short": "原子量分布の最大偏り", "cat": "BCUT"},
+            {"name": "ds_BCUT2D_MWLOW", "short": "原子量分布の最小偏り", "cat": "BCUT"},
+            {"name": "ds_BCUT2D_CHGHI", "short": "電荷分布の最大偏り", "cat": "BCUT"},
+            {"name": "ds_BCUT2D_CHGLO", "short": "電荷分布の最小偏り", "cat": "BCUT"},
+            {"name": "ds_BCUT2D_LOGPHI", "short": "LogP分布の最大偏り", "cat": "BCUT"},
+            {"name": "ds_BCUT2D_LOGPLOW", "short": "LogP分布の最小偏り", "cat": "BCUT"},
+            {"name": "ds_BCUT2D_MRHI", "short": "分極率分布の最大偏り", "cat": "BCUT"},
+            {"name": "ds_BCUT2D_MRLOW", "short": "分極率分布の最小偏り", "cat": "BCUT"},
+        ],
+    }
+
+
+def get_padel_catalog() -> dict[str, list[dict]]:
+    """PaDEL（CDK由来 1600+2D記述子）カタログ。主要グループのみ。"""
+    return {
+        "原子数・結合数": [
+            {"name": "padel_nAtom", "short": "全原子数", "cat": "原子数"},
+            {"name": "padel_nHeavyAtom", "short": "H以外の原子数", "cat": "原子数"},
+            {"name": "padel_nBonds", "short": "全結合数", "cat": "結合数"},
+            {"name": "padel_nRotB", "short": "回転可能結合数", "cat": "結合数"},
+        ],
+        "電荷・電子状態": [
+            {"name": "padel_DPSA1", "short": "正電荷部分表面積の和", "cat": "CPSA"},
+            {"name": "padel_DPSA2", "short": "負電荷部分表面積の和", "cat": "CPSA"},
+            {"name": "padel_RPSA", "short": "相対的極性表面積", "cat": "CPSA"},
+            {"name": "padel_RASA", "short": "相対的非極性表面積", "cat": "CPSA"},
+        ],
+        "水素結合": [
+            {"name": "padel_nHBAcc", "short": "H結合受容体数", "cat": "水素結合"},
+            {"name": "padel_nHBDon", "short": "H結合供与体数", "cat": "水素結合"},
+        ],
+        "トポロジー指数": [
+            {"name": "padel_Zagreb", "short": "Zagreb指数(結合度)", "cat": "トポロジー"},
+            {"name": "padel_WienerPath", "short": "Wiener経路数(分岐度)", "cat": "トポロジー"},
+            {"name": "padel_WienerPol", "short": "Wiener極性(距離3対数)", "cat": "トポロジー"},
+            {"name": "padel_MDEC", "short": "分子距離辺カウント", "cat": "トポロジー"},
+        ],
+        "環構造": [
+            {"name": "padel_nRing", "short": "環構造の総数", "cat": "環構造"},
+            {"name": "padel_nAromRing", "short": "芳香環の数", "cat": "環構造"},
+            {"name": "padel_nFRing", "short": "縮合環の数", "cat": "環構造"},
+        ],
+        "分子サイズ・物性": [
+            {"name": "padel_MW", "short": "分子量(Da)", "cat": "物性"},
+            {"name": "padel_TPSA", "short": "極性表面積", "cat": "物性"},
+            {"name": "padel_ALogP", "short": "原子寄与法LogP", "cat": "物性"},
+            {"name": "padel_AMR", "short": "原子寄与法分子屈折率", "cat": "物性"},
+        ],
+        "接続性指数": [
+            {"name": "padel_Chi0", "short": "0次接続性指数", "cat": "接続性"},
+            {"name": "padel_Chi1", "short": "1次接続性指数", "cat": "接続性"},
+            {"name": "padel_Chi0v", "short": "0次価数接続性指数", "cat": "接続性"},
+            {"name": "padel_Chi1v", "short": "1次価数接続性指数", "cat": "接続性"},
+        ],
+        "情報理論記述子": [
+            {"name": "padel_IC0", "short": "原子種の情報エントロピー", "cat": "情報理論"},
+            {"name": "padel_SIC0", "short": "正規化情報含量", "cat": "情報理論"},
+        ],
+        "Barysz距離行列記述子": [
+            {"name": "padel_SpMAD_Dzm", "short": "質量加重距離行列の和", "cat": "Barysz"},
+            {"name": "padel_SpDiam_Dzm", "short": "質量加重距離行列の直径", "cat": "Barysz"},
+        ],
+        "2Dオートコレレーション": [
+            {"name": "padel_ATS1m", "short": "Moreau-Broto(1次,質量)", "cat": "自己相関"},
+            {"name": "padel_ATS1v", "short": "Moreau-Broto(1次,VdW)", "cat": "自己相関"},
+            {"name": "padel_ATS1e", "short": "Moreau-Broto(1次,電気陰性度)", "cat": "自己相関"},
+            {"name": "padel_ATS1p", "short": "Moreau-Broto(1次,分極率)", "cat": "自己相関"},
+        ],
+    }
+
+
 # ═══════════════════════════════════════════════════════════
 # 統合カタログ取得
 # ═══════════════════════════════════════════════════════════
@@ -517,6 +636,8 @@ ENGINE_CATALOG_MAP = {
     "Mordred": get_mordred_catalog,
     "Molfeat": get_molfeat_catalog,
     "COSMO-RS": get_cosmo_catalog,
+    "DescriptaStorus": get_descriptastorus_catalog,
+    "PaDEL": get_padel_catalog,
 }
 
 SUPPORTED_ENGINES = list(ENGINE_CATALOG_MAP.keys())
