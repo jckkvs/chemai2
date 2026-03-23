@@ -430,6 +430,12 @@ def main_page():
             "📂 データ設定", on_click=lambda: main_tabs.set_value("data")
         ).props("flat color=white align=left size=sm no-caps").classes("full-width")
         ui.button(
+            "🔬 EDA", on_click=lambda: main_tabs.set_value("eda")
+        ).props("flat color=white align=left size=sm no-caps").classes("full-width")
+        ui.button(
+            "⚙️ パイプライン", on_click=lambda: main_tabs.set_value("pipeline")
+        ).props("flat color=white align=left size=sm no-caps").classes("full-width")
+        ui.button(
             "📊 結果確認", on_click=lambda: main_tabs.set_value("results")
         ).props("flat color=white align=left size=sm no-caps").classes("full-width")
         ui.button(
@@ -459,6 +465,8 @@ def main_page():
         "active-color=cyan indicator-color=cyan align=left"
     ) as main_tabs:
         data_tab = ui.tab("data", label="📂 データ設定", icon="settings")
+        eda_tab = ui.tab("eda", label="🔬 EDA", icon="query_stats")
+        pipeline_tab = ui.tab("pipeline", label="⚙️ パイプライン", icon="tune")
         results_tab = ui.tab("results", label="📊 結果確認", icon="analytics")
         inverse_tab = ui.tab("inverse", label="🔮 逆解析", icon="find_replace")
 
@@ -468,6 +476,19 @@ def main_page():
         with ui.tab_panel(data_tab):
             from frontend_nicegui.components.data_tab import render_data_tab
             render_data_tab(state)
+
+        # ── EDAタブ ──
+        with ui.tab_panel(eda_tab):
+            from frontend_nicegui.components.eda_panel import render_eda_panel
+            render_eda_panel(state)
+
+        # ── パイプライン設定タブ ──
+        with ui.tab_panel(pipeline_tab):
+            from frontend_nicegui.components.leakage_check_ui import render_leakage_check_panel
+            render_leakage_check_panel(state)
+            ui.separator().classes("q-my-sm")
+            from frontend_nicegui.components.pipeline_config_ui import render_pipeline_config
+            render_pipeline_config(state)
 
         # ── 結果確認タブ ──
         with ui.tab_panel(results_tab):
