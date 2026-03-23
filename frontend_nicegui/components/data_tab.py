@@ -985,46 +985,10 @@ def _render_pipeline(state: dict) -> None:
             ui.table(columns=columns, rows=rows).classes("full-width").props("dense flat bordered")
 
     # ────────────────────────────────────────────
-    # 1. 交差検証設定
+    # 1. 交差検証設定（全20種CV対応・ドロップダウン不使用）
     # ────────────────────────────────────────────
-    ui.label("🔄 交差検証（CV）設定").classes("text-subtitle1")
-
-    with ui.row().classes("q-gutter-md items-end full-width"):
-        # CV方式
-        try:
-            from backend.models.cv_manager import _CV_REGISTRY
-            cv_options = {k: v["name"] for k, v in _CV_REGISTRY.items()}
-        except ImportError:
-            cv_options = {
-                "kfold": "K-Fold", "stratified_kfold": "Stratified K-Fold",
-                "repeated_kfold": "Repeated K-Fold", "logo": "Leave-One-Group-Out",
-                "group_kfold": "GroupKFold", "loo": "Leave-One-Out",
-                "timeseries": "TimeSeriesSplit",
-            }
-
-        cv_select = ui.select(
-            options=cv_options,
-            label="CV方式",
-            value=state.get("cv_key", "auto"),
-            on_change=lambda e: state.update({"cv_key": e.value}),
-        ).classes("w-48").tooltip(
-            "auto: タスクに応じて自動選択（回帰→KFold、分類→StratifiedKFold）\n"
-            "グループ系: グループ列の設定が必要"
-        )
-
-        # N分割
-        ui.number(
-            label="分割数", value=state.get("cv_folds", 5),
-            min=2, max=20, step=1,
-            on_change=lambda e: state.update({"cv_folds": int(e.value)}),
-        ).classes("w-24").tooltip("K-Fold等の分割数。通常3〜10。")
-
-        # タイムアウト
-        ui.number(
-            label="タイムアウト(秒)", value=state.get("timeout", 300),
-            min=30, max=3600, step=30,
-            on_change=lambda e: state.update({"timeout": int(e.value)}),
-        ).classes("w-28").tooltip("全体の制限時間。超過するとモデルをスキップ。")
+    from frontend_nicegui.components.cv_config_ui import render_cv_config
+    render_cv_config(state)
 
     ui.separator().classes("q-my-sm")
 
@@ -1271,37 +1235,93 @@ def _render_pipeline(state: dict) -> None:
 
 
 def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str) -> None:
-    """説明変数ごとの単調制約UI。"""
+    """説明変数ごとの単調制約UI — ダイアログベース。"""
+    from frontend_nicegui.components.dialog_manager import (
+        create_settings_dialog,
+        render_settings_summary,
+    )
+
     numeric_cols = [c for c in df.select_dtypes(include='number').columns
                     if c != target_col and c not in state.get("exclude_cols", [])]
 
     if not numeric_cols:
         return
 
-    with ui.expansion(
-        f"📐 単調制約（{len(numeric_cols)}数値列）", icon="trending_up",
-    ).classes("full-width q-mt-sm"):
+    if "monotonic_constraints" not in state:
+        state["monotonic_constraints"] = {}
+
+    constraints = state["monotonic_constraints"]
+
+    # サマリー情報
+    n_inc = sum(1 for v in constraints.values() if v == 1)
+    n_dec = sum(1 for v in constraints.values() if v == -1)
+    n_total = n_inc + n_dec
+
+    summary = [f"対象列: {len(numeric_cols)}個"]
+    if n_total > 0:
+        summary.append(f"↗ 増加: {n_inc}件, ↘ 減少: {n_dec}件")
+        # 代表例（最大3つ）
+        examples = [(c, v) for c, v in constraints.items() if v != 0][:3]
+        for c, v in examples:
+            sym = "↗" if v == 1 else "↘"
+            summary.append(f"  {sym} {c}")
+    else:
+        summary.append("制約なし（デフォルト）")
+
+    def _build_content():
         ui.label(
-            "各説明変数の目的変数に対する単調増加/減少の制約を設定できます。"
-            "XGBoost, LightGBM, monotonic kernel等で利用されます。デフォルトは制約なし。"
+            "⚠️ 上級者向け機能: ドメイン知識に基づき設定してください。"
+        ).classes("text-caption text-amber q-mb-sm")
+        ui.label(
+            "各説明変数の目的変数に対する単調増加/減少の制約を設定。"
+            "XGBoost, LightGBM, monotonic kernel等で利用されます。"
         ).classes("text-caption text-grey q-mb-sm")
 
-        if "monotonic_constraints" not in state:
-            state["monotonic_constraints"] = {}
+        # 一括操作
+        with ui.row().classes("q-gutter-sm q-mb-sm"):
+            ui.button(
+                "全て制約なし",
+                on_click=lambda: (
+                    constraints.clear(),
+                    ui.notify("全制約をリセット", type="info"),
+                ),
+            ).props("flat dense no-caps size=sm color=grey")
 
-        constraints = state["monotonic_constraints"]
-
-        # テーブル形式で表示
+        # 各列の制約設定（ラジオボタン方式）
         for col in numeric_cols:
             current = constraints.get(col, 0)
             with ui.row().classes("items-center q-gutter-xs full-width q-mb-xs"):
-                ui.label(col).classes("text-body2").style("width: 200px; overflow: hidden; text-overflow: ellipsis;")
-                sel = ui.select(
-                    options={0: "制約なし", 1: "↗ 単調増加", -1: "↘ 単調減少"},
+                ui.label(col).classes("text-body2").style(
+                    "width: 200px; overflow: hidden; text-overflow: ellipsis;"
+                    "white-space: nowrap;"
+                )
+                ui.radio(
+                    {0: "制約なし", 1: "↗ 単調増加", -1: "↘ 単調減少"},
                     value=current,
                     on_change=lambda e, c=col: constraints.update({c: e.value}),
-                ).props("dense outlined").classes("w-36")
-                sel.tooltip(f"{col}: 0=制約なし, 1=単調増加, -1=単調減少")
+                ).props("dense inline")
+
+    def _open_dialog():
+        dlg = create_settings_dialog(
+            title="📐 単調性制約設定",
+            icon="trending_up",
+            width="85vw",
+            max_width="800px",
+            content_builder=_build_content,
+            state=state,
+            snapshot_keys=["monotonic_constraints"],
+        )
+        dlg.open()
+
+    render_settings_summary(
+        icon="trending_up",
+        title="単調性制約",
+        summary_lines=summary,
+        button_label="⚙️ 制約設定",
+        on_click=_open_dialog,
+        badge_text=f"{n_total}件設定" if n_total > 0 else "なし",
+        badge_color="amber" if n_total > 0 else "grey",
+    )
 
 
 def _toggle_model(state: dict, key: str, checked: bool) -> None:

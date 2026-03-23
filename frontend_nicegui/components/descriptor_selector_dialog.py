@@ -199,126 +199,430 @@ def open_descriptor_detail_dialog(
 
 
 # ═══════════════════════════════════════════════════════════
-# 2. 選択済み記述子の一覧表示 + 個別ON/OFF
+# 2. 記述子一覧（グループフィルター+相関閾値+検索+ソート）
 # ═══════════════════════════════════════════════════════════
+
+def _classify_descriptor_group(col_name: str) -> str:
+    """記述子名からグループを自動分類する。"""
+    cl = col_name.lower()
+    if cl.startswith("morgan_r2") or cl.startswith("morgan2"):
+        return "morgan_r2"
+    if cl.startswith("morgan_r3") or cl.startswith("morgan3"):
+        return "morgan_r3"
+    if cl.startswith("morgan"):
+        return "morgan_other"
+    if cl.startswith("maccs"):
+        return "maccs"
+    if cl.startswith("avalon"):
+        return "avalon"
+    if cl.startswith("xtb_"):
+        return "xtb"
+    if cl.startswith("mu_") or cl.startswith("ln_gamma") or cl.startswith("cosmo_"):
+        return "cosmo"
+    if cl.startswith("mordred_") or cl.startswith("mrd_"):
+        return "mordred"
+    if cl.startswith("molfeat_"):
+        return "molfeat"
+    if cl.startswith("mol2vec_"):
+        return "mol2vec"
+    if cl.startswith("chemprop_"):
+        return "chemprop"
+    if cl.startswith("uma_"):
+        return "uma"
+    if cl.startswith("padel_"):
+        return "padel"
+    if cl.startswith("ds_"):
+        return "descriptastorus"
+    if cl.startswith("pka") or cl == "pKa_pred":
+        return "unipka"
+    if cl.startswith("joback_"):
+        return "group_contrib"
+    if cl.startswith("fr_"):
+        return "rdkit_functional"
+    if cl.startswith("gasteiger_"):
+        return "rdkit_charge"
+    if cl.startswith("molai_") or cl.startswith("cnn_pca_"):
+        return "molai"
+    # fallback
+    return "rdkit_property"
+
+
+_GROUP_DISPLAY = {
+    "rdkit_property":   {"label": "RDKit 物性記述子", "icon": "🧪", "default_on": True},
+    "rdkit_functional": {"label": "RDKit 官能基",     "icon": "⚗️", "default_on": True},
+    "rdkit_charge":     {"label": "RDKit 電荷",       "icon": "⚡", "default_on": True},
+    "molai":            {"label": "MolAI (CNN+PCA)",  "icon": "🧠", "default_on": True},
+    "xtb":              {"label": "xTB 量子化学",      "icon": "⚛️", "default_on": True},
+    "cosmo":            {"label": "COSMO-RS",          "icon": "🌊", "default_on": True},
+    "group_contrib":    {"label": "基団寄与法",         "icon": "🔗", "default_on": True},
+    "mordred":          {"label": "Mordred",           "icon": "🔬", "default_on": True},
+    "descriptastorus":  {"label": "DescriptaStorus",   "icon": "📊", "default_on": True},
+    "molfeat":          {"label": "Molfeat",           "icon": "🧬", "default_on": True},
+    "mol2vec":          {"label": "Mol2Vec",           "icon": "📝", "default_on": True},
+    "chemprop":         {"label": "Chemprop",          "icon": "🔴", "default_on": True},
+    "uma":              {"label": "UMA",               "icon": "🏛️", "default_on": True},
+    "padel":            {"label": "PaDEL",             "icon": "📦", "default_on": True},
+    "unipka":           {"label": "UniPKa",            "icon": "🔵", "default_on": True},
+    "morgan_r2":        {"label": "Morgan FP (r2)",    "icon": "🔵", "default_on": False},
+    "morgan_r3":        {"label": "Morgan FP (r3)",    "icon": "🔵", "default_on": False},
+    "morgan_other":     {"label": "Morgan FP (他)",    "icon": "🔵", "default_on": False},
+    "maccs":            {"label": "MACCS Keys",        "icon": "🟢", "default_on": True},
+    "avalon":           {"label": "Avalon FP",         "icon": "🟣", "default_on": True},
+}
+
 
 def render_selected_descriptors_panel(state: dict) -> None:
     """
-    現在選択されている記述子の一覧を表示し、
-    各記述子の使用/不使用をチェックボックスで個別に切り替えられるUI。
-    ダイアログ形式で表示する（画面が縦長にならないように）。
+    現在選択されている記述子の一覧を表示。
+    グループフィルター + 相関係数閾値 + 検索 + ソート + ページネーション。
     """
+    import numpy as np
+
     precalc_df = state.get("precalc_df")
     if precalc_df is None:
         return
 
     all_cols = list(precalc_df.columns)
-    # 現在の使用記述子リスト（未設定なら全部ON）
     if "active_descriptors" not in state:
         state["active_descriptors"] = list(all_cols)
 
     n_active = len(state["active_descriptors"])
     n_total = len(all_cols)
 
-    def _open_active_dialog():
+    # ── 相関係数を計算 ──
+    target_col = state.get("target_col", "")
+    df_main = state.get("df")
+    corr_map: dict[str, float] = {}
+    if df_main is not None and target_col and target_col in df_main.columns:
+        try:
+            target_vals = df_main[target_col].astype(float)
+            for col in all_cols:
+                if col in precalc_df.columns:
+                    try:
+                        c = float(precalc_df[col].astype(float).corr(target_vals))
+                        if np.isfinite(c):
+                            corr_map[col] = c
+                    except Exception:
+                        corr_map[col] = 0.0
+        except Exception:
+            pass
+
+    # ── グループ分類 ──
+    group_map: dict[str, str] = {}
+    group_counts: dict[str, int] = {}
+    for col in all_cols:
+        g = _classify_descriptor_group(col)
+        group_map[col] = g
+        group_counts[g] = group_counts.get(g, 0) + 1
+
+    def _open_descriptor_list_dialog():
+        # 状態管理
+        filter_state = {
+            "visible_groups": {
+                g for g, info in _GROUP_DISPLAY.items()
+                if info.get("default_on", True) and g in group_counts
+            },
+            "corr_threshold": 0.0,
+            "search_text": "",
+            "sort_by": "corr_desc",
+            "page": 1,
+            "rows_per_page": 50,
+        }
         active_set = set(state["active_descriptors"])
 
-        # カタログから説明を引く
-        desc_shorts: dict[str, str] = {}
-        for engine_name in SUPPORTED_ENGINES:
-            catalog = get_catalog(engine_name)
-            if catalog:
-                for cat_descs in catalog.values():
-                    for d in cat_descs:
-                        desc_shorts[d["name"]] = d.get("short", "")
-
-        cb_refs: list[tuple[str, Any]] = []
-
-        with ui.dialog() as dlg2, ui.card().classes("q-pa-md").style(
-            "width: 80vw; max-width: 1000px; max-height: 85vh;"
+        with ui.dialog() as dlg, ui.card().classes("q-pa-md").style(
+            "width: 92vw; max-width: 1200px; max-height: 90vh;"
         ):
+            # ── ヘッダー ──
             with ui.row().classes("items-center justify-between full-width q-mb-sm"):
-                ui.label("📋 使用する記述子を選択").classes("text-h6")
-                cnt_lbl = ui.label(f"{n_active}/{n_total} 使用中").classes(
-                    "text-caption text-cyan"
+                ui.label("📋 記述子一覧").classes("text-h6")
+                count_lbl = ui.label(f"{n_active}/{n_total} 使用中").classes(
+                    "text-subtitle2 text-cyan"
                 )
+                visible_lbl = ui.label("").classes("text-caption text-grey")
 
-            def _upd():
-                n = len([c for c in all_cols if c in active_set])
-                cnt_lbl.text = f"{n}/{n_total} 使用中"
+            # ── グループフィルター（折りたたみ） ──
+            with ui.expansion("🔍 表示フィルター", icon="filter_list").classes(
+                "full-width q-mb-sm"
+            ).props("dense"):
+                ui.label("グループ表示").classes("text-body2 text-bold q-mb-xs")
+                group_cbs: dict[str, Any] = {}
+                # 3列グリッド
+                with ui.element("div").style(
+                    "display:grid;grid-template-columns:repeat(3,1fr);gap:4px;"
+                ):
+                    for g_key in sorted(group_counts.keys(), key=lambda k: _GROUP_DISPLAY.get(k, {}).get("label", k)):
+                        info = _GROUP_DISPLAY.get(g_key, {"label": g_key, "icon": "📄", "default_on": True})
+                        cnt = group_counts.get(g_key, 0)
+                        visible = g_key in filter_state["visible_groups"]
+                        cb = ui.checkbox(
+                            f"{info['icon']} {info['label']} ({cnt})",
+                            value=visible,
+                        ).props("dense")
+                        group_cbs[g_key] = cb
 
-            with ui.row().classes("q-gutter-sm q-mb-sm"):
+                        def _toggle_group(e, gk=g_key):
+                            if e.value:
+                                filter_state["visible_groups"].add(gk)
+                            else:
+                                filter_state["visible_groups"].discard(gk)
+                            filter_state["page"] = 1
+                            _rebuild_table()
+
+                        cb.on_value_change(_toggle_group)
+
+                ui.separator().classes("q-my-xs")
+
+                # 相関係数閾値
+                with ui.row().classes("items-center q-gutter-sm"):
+                    ui.label("相関係数閾値: |r| ≧").classes("text-body2")
+                    corr_slider = ui.slider(
+                        min=0, max=0.9, step=0.05,
+                        value=filter_state["corr_threshold"],
+                    ).props("label-always dense").classes("col-4")
+                    corr_val_lbl = ui.label("0.00").classes("text-body2 text-bold").style("min-width:40px;")
+
+                    def _on_corr(e):
+                        filter_state["corr_threshold"] = float(e.value)
+                        corr_val_lbl.set_text(f"{float(e.value):.2f}")
+                        filter_state["page"] = 1
+                        _rebuild_table()
+
+                    corr_slider.on("update:model-value", _on_corr)
+
+                ui.separator().classes("q-my-xs")
+
+                # クイックアクション
+                with ui.row().classes("q-gutter-sm"):
+                    def _show_all_groups():
+                        for gk, cb in group_cbs.items():
+                            filter_state["visible_groups"].add(gk)
+                            cb.value = True
+                        _rebuild_table()
+
+                    def _hide_all_groups():
+                        filter_state["visible_groups"].clear()
+                        for gk, cb in group_cbs.items():
+                            cb.value = False
+                        _rebuild_table()
+
+                    def _high_corr_only():
+                        filter_state["corr_threshold"] = 0.3
+                        corr_slider.value = 0.3
+                        corr_val_lbl.set_text("0.30")
+                        for gk, cb in group_cbs.items():
+                            filter_state["visible_groups"].add(gk)
+                            cb.value = True
+                        _rebuild_table()
+
+                    ui.button("すべて表示", on_click=_show_all_groups).props(
+                        "outline size=sm no-caps color=cyan"
+                    )
+                    ui.button("すべて非表示", on_click=_hide_all_groups).props(
+                        "outline size=sm no-caps color=grey"
+                    )
+                    ui.button("高相関のみ (|r|≧0.3)", on_click=_high_corr_only).props(
+                        "outline size=sm no-caps color=teal"
+                    )
+
+            # ── 検索 + ソート + 全ON/OFF ──
+            with ui.row().classes("items-center q-gutter-sm full-width q-mb-sm"):
+                search_input = ui.input("検索", placeholder="記述子名で絞り込み").props(
+                    "dense outlined clearable"
+                ).style("width: 300px;")
+
+                def _on_search(e):
+                    filter_state["search_text"] = (e.value or "").lower()
+                    filter_state["page"] = 1
+                    _rebuild_table()
+
+                search_input.on("update:model-value", _on_search)
+
+                sort_toggle = ui.toggle(
+                    {"corr_desc": "|r| 降順", "corr_asc": "|r| 昇順", "name_asc": "名前順"},
+                    value=filter_state["sort_by"],
+                ).props("dense no-caps rounded size=sm")
+
+                def _on_sort(e):
+                    filter_state["sort_by"] = e.value
+                    _rebuild_table()
+
+                sort_toggle.on("update:model-value", _on_sort)
+
+                # 一括操作
                 def _all_on():
                     for c in all_cols:
                         active_set.add(c)
-                    for _, cb in cb_refs:
-                        cb.value = True
-                    _upd()
+                    _rebuild_table()
 
                 def _all_off():
                     active_set.clear()
-                    for _, cb in cb_refs:
-                        cb.value = False
-                    _upd()
+                    _rebuild_table()
 
-                ui.button("全ON", on_click=_all_on).props("outline size=sm no-caps color=cyan")
-                ui.button("全OFF", on_click=_all_off).props("outline size=sm no-caps color=grey")
-
-                # 検索ボックス
-                search_input = ui.input("検索", placeholder="記述子名で絞り込み").props(
-                    "dense outlined clearable"
-                ).style("width: 250px;")
+                ui.button("全ON", on_click=_all_on).props("flat dense size=sm no-caps color=cyan")
+                ui.button("全OFF", on_click=_all_off).props("flat dense size=sm no-caps color=grey")
 
             ui.separator()
 
-            with ui.scroll_area().style("max-height: 55vh;"):
-                rows_container = ui.column().classes("full-width q-gutter-xs")
-                with rows_container:
-                    for col_name in all_cols:
-                        short = desc_shorts.get(col_name, "")
-                        with ui.row().classes("items-center q-gutter-xs").style(
-                            "min-height: 26px;"
-                        ) as row_el:
-                            cb = ui.checkbox(
-                                col_name,
-                                value=(col_name in active_set),
-                            ).props("dense").style("min-width: 250px;")
+            # ── テーブルコンテナ ──
+            table_container = ui.column().classes("full-width")
+            page_container = ui.row().classes("items-center justify-center q-gutter-sm q-mt-sm")
 
-                            def _ch(e, n=col_name):
-                                if e.value:
-                                    active_set.add(n)
-                                else:
-                                    active_set.discard(n)
-                                _upd()
+            def _get_filtered_rows() -> list[dict]:
+                """フィルター/ソート/検索適用後の行データを返す。"""
+                rows = []
+                search = filter_state["search_text"]
+                threshold = filter_state["corr_threshold"]
 
-                            cb.on_value_change(_ch)
-                            cb_refs.append((col_name, cb))
+                for col in all_cols:
+                    g = group_map.get(col, "rdkit_property")
+                    if g not in filter_state["visible_groups"]:
+                        continue
 
-                            if short:
-                                ui.label(short).classes(
-                                    "text-caption text-grey"
-                                ).style("font-size: 0.7rem;")
+                    r = abs(corr_map.get(col, 0.0))
+                    if r < threshold:
+                        continue
+
+                    if search and search not in col.lower():
+                        continue
+
+                    g_info = _GROUP_DISPLAY.get(g, {"label": g, "icon": "📄"})
+                    rows.append({
+                        "name": col,
+                        "corr": corr_map.get(col, 0.0),
+                        "abs_corr": abs(corr_map.get(col, 0.0)),
+                        "group": g,
+                        "group_label": f"{g_info['icon']} {g_info['label']}",
+                        "active": col in active_set,
+                    })
+
+                # ソート
+                sb = filter_state["sort_by"]
+                if sb == "corr_desc":
+                    rows.sort(key=lambda r: r["abs_corr"], reverse=True)
+                elif sb == "corr_asc":
+                    rows.sort(key=lambda r: r["abs_corr"])
+                else:
+                    rows.sort(key=lambda r: r["name"])
+
+                return rows
+
+            def _rebuild_table():
+                """テーブルを再構築する。"""
+                table_container.clear()
+                page_container.clear()
+
+                rows = _get_filtered_rows()
+                n_filtered = len(rows)
+                rpp = filter_state["rows_per_page"]
+                total_pages = max(1, (n_filtered + rpp - 1) // rpp)
+                page = min(filter_state["page"], total_pages)
+                filter_state["page"] = page
+                start = (page - 1) * rpp
+                end = start + rpp
+                page_rows = rows[start:end]
+
+                # カウント更新
+                n_act = len([c for c in all_cols if c in active_set])
+                count_lbl.set_text(f"{n_act}/{n_total} 使用中")
+                visible_lbl.set_text(f"表示中: {n_filtered} 件 / {n_total} 件")
+
+                with table_container:
+                    with ui.scroll_area().style("max-height: 50vh;"):
+                        # テーブルヘッダー
+                        columns = [
+                            {"name": "active", "label": "✓", "field": "active", "style": "width:40px;"},
+                            {"name": "name", "label": "記述子名", "field": "name", "sortable": True},
+                            {"name": "corr", "label": "相関係数", "field": "corr_fmt", "sortable": True},
+                            {"name": "group_label", "label": "グループ", "field": "group_label"},
+                        ]
+                        # 相関のフォーマット
+                        table_rows = []
+                        for r in page_rows:
+                            table_rows.append({
+                                "name": r["name"],
+                                "corr_fmt": f'{r["corr"]:.4f}' if r["corr"] != 0.0 else "-",
+                                "group_label": r["group_label"],
+                                "active": "✅" if r["active"] else "❌",
+                            })
+
+                        tbl = ui.table(
+                            columns=columns,
+                            rows=table_rows,
+                            row_key="name",
+                        ).classes("full-width").props(
+                            "dense flat bordered virtual-scroll"
+                        )
+
+                        # 行クリックで toggle
+                        def _on_row_click(e):
+                            row_name = e.args.get("name") if isinstance(e.args, dict) else None
+                            if not row_name:
+                                try:
+                                    row_name = e.args[1]["name"]
+                                except Exception:
+                                    return
+                            if row_name in active_set:
+                                active_set.discard(row_name)
+                            else:
+                                active_set.add(row_name)
+                            _rebuild_table()
+
+                        tbl.on("row-click", _on_row_click)
+
+                # ページネーション
+                with page_container:
+                    if total_pages > 1:
+                        def _go_page(p):
+                            filter_state["page"] = p
+                            _rebuild_table()
+
+                        if page > 1:
+                            ui.button("◀", on_click=lambda: _go_page(page - 1)).props(
+                                "flat dense size=sm"
+                            )
+
+                        # ページ番号表示（最大7個）
+                        start_p = max(1, page - 3)
+                        end_p = min(total_pages, page + 3)
+                        for p in range(start_p, end_p + 1):
+                            if p == page:
+                                ui.badge(str(p), color="cyan").props("rounded")
+                            else:
+                                ui.button(
+                                    str(p), on_click=lambda pp=p: _go_page(pp)
+                                ).props("flat dense size=sm")
+
+                        if page < total_pages:
+                            ui.button("▶", on_click=lambda: _go_page(page + 1)).props(
+                                "flat dense size=sm"
+                            )
+
+                        ui.label(f"({page}/{total_pages} ページ)").classes("text-caption text-grey")
+
+            # 初期テーブル構築
+            _rebuild_table()
 
             ui.separator()
             with ui.row().classes("justify-end q-gutter-sm"):
-                def _apply2():
+                def _apply():
                     state["active_descriptors"] = [c for c in all_cols if c in active_set]
                     ui.notify(
                         f"✅ {len(state['active_descriptors'])}/{n_total} 記述子を使用",
                         type="positive",
                     )
-                    dlg2.close()
+                    dlg.close()
 
-                ui.button("キャンセル", on_click=dlg2.close).props("flat no-caps color=grey")
-                ui.button("適用", on_click=_apply2).props("no-caps color=cyan")
+                ui.button("キャンセル", on_click=dlg.close).props("flat no-caps color=grey")
+                ui.button("適用", on_click=_apply).props("no-caps color=cyan")
 
-        dlg2.open()
+        dlg.open()
 
     # メインUIに表示するボタン
     with ui.row().classes("items-center q-gutter-sm"):
         ui.button(
-            f"📋 使用記述子を確認・変更 ({n_active}/{n_total})",
-            on_click=_open_active_dialog,
+            f"📋 記述子一覧・フィルター ({n_active}/{n_total})",
+            on_click=_open_descriptor_list_dialog,
         ).props("outline no-caps color=cyan")
 
 

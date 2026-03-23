@@ -199,13 +199,34 @@ class XTBAdapter(BaseChemAdapter):
     引用: Bannwarth et al., JCTC 2019, DOI: 10.1021/acs.jctc.8b01176
     API:
         gfn (int): GFN-xTB レベル（デフォルト 2）
+        calc_type (str): "opt"(構造最適化, デフォルト) or "sp"(単点計算)
+        convergence (str): 収束基準 ("crude"/"sloppy"/"loose"/"normal"/"tight"/"vtight")
+        solvent (str): 溶媒モデル名（"none"=気相, "water", "methanol"等 → --alpb)
+        timeout (int): 1分子あたりのタイムアウト秒数（デフォルト300）
+        max_retries (int): 失敗時のリトライ回数（デフォルト3）
     前提:
         - `xtb` バイナリが PATH に存在すること
         - conda install -c conda-forge xtb  でインストール可能
     """
 
-    def __init__(self, gfn: int = 2):
+    def __init__(
+        self,
+        gfn: int = 2,
+        calc_type: str = "opt",   # デフォルトを構造最適化に変更（要件2.1）
+        convergence: str = "normal",
+        solvent: str = "none",
+        timeout: int = 300,
+        max_retries: int = 3,
+    ):
         self.gfn = gfn
+        # 科学的根拠: 構造最適化によりSMILESから機械的に生成した初期構造の
+        # 歪みが解消され、電子状態記述子の精度が向上する。
+        # GFN2-xTB の構造最適化は Bannwarth et al. JCTC 2019 で検証済み。
+        self.calc_type = calc_type
+        self.convergence = convergence
+        self.solvent = solvent
+        self.timeout = timeout
+        self.max_retries = max_retries
 
     @property
     def name(self) -> str:
@@ -215,6 +236,8 @@ class XTBAdapter(BaseChemAdapter):
     def description(self) -> str:
         return (
             f"XTB GFN{self.gfn}-xTB による量子化学的電子状態・エネルギー記述子。\n"
+            f"計算タイプ: {self.calc_type} / 収束: {self.convergence} / "
+            f"溶媒: {self.solvent}\n"
             "有効化: conda install -c conda-forge xtb"
         )
 
@@ -234,9 +257,8 @@ class XTBAdapter(BaseChemAdapter):
                 return False
 
         # PATH にない場合は tools/ 配下の同梱バイナリを探す
-        # このファイル: backend/chem/xtb_adapter.py → プロジェクトルート: ../../
-        here = pathlib.Path(__file__).resolve().parent  # backend/chem/
-        project_root = here.parent.parent               # chemai2/
+        here = pathlib.Path(__file__).resolve().parent
+        project_root = here.parent.parent
         candidates = [
             project_root / "tools" / "xtb-6.7.1" / "bin",
             project_root / "tools" / "xtb" / "bin",
@@ -244,7 +266,6 @@ class XTBAdapter(BaseChemAdapter):
         for bin_dir in candidates:
             xtb_exe = bin_dir / ("xtb.exe" if os.name == "nt" else "xtb")
             if xtb_exe.exists():
-                # PATH へ自動追加（このプロセス内）
                 os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
                 logger.info("XTB バイナリを自動検出して PATH に追加しました: %s", bin_dir)
                 try:
@@ -255,6 +276,45 @@ class XTBAdapter(BaseChemAdapter):
 
         return False
 
+    def _build_cmd(
+        self,
+        xyz_path: str,
+        charge: int,
+        uhf: int,
+        calc_type: str | None = None,
+        convergence: str | None = None,
+        solvent: str | None = None,
+    ) -> list[str]:
+        """xtb コマンドライン引数を構築する。"""
+        ct = calc_type or self.calc_type
+        conv = convergence or self.convergence
+        solv = solvent or self.solvent
+
+        cmd = ["xtb", xyz_path, f"--gfn{self.gfn}"]
+
+        # 計算タイプ
+        if ct == "opt":
+            cmd.append("--opt")
+            # 収束基準を付加（"normal" はxtbデフォルトなので省略可だが、明示）
+            if conv and conv != "normal":
+                cmd.append(conv)
+        else:
+            cmd.append("--sp")
+
+        # 電荷
+        cmd += ["--chrg", str(charge)]
+
+        # 不対電子
+        if uhf > 0:
+            cmd += ["--uhf", str(uhf)]
+
+        # 溶媒モデル（ALPB: Analytical Linearized Poisson-Boltzmann）
+        # 科学的根拠: ALPBは暗黙溶媒モデルとしてxtb 6.4+で推奨。
+        # Ehlert et al., J. Chem. Phys. 2021
+        if solv and solv.lower() not in ("none", "gas", "vacuum", ""):
+            cmd += ["--alpb", solv]
+
+        return cmd
 
     def compute(
         self,
@@ -267,11 +327,13 @@ class XTBAdapter(BaseChemAdapter):
         SMILES リストから XTB 量子化学記述子を計算する。
 
         Implements: §3.9 XTB計算フロー
+        デフォルトで構造最適化(--opt)を実行。失敗時はリトライ（収束基準を緩和）。
+
         Args:
             smiles_list: 入力 SMILES のリスト
             selected_descriptors: 使用する記述子名（None = 全件）
-            charge_config_store: ChargeConfigStore インスタンス。
-                None のとき、SMILES から形式電荷を自動読取し、スピン=1（閉殻）を使用。
+            charge_config_store: ChargeConfigStore インスタンス
+            **kwargs: calc_type, convergence, solvent を上書き可能
         Returns:
             DescriptorResult: xtb_* 列からなる DataFrame
         """
@@ -283,8 +345,16 @@ class XTBAdapter(BaseChemAdapter):
             if selected_descriptors else all_names
         )
 
+        # kwargs からオーバーライド
+        calc_type = kwargs.get("calc_type", self.calc_type)
+        convergence = kwargs.get("convergence", self.convergence)
+        solvent = kwargs.get("solvent", self.solvent)
+
         rows: list[dict] = []
         failed_indices: list[int] = []
+
+        # リトライ時の収束基準フォールバック順序
+        _CONVERGENCE_FALLBACK = ["normal", "loose", "sloppy", "crude"]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             for i, smi in enumerate(smiles_list):
@@ -295,15 +365,13 @@ class XTBAdapter(BaseChemAdapter):
                         charge = charge_config_store.resolve_charge(smi)
                         spin   = charge_config_store.resolve_spin(smi)
                         cfg    = charge_config_store.get_config(smi)
-                        # プロトン化変換を適用してから3D構造を生成
                         from backend.chem.protonation import apply_protonation
                         smi_for_xtb = apply_protonation(smi, cfg)
-                        uhf = spin - 1  # 不対電子数
+                        uhf = spin - 1
                     else:
-                        # デフォルト: SMILESから形式電荷を自動読取
                         from backend.chem.charge_config import _read_smiles_formal_charge
                         charge = _read_smiles_formal_charge(smi)
-                        uhf = 0  # 閉殻
+                        uhf = 0
                         smi_for_xtb = smi
 
                     xyz = _smiles_to_xyz(smi_for_xtb, charge=charge)
@@ -314,36 +382,100 @@ class XTBAdapter(BaseChemAdapter):
                     with open(xyz_path, "w") as f:
                         f.write(xyz)
 
-                    # xtb single-point 計算（電荷・スピンを明示的に指定）
-                    cmd = ["xtb", xyz_path, f"--gfn{self.gfn}", "--sp",
-                           "--chrg", str(charge)]
-                    if uhf > 0:
-                        cmd += ["--uhf", str(uhf)]
+                    # リトライ機構（収束基準を段階的に緩和）
+                    parsed = {}
+                    success = False
+                    current_conv = convergence
 
-                    logger.debug(
-                        "XTB cmd: %s (chrg=%d, uhf=%d)",
-                        " ".join(cmd[:4]), charge, uhf,
-                    )
-
-                    result = subprocess.run(
-                        cmd,
-                        cwd=tmpdir,
-                        capture_output=True,
-                        text=True,
-                        timeout=120,  # 荷電分子は収束に時間がかかる場合がある
-                    )
-                    if result.returncode != 0:
-                        logger.warning(
-                            "XTB 非0終了 (idx=%d, chrg=%d, uhf=%d): %s",
-                            i, charge, uhf, result.stderr[-200:],
+                    for attempt in range(self.max_retries):
+                        cmd = self._build_cmd(
+                            xyz_path, charge, uhf,
+                            calc_type=calc_type,
+                            convergence=current_conv,
+                            solvent=solvent,
                         )
-                    parsed = _parse_xtb_output(result.stdout)
+
+                        logger.debug(
+                            "XTB cmd (attempt %d/%d): %s",
+                            attempt + 1, self.max_retries,
+                            " ".join(cmd[:6]),
+                        )
+
+                        try:
+                            result = subprocess.run(
+                                cmd,
+                                cwd=tmpdir,
+                                capture_output=True,
+                                text=True,
+                                timeout=self.timeout,
+                            )
+                            if result.returncode == 0:
+                                parsed = _parse_xtb_output(result.stdout)
+                                success = True
+                                break
+                            else:
+                                logger.warning(
+                                    "XTB 非0終了 (idx=%d, attempt=%d, conv=%s): %s",
+                                    i, attempt + 1, current_conv,
+                                    result.stderr[-200:] if result.stderr else "no stderr",
+                                )
+                                # 収束失敗の場合、基準を緩和してリトライ
+                                if calc_type == "opt":
+                                    conv_idx = _CONVERGENCE_FALLBACK.index(current_conv) if current_conv in _CONVERGENCE_FALLBACK else 0
+                                    if conv_idx + 1 < len(_CONVERGENCE_FALLBACK):
+                                        current_conv = _CONVERGENCE_FALLBACK[conv_idx + 1]
+                                        logger.info(
+                                            "XTB リトライ: 収束基準を '%s' に緩和 (idx=%d)",
+                                            current_conv, i,
+                                        )
+                                        # XYZ ファイルを再書き込み（最適化途中の構造がある場合）
+                                        opt_xyz = os.path.join(tmpdir, "xtbopt.xyz")
+                                        if os.path.exists(opt_xyz):
+                                            import shutil as _shutil
+                                            _shutil.copy2(opt_xyz, xyz_path)
+                                    else:
+                                        # 全基準で失敗 → sp にフォールバック
+                                        calc_type = "sp"
+                                        current_conv = "normal"
+                                        logger.info("XTB: --opt 全基準失敗 → --sp にフォールバック (idx=%d)", i)
+                                else:
+                                    break  # sp でも失敗ならリトライ打ち切り
+
+                        except subprocess.TimeoutExpired:
+                            logger.warning(
+                                "XTB タイムアウト (%ds): attempt=%d, idx=%d, smi=%s",
+                                self.timeout, attempt + 1, i, smi[:30],
+                            )
+                            # タイムアウト時も sp にフォールバック
+                            if calc_type == "opt" and attempt < self.max_retries - 1:
+                                calc_type = "sp"
+                                logger.info("XTB: タイムアウト → --sp にフォールバック (idx=%d)", i)
+                            else:
+                                break
+
+                    if not success and not parsed:
+                        # 最終手段: sp で1回だけ実行
+                        try:
+                            cmd_sp = self._build_cmd(
+                                xyz_path, charge, uhf,
+                                calc_type="sp", convergence="normal", solvent=solvent,
+                            )
+                            result_sp = subprocess.run(
+                                cmd_sp, cwd=tmpdir,
+                                capture_output=True, text=True,
+                                timeout=120,
+                            )
+                            if result_sp.returncode == 0:
+                                parsed = _parse_xtb_output(result_sp.stdout)
+                            else:
+                                failed_indices.append(i)
+                        except Exception:
+                            failed_indices.append(i)
+
                     for k in col_names:
                         if k in parsed:
                             row[k] = parsed[k]
-                except subprocess.TimeoutExpired:
-                    logger.warning("XTB タイムアウト: idx=%d smi=%s", i, smi[:30])
-                    failed_indices.append(i)
+
                 except Exception as e:
                     logger.warning("XTB 計算失敗: idx=%d err=%s", i, e)
                     failed_indices.append(i)
@@ -355,7 +487,12 @@ class XTBAdapter(BaseChemAdapter):
             smiles_list=smiles_list,
             failed_indices=failed_indices,
             adapter_name=self.name,
-            metadata={"gfn": self.gfn},
+            metadata={
+                "gfn": self.gfn,
+                "calc_type": self.calc_type,
+                "convergence": self.convergence,
+                "solvent": self.solvent,
+            },
         )
 
     def get_descriptor_names(self) -> list[str]:
@@ -372,3 +509,4 @@ class XTBAdapter(BaseChemAdapter):
             )
             for name, meaning in _XTB_DESCRIPTORS.items()
         ]
+

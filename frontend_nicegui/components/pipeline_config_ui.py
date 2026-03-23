@@ -302,13 +302,14 @@ def _tab_selector(state: dict) -> None:
                     min=1, max=500, step=1,
                     on_change=lambda e: state.update({"_pg_kbest_k": int(e.value)}),
                 ).props("outlined dense").classes("col-4")
-                ui.select(
-                    ["f_regression", "mutual_info_regression", "r_regression",
-                     "f_classif", "mutual_info_classif"],
+                ui.label("score_func").classes("text-caption text-bold")
+                ui.radio(
+                    {"f_regression": "f_regression", "mutual_info_regression": "mutual_info_regression",
+                     "r_regression": "r_regression", "f_classif": "f_classif",
+                     "mutual_info_classif": "mutual_info_classif"},
                     value=state.get("_pg_kbest_sf", "f_regression"),
-                    label="score_func",
                     on_change=lambda e: state.update({"_pg_kbest_sf": e.value}),
-                ).props("outlined dense").classes("col-6")
+                ).props("dense inline")
 
     # Boruta パラメータ
     if "boruta" in state.get("_pg_selectors", []):
@@ -446,23 +447,53 @@ def _render_combo_summary(state: dict) -> None:
 def render_pipeline_config(state: dict) -> None:
     """パイプライン全設定UIをレンダリングする。
 
-    7ステップのタブ形式で全パイプラインを設定。
-    全組み合わせ数をリアルタイム表示。
+    メイン画面にはサマリーカード＋ダイアログ起動ボタンを表示。
+    7ステップの詳細設定はダイアログ内に配置。
     """
-    with ui.card().classes("full-width q-pa-md").style(
-        "border:1px solid rgba(0,188,212,0.3);border-radius:12px;"
-        "background:rgba(0,20,40,0.25);"
-    ):
-        with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
-            ui.icon("tune", color="cyan").classes("text-h5")
-            ui.label("Pipeline 全設定（STEP 0〜6）").classes("text-h6")
+    from frontend_nicegui.components.dialog_manager import (
+        create_settings_dialog,
+        render_settings_summary,
+    )
 
+    # 組み合わせ数計算
+    n_imp = max(1, len(state.get("_pg_num_imputers", ["mean"])))
+    n_scl = max(1, len(state.get("_pg_num_scalers", ["standard"])))
+    n_ci = max(1, len(state.get("_pg_cat_imputers", ["most_frequent"])))
+    n_le = max(1, len(state.get("_pg_low_encoders", ["onehot"])))
+    n_bi = max(1, len(state.get("_pg_bin_imputers", ["most_frequent"])))
+    n_eng = max(1, len(state.get("_pg_engineer", ["none"])))
+    n_sel = max(1, len(state.get("_pg_selectors", ["none"])))
+    n_est = max(1, len(state.get("selected_models", [])))
+    n_total = n_imp * n_scl * n_ci * n_le * n_bi * n_eng * n_sel * n_est
+
+    # ステータス
+    if n_total <= 50:
+        status_text = "✅ 適切"
+        status_color = "teal"
+    elif n_total <= 200:
+        status_text = "⚠️ やや多い"
+        status_color = "amber"
+    else:
+        status_text = "🔴 多すぎ"
+        status_color = "red"
+
+    # サマリー行
+    summary = [
+        f"🔢 評価パイプライン数: {n_total:,} 通り ({status_text})",
+        f"数値: imp×{n_imp} scl×{n_scl} / カテゴリ: enc×{n_le} / 特徴: eng×{n_eng} sel×{n_sel}",
+        f"推定器: {n_est}個選択",
+    ]
+    excl = state.get("exclude_cols", [])
+    if excl:
+        summary.append(f"除外列: {len(excl)}個")
+
+    def _build_dialog_content():
         ui.label(
             "ステップをタブで切替え → 各ステップでアルゴリズムを選択。"
             "複数選択した場合は全組み合わせを自動評価。"
         ).classes("text-caption text-grey q-mb-sm")
 
-        # ── 7ステップタブ ──
+        # 7ステップタブ
         with ui.tabs().classes("full-width").props(
             "dense no-caps active-color=cyan indicator-color=cyan"
         ) as pg_tabs:
@@ -490,6 +521,39 @@ def render_pipeline_config(state: dict) -> None:
             with ui.tab_panel("pg_est"):
                 _tab_estimator(state)
 
-        # ── 組み合わせ数サマリー ──
+        # 組み合わせ数サマリー
         ui.separator().classes("q-my-sm")
         _render_combo_summary(state)
+
+    def _open_dialog():
+        snapshot_keys = [
+            "exclude_cols",
+            "_pg_num_imputers", "_pg_num_scalers",
+            "_pg_cat_imputers", "_pg_low_encoders", "_pg_high_encoders",
+            "_pg_bin_imputers", "_pg_bin_encoders",
+            "_pg_engineer", "_pg_poly_degree", "_pg_poly_ia",
+            "_pg_selectors", "_pg_lasso_alpha", "_pg_lasso_mi",
+            "_pg_kbest_k", "_pg_kbest_sf",
+            "_pg_boruta_n", "_pg_boruta_mi",
+            "selected_models",
+        ]
+        dlg = create_settings_dialog(
+            title="⚙️ Pipeline 全設定（STEP 0〜6）",
+            icon="tune",
+            width="90vw",
+            max_width="1100px",
+            content_builder=_build_dialog_content,
+            state=state,
+            snapshot_keys=snapshot_keys,
+        )
+        dlg.open()
+
+    render_settings_summary(
+        icon="tune",
+        title="Pipeline 全設定",
+        summary_lines=summary,
+        button_label="⚙️ パイプライン設定を変更",
+        on_click=_open_dialog,
+        badge_text=f"{n_total:,}通り",
+        badge_color=status_color,
+    )

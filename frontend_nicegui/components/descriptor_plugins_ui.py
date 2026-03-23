@@ -174,7 +174,7 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
                     smiles_list = state["df"][state["smiles_col"]].dropna().tolist()
                     target_name = state.get("target_col", "")
 
-                    # 全利用可能エンジンをON
+                    # 全利用可能エンジンをON（MolAI+PCA を含む）
                     engine_flags = {}
                     for eng in _ENGINE_INFO:
                         key = f"use_{eng['cls'].replace('Adapter', '').lower()}"
@@ -363,7 +363,7 @@ def _ensure_default_sets(state: dict) -> None:
         sets = state["descriptor_sets"]
 
         # ─── セットA: 🧠 MolAI+PCA ───
-        dl_prefixes = ("molai_", "chemprop_", "mol2vec_", "uma_", "molfeat_")
+        dl_prefixes = ("molai_", "cnn_pca_", "chemprop_", "mol2vec_", "uma_", "molfeat_")
         dl_descs = [d for d in all_descs if d.lower().startswith(dl_prefixes)]
         if dl_descs:
             max_dl = min(n_samples // 5, len(dl_descs), 50)
@@ -1744,7 +1744,15 @@ def _group_fp_descriptors(desc_names: list[str]) -> tuple[list[str], dict[str, l
 
 
 def _render_descriptor_table(state: dict) -> None:
-    """計算済み記述子の一覧テーブル。相関・意味・カーディナリティを表示。"""
+    """計算済み記述子の一覧 — 3層構造UI。
+
+    第1層: 正負TOP5サマリーバー（常に表示）
+    第2層: グループ別集計（折りたたみ）
+    第3層: 詳細テーブル（折りたたみ、検索+フィルター+バー表示）
+    """
+    import numpy as np
+    from scipy import stats as sp_stats
+
     precalc_df = state.get("precalc_df")
     if precalc_df is None:
         return
@@ -1754,82 +1762,69 @@ def _render_descriptor_table(state: dict) -> None:
     all_descs = list(precalc_df.columns)
     n_total = len(all_descs)
 
-    # ── 相関係数の計算 ──
-    corr_dict: dict[str, float] = {}
+    # ── 相関係数の計算（符号付き）──
+    corr_signed: dict[str, float] = {}
+    corr_abs: dict[str, float] = {}
+    p_values: dict[str, float] = {}
     if target_col and df is not None and target_col in df.columns:
         try:
             target_s = df[target_col]
             if pd.api.types.is_numeric_dtype(target_s):
-                aligned = target_s.iloc[:len(precalc_df)]
-                corr_dict = precalc_df.iloc[:len(aligned)].corrwith(
-                    aligned.reset_index(drop=True), method="pearson"
-                ).abs().dropna().to_dict()
+                aligned = target_s.iloc[:len(precalc_df)].reset_index(drop=True)
+                for col in all_descs:
+                    try:
+                        vals = precalc_df[col].astype(float).iloc[:len(aligned)]
+                        mask = np.isfinite(vals) & np.isfinite(aligned)
+                        if mask.sum() < 5:
+                            continue
+                        r, p = sp_stats.pearsonr(vals[mask], aligned[mask])
+                        if np.isfinite(r):
+                            corr_signed[col] = float(r)
+                            corr_abs[col] = abs(float(r))
+                            p_values[col] = float(p)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
-    # ── 推薦記述子の名前セット ──
+    # ── FPグループ化 ──
+    non_fp, fp_groups = _group_fp_descriptors(all_descs)
+
+    # ── グループ分類 ──
+    from frontend_nicegui.components.descriptor_selector_dialog import (
+        _classify_descriptor_group, _GROUP_DISPLAY,
+    )
+    group_map: dict[str, str] = {}
+    group_members: dict[str, list[str]] = {}
+    for col in all_descs:
+        g = _classify_descriptor_group(col)
+        group_map[col] = g
+        group_members.setdefault(g, []).append(col)
+
+    # ── 推薦記述子 ──
     rec_names = set()
     applied_rec = state.get("_applied_recommendation")
     if applied_rec:
         rec_names = {d.name for d in applied_rec.descriptors}
 
-    # ── 記述子メタ情報（recommender.pyから取得）──
-    desc_meta: dict[str, dict] = {}
-    try:
-        from backend.chem.recommender import get_all_target_recommendations
-        for rec in get_all_target_recommendations():
-            for d in rec.descriptors:
-                if d.name not in desc_meta:
-                    desc_meta[d.name] = {
-                        "meaning": d.meaning,
-                        "category": d.category,
-                        "library": d.library,
-                    }
-    except ImportError:
-        pass
-
-    # ── カタログ情報でフォールバック補完 ──
-    from frontend_nicegui.components.descriptor_catalog import (
-        get_catalog as _gc, SUPPORTED_ENGINES as _se,
-    )
-    for _e in _se:
-        _c = _gc(_e)
-        if _c:
-            for _cat_name, _cat_items in _c.items():
-                for _ci in _cat_items:
-                    dname = _ci["name"]
-                    if dname.startswith("_"):
-                        continue
-                    if dname not in desc_meta:
-                        desc_meta[dname] = {
-                            "meaning": _ci.get("short", ""),
-                            "category": _ci.get("cat", _cat_name),
-                            "library": _e,
-                        }
-                    elif not desc_meta[dname].get("meaning"):
-                        desc_meta[dname]["meaning"] = _ci.get("short", "")
-
-    # ── 記述子ごとのカーディナリティ ──
-    cardinality: dict[str, int] = {}
-    try:
-        cardinality = {col: int(precalc_df[col].nunique()) for col in all_descs}
-    except Exception:
-        pass
-
     # ── 選択状態 ──
     selected = set(state.get("selected_descriptors", all_descs))
 
-    # ── ヘッダー行 ──
+    # ═══════════════════════════════════════════════
+    # ヘッダー + 一括操作
+    # ═══════════════════════════════════════════════
     with ui.card().classes("full-width q-pa-md q-mb-sm glass-card"):
         with ui.row().classes("items-center q-gutter-sm full-width"):
             ui.icon("table_chart").classes("text-cyan text-h6")
             ui.label(f"記述子一覧: {n_total}個計算済み").classes("text-subtitle1")
-            if corr_dict:
-                ui.badge(f"|r|計算済み ({len(corr_dict)}列)", color="teal").props("outline")
+            if corr_signed:
+                ui.badge(
+                    f"|r|計算済み ({len(corr_signed)}列)", color="teal",
+                ).props("outline")
 
         ui.separator().classes("q-my-xs")
 
-        # ── 選択操作ボタン ──
+        # 一括操作
         with ui.row().classes("q-gutter-sm q-mb-sm"):
             if applied_rec:
                 ui.chip(
@@ -1837,8 +1832,10 @@ def _render_descriptor_table(state: dict) -> None:
                     icon="auto_awesome", color="cyan",
                 ).props("outline dense")
 
-            if corr_dict:
-                sorted_descs = sorted(all_descs, key=lambda d: corr_dict.get(d, 0), reverse=True)
+            if corr_abs:
+                sorted_descs = sorted(
+                    all_descs, key=lambda d: corr_abs.get(d, 0), reverse=True,
+                )
 
                 def _select_top(n: int, descs=sorted_descs):
                     state["selected_descriptors"] = descs[:n]
@@ -1853,114 +1850,334 @@ def _render_descriptor_table(state: dict) -> None:
                 ui.button("上位50件", on_click=lambda: _select_top(50)).props(
                     "outline size=sm no-caps color=grey"
                 )
+                ui.button(
+                    "高相関のみ(|r|≧0.3)",
+                    on_click=lambda: (
+                        state.update({
+                            "selected_descriptors": [
+                                d for d in all_descs if corr_abs.get(d, 0) >= 0.3
+                            ]
+                        }),
+                        ui.notify(
+                            f"✅ |r|≧0.3: {len([d for d in all_descs if corr_abs.get(d,0)>=0.3])}件を選択",
+                            type="positive",
+                        ),
+                    ),
+                ).props("outline size=sm no-caps color=teal")
 
             ui.button(
-                "全選択", on_click=lambda: state.update({"selected_descriptors": all_descs})
-            ).props("flat size=sm no-caps color=grey")
+                "全選択 (ALL SET)",
+                on_click=lambda: state.update({"selected_descriptors": list(all_descs)}),
+            ).props("flat size=sm no-caps color=cyan")
             ui.button(
-                "全解除", on_click=lambda: state.update({"selected_descriptors": []})
-            ).props("flat size=sm no-caps color=grey")
+                "全解除 (RESET)",
+                on_click=lambda: state.update({"selected_descriptors": []}),
+            ).props("flat size=sm no-caps color=red-4")
 
-        # ── テーブル ──
-        sorted_list = sorted(
-            all_descs,
-            key=lambda d: corr_dict.get(d, 0),
-            reverse=True,
-        ) if corr_dict else all_descs
+        # ═══════════════════════════════════════════════
+        # 第1層：相関サマリー（正負TOP5バー）— 常に表示
+        # ═══════════════════════════════════════════════
+        if corr_signed:
+            with ui.card().classes("full-width q-pa-sm q-mb-sm").style(
+                "border: 1px solid rgba(0,188,212,0.25); border-radius: 10px;"
+                "background: rgba(0,20,40,0.3);"
+            ):
+                ui.label("📊 相関サマリー：目的変数 vs 記述子").classes(
+                    "text-subtitle2 text-cyan q-mb-xs"
+                )
 
-        # FPグループ化: 個別ビットは折りたたみ、グループサマリーを1行で表示
-        non_fp, fp_groups = _group_fp_descriptors(sorted_list)
+                # 正負に分けてソート
+                positives = sorted(
+                    [(d, r) for d, r in corr_signed.items() if r > 0],
+                    key=lambda x: x[1], reverse=True,
+                )[:5]
+                negatives = sorted(
+                    [(d, r) for d, r in corr_signed.items() if r < 0],
+                    key=lambda x: x[1],
+                )[:5]
 
-        rows = []
-        # ─── 通常記述子（FP以外）───
-        for d in non_fp:
-            meta = desc_meta.get(d, {})
-            meaning = meta.get("meaning", "")
-            category = meta.get("category", "")
-            library = meta.get("library", "")
+                with ui.row().classes("full-width q-gutter-md"):
+                    # ── 正の相関 TOP5 ──
+                    with ui.column().classes("col"):
+                        ui.label("🔵 正の相関 TOP5").classes(
+                            "text-body2 text-bold q-mb-xs"
+                        ).style("color: #4fc3f7;")
+                        max_pos = positives[0][1] if positives else 1.0
+                        for name, r_val in positives:
+                            bar_pct = abs(r_val) / max(abs(max_pos), 0.01) * 100
+                            with ui.row().classes(
+                                "items-center q-gutter-xs full-width"
+                            ).style("min-height: 22px;"):
+                                ui.label(name[:25]).classes(
+                                    "text-caption"
+                                ).style(
+                                    "min-width: 150px; max-width: 150px;"
+                                    "overflow: hidden; text-overflow: ellipsis;"
+                                    "white-space: nowrap;"
+                                )
+                                with ui.element("div").style(
+                                    "flex:1; height:14px; background:rgba(255,255,255,0.08);"
+                                    "border-radius:4px; overflow:hidden;"
+                                ):
+                                    ui.element("div").style(
+                                        f"width:{bar_pct:.0f}%; height:100%;"
+                                        "background: linear-gradient(90deg, #1565c0, #42a5f5);"
+                                        "border-radius:4px;"
+                                    )
+                                ui.label(f"+{r_val:.3f}").classes(
+                                    "text-caption text-bold"
+                                ).style("min-width:55px; color:#4fc3f7; text-align:right;")
 
-            # 意味がない場合にFP推定でフォールバック
-            if not meaning:
-                inferred = _infer_fp_meaning(d)
-                if inferred:
-                    meaning, category, library = inferred
+                        if not positives:
+                            ui.label("（なし）").classes("text-caption text-grey")
 
-            r_val = corr_dict.get(d)
-            rows.append({
-                "name": d,
-                "selected": "✅" if d in selected else "",
-                "corr": f"{r_val:.3f}" if r_val is not None else "—",
-                "corr_raw": r_val or 0,
-                "cardinality": cardinality.get(d, 0),
-                "meaning": meaning,
-                "category": category,
-                "library": library,
-                "recommended": "⭐" if d in rec_names else "",
-            })
+                    # ── 負の相関 TOP5 ──
+                    with ui.column().classes("col"):
+                        ui.label("🔴 負の相関 TOP5").classes(
+                            "text-body2 text-bold q-mb-xs"
+                        ).style("color: #ef5350;")
+                        max_neg = abs(negatives[0][1]) if negatives else 1.0
+                        for name, r_val in negatives:
+                            bar_pct = abs(r_val) / max(max_neg, 0.01) * 100
+                            with ui.row().classes(
+                                "items-center q-gutter-xs full-width"
+                            ).style("min-height: 22px;"):
+                                ui.label(name[:25]).classes(
+                                    "text-caption"
+                                ).style(
+                                    "min-width: 150px; max-width: 150px;"
+                                    "overflow: hidden; text-overflow: ellipsis;"
+                                    "white-space: nowrap;"
+                                )
+                                with ui.element("div").style(
+                                    "flex:1; height:14px; background:rgba(255,255,255,0.08);"
+                                    "border-radius:4px; overflow:hidden;"
+                                    "display:flex; justify-content:flex-end;"
+                                ):
+                                    ui.element("div").style(
+                                        f"width:{bar_pct:.0f}%; height:100%;"
+                                        "background: linear-gradient(270deg, #c62828, #ef5350);"
+                                        "border-radius:4px;"
+                                    )
+                                ui.label(f"{r_val:.3f}").classes(
+                                    "text-caption text-bold"
+                                ).style("min-width:55px; color:#ef5350; text-align:right;")
 
-        # ─── FPグループ行（各タイプ1行にまとめる）───
-        for group_label, bits in sorted(fp_groups.items(), key=lambda x: -len(x[1])):
-            n_bits = len(bits)
-            n_selected = sum(1 for b in bits if b in selected)
-            # グループ平均相関
-            corrs = [corr_dict.get(b, 0) for b in bits if b in corr_dict]
-            avg_corr = sum(corrs) / len(corrs) if corrs else 0
-            max_corr = max(corrs) if corrs else 0
+                        if not negatives:
+                            ui.label("（なし）").classes("text-caption text-grey")
 
-            # FP系の意味を取得
-            fp_info = _infer_fp_meaning(bits[0]) if bits else None
-            meaning = fp_info[0] if fp_info else f"{group_label}系FP"
-            category = fp_info[1] if fp_info else "フィンガープリント"
-            library = fp_info[2] if fp_info else ""
+                # 凡例
+                with ui.row().classes("q-gutter-sm q-mt-xs items-center"):
+                    with ui.element("div").style(
+                        "width:12px;height:12px;background:#42a5f5;border-radius:2px;"
+                    ):
+                        pass
+                    ui.label("正の相関").classes("text-caption text-grey")
+                    with ui.element("div").style(
+                        "width:12px;height:12px;background:#ef5350;border-radius:2px;"
+                    ):
+                        pass
+                    ui.label("負の相関").classes("text-caption text-grey")
+                    ui.label("（バー長 = |相関係数|）").classes("text-caption text-grey")
 
-            rows.append({
-                "name": f"📦 {group_label} ({n_bits}ビット, {n_selected}選択)",
-                "selected": "✅" if n_selected == n_bits else ("⬜" if n_selected > 0 else ""),
-                "corr": f"avg:{avg_corr:.3f} max:{max_corr:.3f}" if corrs else "—",
-                "corr_raw": avg_corr,
-                "cardinality": n_bits,
-                "meaning": meaning,
-                "category": category,
-                "library": library,
-                "recommended": "",
-            })
+        # ═══════════════════════════════════════════════
+        # 第2層：グループ別集計（折りたたみ）
+        # ═══════════════════════════════════════════════
+        with ui.expansion(
+            "📋 記述子グループ別集計", icon="analytics",
+        ).classes("full-width q-mb-sm").props("dense"):
+            group_stats = []
+            for g_key, members in sorted(
+                group_members.items(),
+                key=lambda x: max((corr_abs.get(m, 0) for m in x[1]), default=0),
+                reverse=True,
+            ):
+                g_info = _GROUP_DISPLAY.get(g_key, {"label": g_key, "icon": "📄"})
+                corrs_in_group = [corr_abs.get(m, 0) for m in members if m in corr_abs]
+                max_r = max(corrs_in_group) if corrs_in_group else 0
+                avg_r = sum(corrs_in_group) / len(corrs_in_group) if corrs_in_group else 0
+                high_n = sum(1 for c in corrs_in_group if c >= 0.3)
+                n_sel = sum(1 for m in members if m in selected)
+                group_stats.append({
+                    "group": f"{g_info['icon']} {g_info['label']}",
+                    "count": len(members),
+                    "max_r": f"{max_r:.3f}",
+                    "avg_r": f"{avg_r:.3f}",
+                    "high_n": high_n,
+                    "selected": f"{n_sel}/{len(members)}",
+                    "_max_r_raw": max_r,
+                })
 
-        # 相関降順でソート
-        rows.sort(key=lambda r: r["corr_raw"], reverse=True)
+            g_columns = [
+                {"name": "group", "label": "グループ", "field": "group"},
+                {"name": "count", "label": "個数", "field": "count", "sortable": True},
+                {"name": "max_r", "label": "最大|r|", "field": "max_r", "sortable": True},
+                {"name": "avg_r", "label": "平均|r|", "field": "avg_r", "sortable": True},
+                {"name": "high_n", "label": "高相関(≧0.3)", "field": "high_n", "sortable": True},
+                {"name": "selected", "label": "選択済", "field": "selected"},
+            ]
+            ui.table(
+                columns=g_columns, rows=group_stats, row_key="group",
+            ).classes("full-width").props("dense flat bordered")
 
-        columns = [
-            {"name": "selected", "label": "✓", "field": "selected", "sortable": True, "align": "center"},
-            {"name": "recommended", "label": "⭐", "field": "recommended", "sortable": True, "align": "center"},
-            {"name": "name", "label": "記述子名", "field": "name", "sortable": True},
-            {"name": "corr", "label": "|r|相関", "field": "corr", "sortable": True},
-            {"name": "cardinality", "label": "種類数", "field": "cardinality", "sortable": True},
-            {"name": "library", "label": "ソース", "field": "library", "sortable": True},
-            {"name": "meaning", "label": "物理化学的意味", "field": "meaning"},
-            {"name": "category", "label": "分類", "field": "category", "sortable": True},
-        ]
+            # 合計行
+            total_high = sum(r["high_n"] for r in group_stats)
+            total_sel = sum(1 for d in all_descs if d in selected)
+            with ui.row().classes("q-gutter-sm q-mt-xs"):
+                ui.label(
+                    f"合計: {n_total}記述子 / 高相関(|r|≧0.3): {total_high}個"
+                    f" / 選択済: {total_sel}個"
+                ).classes("text-caption text-grey")
 
-        table = ui.table(
-            columns=columns,
-            rows=rows,
-            row_key="name",
-            selection="multiple",
-            pagination={"rowsPerPage": 30, "sortBy": "corr", "descending": True},
-        ).classes("full-width").props("dense flat bordered")
+        # ═══════════════════════════════════════════════
+        # 第3層：詳細テーブル（折りたたみ、検索+バー+p値）
+        # ═══════════════════════════════════════════════
+        with ui.expansion(
+            "🔬 詳細テーブル（全記述子）", icon="table_rows",
+        ).classes("full-width q-mb-sm").props("dense"):
 
-        # FPグループ行はselectionに含めない（グループは個別選択不可）
-        non_group_rows = [r for r in rows if not r["name"].startswith("📦")]
-        table.selected = [r for r in non_group_rows if r["name"] in selected]
+            # ── メタ情報読み込み ──
+            desc_meta: dict[str, dict] = {}
+            try:
+                from backend.chem.recommender import get_all_target_recommendations
+                for rec in get_all_target_recommendations():
+                    for d in rec.descriptors:
+                        if d.name not in desc_meta:
+                            desc_meta[d.name] = {
+                                "meaning": d.meaning,
+                                "category": d.category,
+                                "library": d.library,
+                            }
+            except ImportError:
+                pass
+            from frontend_nicegui.components.descriptor_catalog import (
+                get_catalog as _gc, SUPPORTED_ENGINES as _se,
+            )
+            for _e in _se:
+                _c = _gc(_e)
+                if _c:
+                    for _cn, _ci_list in _c.items():
+                        for _ci in _ci_list:
+                            dn = _ci["name"]
+                            if dn.startswith("_"):
+                                continue
+                            if dn not in desc_meta:
+                                desc_meta[dn] = {
+                                    "meaning": _ci.get("short", ""),
+                                    "category": _ci.get("cat", _cn),
+                                    "library": _e,
+                                }
 
-        def _on_selection_change(e):
-            sel_names = [r["name"] for r in e.selection if not r["name"].startswith("📦")]
-            # FPグループの選択状態は維持
-            existing_fp = [d for d in state.get("selected_descriptors", [])
-                           if _FP_BIT_PATTERN.match(d)]
-            state["selected_descriptors"] = sel_names + existing_fp
+            # 通常記述子テーブル行
+            sorted_list = sorted(
+                non_fp,
+                key=lambda d: corr_abs.get(d, 0),
+                reverse=True,
+            )
 
-        table.on_select(_on_selection_change)
+            detail_rows = []
+            for d in sorted_list:
+                meta = desc_meta.get(d, {})
+                meaning = meta.get("meaning", "")
+                library = meta.get("library", "")
+                if not meaning:
+                    inferred = _infer_fp_meaning(d)
+                    if inferred:
+                        meaning = inferred[0]
+                        library = inferred[2]
 
-        # ── FPグループの一括ON/OFFボタン ──
+                r_signed = corr_signed.get(d)
+                r_abs_val = corr_abs.get(d, 0)
+                p_val = p_values.get(d)
+
+                # バー表示用HTML（NiceGUIのcell slotで表現）
+                if r_signed is not None:
+                    sign = "+" if r_signed >= 0 else ""
+                    corr_text = f"{sign}{r_signed:.3f}"
+                else:
+                    corr_text = "—"
+
+                p_text = ""
+                if p_val is not None:
+                    if p_val < 0.001:
+                        p_text = "<0.001"
+                    elif p_val < 0.01:
+                        p_text = f"{p_val:.3f}"
+                    elif p_val < 0.05:
+                        p_text = f"{p_val:.3f}"
+                    else:
+                        p_text = f"{p_val:.3f} ⚠"
+
+                detail_rows.append({
+                    "name": d,
+                    "sel": "✅" if d in selected else "",
+                    "rec": "⭐" if d in rec_names else "",
+                    "corr": corr_text,
+                    "corr_raw": r_abs_val,
+                    "p_val": p_text,
+                    "library": library,
+                    "meaning": meaning[:50],
+                    "group": _GROUP_DISPLAY.get(
+                        group_map.get(d, ""), {"label": ""}
+                    )["label"],
+                })
+
+            # FPグループ行
+            for gl, bits in sorted(fp_groups.items(), key=lambda x: -len(x[1])):
+                n_bits = len(bits)
+                n_sel = sum(1 for b in bits if b in selected)
+                corrs = [corr_abs.get(b, 0) for b in bits if b in corr_abs]
+                avg_c = sum(corrs) / len(corrs) if corrs else 0
+                max_c = max(corrs) if corrs else 0
+                fp_info = _infer_fp_meaning(bits[0]) if bits else None
+                detail_rows.append({
+                    "name": f"📦 {gl} ({n_bits}ビット, {n_sel}選択)",
+                    "sel": "✅" if n_sel == n_bits else ("⬜" if n_sel > 0 else ""),
+                    "rec": "",
+                    "corr": f"avg:{avg_c:.3f} max:{max_c:.3f}" if corrs else "—",
+                    "corr_raw": avg_c,
+                    "p_val": "",
+                    "library": fp_info[2] if fp_info else "",
+                    "meaning": fp_info[0][:50] if fp_info else f"{gl}系FP",
+                    "group": "FP",
+                })
+
+            d_columns = [
+                {"name": "sel", "label": "✓", "field": "sel", "align": "center",
+                 "style": "width:30px;"},
+                {"name": "rec", "label": "⭐", "field": "rec", "align": "center",
+                 "style": "width:30px;"},
+                {"name": "name", "label": "記述子名", "field": "name", "sortable": True},
+                {"name": "corr", "label": "相関係数(r)", "field": "corr", "sortable": True},
+                {"name": "p_val", "label": "p値", "field": "p_val", "sortable": True},
+                {"name": "group", "label": "グループ", "field": "group", "sortable": True},
+                {"name": "library", "label": "ソース", "field": "library", "sortable": True},
+                {"name": "meaning", "label": "意味", "field": "meaning"},
+            ]
+
+            detail_table = ui.table(
+                columns=d_columns,
+                rows=detail_rows,
+                row_key="name",
+                selection="multiple",
+                pagination={"rowsPerPage": 50, "sortBy": "corr_raw", "descending": True},
+            ).classes("full-width").props("dense flat bordered")
+
+            # 選択状態の同期
+            non_group = [r for r in detail_rows if not r["name"].startswith("📦")]
+            detail_table.selected = [r for r in non_group if r["name"] in selected]
+
+            def _on_detail_sel(e):
+                sel_names = [r["name"] for r in e.selection if not r["name"].startswith("📦")]
+                existing_fp = [
+                    d for d in state.get("selected_descriptors", [])
+                    if _FP_BIT_PATTERN.match(d)
+                ]
+                state["selected_descriptors"] = sel_names + existing_fp
+
+            detail_table.on_select(_on_detail_sel)
+
+        # ── FPグループ一括ON/OFFボタン ──
         if fp_groups:
             with ui.row().classes("q-gutter-sm q-mt-sm"):
                 ui.label("📦 FPグループ一括:").classes("text-caption text-grey-5")
@@ -1976,7 +2193,9 @@ def _render_descriptor_table(state: dict) -> None:
                             ui.notify(f"📦 {group_name} 全{len(group_bits)}ビットOFF", type="info")
                         else:
                             cur |= set(group_bits)
-                            ui.notify(f"📦 {group_name} 全{len(group_bits)}ビットON", type="positive")
+                            ui.notify(
+                                f"📦 {group_name} 全{len(group_bits)}ビットON", type="positive",
+                            )
                         state["selected_descriptors"] = list(cur)
 
                     ui.button(
