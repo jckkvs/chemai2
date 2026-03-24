@@ -124,6 +124,11 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
                         valid = [c for c in self.selected_descriptors if c in X_chem.columns]
                         if valid:
                             X_chem = X_chem[valid]
+                        else:
+                            logger.warning(
+                                "selected_descriptorsの記述子がいずれも計算結果に存在しません。"
+                                "全記述子を使用します (フォールバック)。"
+                            )
                     return X_chem
                 else:
                     logger.warning("プラグインレジストリから記述子が0件。従来アダプタにフォールバック。")
@@ -154,6 +159,11 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
             valid = [c for c in self.selected_descriptors if c in X_chem.columns]
             if valid:
                 X_chem = X_chem[valid]
+            else:
+                logger.warning(
+                    "selected_descriptorsの記述子がいずれも最終計算結果に存在しません。"
+                    "全記述子を使用します (フォールバック)。"
+                )
                 
         return X_chem
 

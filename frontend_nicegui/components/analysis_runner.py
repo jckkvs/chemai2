@@ -219,8 +219,14 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
 
         for set_idx, (set_name, set_info) in enumerate(active_sets.items()):
             set_descs = set_info.get("descriptors")
-            # None = 全記述子
-            selected_desc = list(set_descs) if set_descs else state.get("selected_descriptors")
+            # 記述子リストのバリデーション:
+            # set_descsはprecalc_dfの列名だが、SmilesDescriptorTransformerが
+            # 計算時に存在しない記述子をフィルタしてしまう可能性がある。
+            # 空リストやNoneの場合は全記述子を使用（フォールバック）。
+            if set_descs and isinstance(set_descs, (list, tuple)) and len(set_descs) > 0:
+                selected_desc = list(set_descs)
+            else:
+                selected_desc = state.get("selected_descriptors")
 
             # 進捗更新
             progress_label.text = f"⏳ [{set_idx + 1}/{total_sets}] セット「{set_name}」を解析中..."
