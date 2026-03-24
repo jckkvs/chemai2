@@ -105,10 +105,29 @@ def render_data_tab(state: dict[str, Any]) -> None:
     # ── 初回: データ読込タブだけ即座にレンダリング ──
     _render_tab("load")
 
-    # ── タブ切り替え時: 選択されたタブを（再）レンダリング ──
+    # ── SMILESタブの計算状態スナップショット ──
+    _smiles_precalc_snapshot: dict = {"precalc_done": False, "n_cols": 0}
+
+    # ── タブ切り替え時 ──
     def _on_tab_change(e) -> None:
         tab_key = e.value if isinstance(e.value, str) else getattr(e.value, "value", str(e.value))
-        _render_tab(tab_key, force=True)
+
+        # SMILESタブ: 記述子計算状態が変化した場合のみ再描画
+        if tab_key == "smiles":
+            cur_done = bool(state.get("precalc_done"))
+            cur_n = 0
+            precalc = state.get("precalc_df")
+            if precalc is not None and hasattr(precalc, 'shape'):
+                cur_n = precalc.shape[1]
+            prev_done = _smiles_precalc_snapshot.get("precalc_done")
+            prev_n = _smiles_precalc_snapshot.get("n_cols", 0)
+            if cur_done != prev_done or cur_n != prev_n:
+                rendered[tab_key] = False  # 状態変化 → 再描画
+                _smiles_precalc_snapshot["precalc_done"] = cur_done
+                _smiles_precalc_snapshot["n_cols"] = cur_n
+
+        # 初回未描画の場合のみ描画（force=Falseで不要な再描画を防止）
+        _render_tab(tab_key)
 
     sub_tabs.on_value_change(_on_tab_change)
 
@@ -146,6 +165,9 @@ def _render_data_load(state: dict) -> None:
             upload_status.classes(remove="text-red", add="text-green")
             _show_preview(df, preview_container)
             _update_metrics(state, metrics_row)
+            refresh = state.get("_refresh_tabs")
+            if refresh:
+                refresh()
             ui.notify(f"✅ {name} を読み込みました", type="positive")
         except Exception as ex:
             upload_status.text = f"❌ エラー: {ex}"
@@ -184,6 +206,9 @@ def _render_data_load(state: dict) -> None:
                 upload_status.classes(remove="text-red", add="text-green")
                 _show_preview(state["df"], preview_container)
                 _update_metrics(state, metrics_row)
+                refresh = state.get("_refresh_tabs")
+                if refresh:
+                    refresh()
                 ui.notify("回帰サンプルデータを読み込みました", type="positive")
 
             def _load_sample_classification():
@@ -203,6 +228,9 @@ def _render_data_load(state: dict) -> None:
                 upload_status.classes(remove="text-red", add="text-green")
                 _show_preview(state["df"], preview_container)
                 _update_metrics(state, metrics_row)
+                refresh = state.get("_refresh_tabs")
+                if refresh:
+                    refresh()
                 ui.notify("分類サンプルデータを読み込みました", type="positive")
 
             def _load_sample_numeric():
@@ -226,6 +254,9 @@ def _render_data_load(state: dict) -> None:
                 upload_status.classes(remove="text-red", add="text-green")
                 _show_preview(state["df"], preview_container)
                 _update_metrics(state, metrics_row)
+                refresh = state.get("_refresh_tabs")
+                if refresh:
+                    refresh()
                 ui.notify("数値サンプルデータを読み込みました", type="positive")
 
             ui.button("🧪 回帰 (SMILES)", on_click=_load_sample_regression).props("outline color=purple size=sm")
@@ -258,6 +289,9 @@ def _render_data_load(state: dict) -> None:
                         upload_status.classes(remove="text-red", add="text-green")
                         _show_preview(df_bench, preview_container)
                         _update_metrics(state, metrics_row)
+                        refresh = state.get("_refresh_tabs")
+                        if refresh:
+                            refresh()
                         ui.notify(f"✅ {bname} をロードしました", type="positive")
                     except Exception as ex:
                         ui.notify(f"エラー: {ex}", type="negative")
