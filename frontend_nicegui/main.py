@@ -41,6 +41,20 @@ CUSTOM_CSS = """
     --accent-purple: #7b2ff7;
     --accent-green: #4ade80;
     --accent-amber: #fbbf24;
+
+    /* F-05: セマンティックカラー — 状態別 */
+    --status-success: #4ade80;
+    --status-warning: #fbbf24;
+    --status-error: #f87171;
+    --status-info: #60a5fa;
+    --status-cancel: #fb923c;
+
+    /* F-05: タブカテゴリ別カラー */
+    --tab-data: #60a5fa;
+    --tab-eda: #34d399;
+    --tab-pipeline: #a78bfa;
+    --tab-results: #fbbf24;
+    --tab-inverse: #f472b6;
 }
 
 body {
@@ -137,12 +151,38 @@ body {
     margin-right: 6px;
 }
 
-/* F-07: タブ別テーマカラー */
-.tab-data .q-tab--active { color: #60a5fa !important; }
-.tab-eda .q-tab--active { color: #34d399 !important; }
-.tab-pipeline .q-tab--active { color: #a78bfa !important; }
-.tab-results .q-tab--active { color: #fbbf24 !important; }
-.tab-inverse .q-tab--active { color: #f472b6 !important; }
+/* F-07: タブ別テーマカラー（F-05セマンティック変数使用） */
+.tab-data .q-tab--active { color: var(--tab-data) !important; }
+.tab-eda .q-tab--active { color: var(--tab-eda) !important; }
+.tab-pipeline .q-tab--active { color: var(--tab-pipeline) !important; }
+.tab-results .q-tab--active { color: var(--tab-results) !important; }
+.tab-inverse .q-tab--active { color: var(--tab-inverse) !important; }
+
+/* F-15: サイドバー解析ステータスバー */
+.sidebar-status-bar {
+    background: rgba(0, 212, 255, 0.08);
+    border: 1px solid rgba(0, 212, 255, 0.2);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 6px 0;
+}
+.sidebar-status-bar.running {
+    border-color: rgba(0, 212, 255, 0.4);
+    background: rgba(0, 212, 255, 0.1);
+    animation: status-pulse 2s ease-in-out infinite;
+}
+.sidebar-status-bar.cancelled {
+    border-color: rgba(251, 146, 60, 0.4);
+    background: rgba(251, 146, 60, 0.08);
+}
+.sidebar-status-bar.done {
+    border-color: rgba(74, 222, 128, 0.4);
+    background: rgba(74, 222, 128, 0.08);
+}
+@keyframes status-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
 """
 
 
@@ -386,6 +426,21 @@ def main_page():
             has_smiles = bool(state.get("smiles_col"))
             has_desc = state.get("precalc_done", False)
             has_result = state.get("automl_result") is not None
+
+            # F-15: 解析リアルタイムステータスバー
+            from frontend_nicegui.components.analysis_runner import (
+                _analysis_running as is_running,
+                _cancel_requested as is_cancelled,
+            )
+            with step_container:
+                if is_running:
+                    css_class = "sidebar-status-bar cancelled" if is_cancelled else "sidebar-status-bar running"
+                    icon = "🛑" if is_cancelled else "⏳"
+                    label = "中断処理中..." if is_cancelled else "解析実行中..."
+                    ui.html(
+                        f'<div class="{css_class}">'\
+                        f'<span style="font-size:0.85rem;">{icon} {label}</span></div>'
+                    )
 
             steps = [
                 ("📂 データ読込", has_data),

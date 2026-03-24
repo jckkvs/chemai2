@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 # 解析ロック（二重実行防止）
 _analysis_running = False
+_cancel_requested = False
+
+
+class AnalysisCancelled(Exception):
+    """解析キャンセル時に送出される例外。"""
+    pass
 
 
 def _run_engine_sync(
@@ -55,7 +61,10 @@ def _run_engine_sync(
     from backend.models.automl import AutoMLEngine
 
     def progress_callback(step: int, total: int, msg: str) -> None:
-        """進捗をキューに送信（スレッドセーフ）"""
+        """進捗をキューに送信（スレッドセーフ）+ キャンセルチェック"""
+        global _cancel_requested
+        if _cancel_requested:
+            raise AnalysisCancelled("ユーザーが解析をキャンセルしました")
         try:
             progress_queue.put_nowait(("progress", step, total, msg))
         except queue.Full:
@@ -111,6 +120,16 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         return
 
     _analysis_running = True
+    _cancel_requested = False
+
+    # キャンセルハンドラ
+    def _on_cancel():
+        global _cancel_requested
+        _cancel_requested = True
+        cancel_btn.disable()
+        cancel_btn.text = "⏳ 中断処理中..."
+        progress_label.text = "⏳ キャンセル要求を送信しました..."
+        ui.notify("🛑 解析キャンセルを要求しました。現在のステップ完了後に停止します。", type="warning", timeout=5000)
 
     # 進捗表示の構築
     status_container.clear()
@@ -119,7 +138,13 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             progress_header = ui.row().classes("items-center full-width justify-between")
             with progress_header:
                 progress_label = ui.label("⏳ 解析を開始しています...").classes("text-lg")
-                progress_pct = ui.label("").classes("text-h6 text-bold hero-gradient")
+                with ui.row().classes("items-center q-gutter-sm"):
+                    progress_pct = ui.label("").classes("text-h6 text-bold hero-gradient")
+                    cancel_btn = ui.button(
+                        "🛑 中断", on_click=_on_cancel,
+                    ).props("outline color=red size=sm no-caps").tooltip(
+                        "現在のモデル学習ステップ完了後に解析を安全に停止します"
+                    )
             progress_bar = ui.linear_progress(value=0, show_value=False).classes("q-mb-xs").props("color=cyan rounded")
             with ui.row().classes("justify-between full-width"):
                 progress_detail = ui.label("").classes("text-caption text-grey-5")
@@ -218,6 +243,13 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         total_sets = len(active_sets)
 
         for set_idx, (set_name, set_info) in enumerate(active_sets.items()):
+            # ── キャンセルチェック ──
+            if _cancel_requested:
+                progress_label.text = "🛑 ユーザーにより解析がキャンセルされました"
+                progress_detail.text = f"{set_idx}/{total_sets}セット完了時点で中断"
+                ui.notify("🛑 解析をキャンセルしました", type="warning")
+                break
+
             set_descs = set_info.get("descriptors")
             # 記述子リストのバリデーション:
             # set_descsはprecalc_dfの列名だが、SmilesDescriptorTransformerが
@@ -285,6 +317,11 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                     best_result = result
                     best_set_name = set_name
 
+            except AnalysisCancelled:
+                logger.info(f"セット「{set_name}」がキャンセルされました")
+                all_results[set_name] = None
+                set_timer.deactivate()
+                break
             except Exception as set_ex:
                 logger.warning(f"セット「{set_name}」の解析エラー: {set_ex}")
                 all_results[set_name] = None
@@ -338,6 +375,13 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                 record_analysis(state, best_result)
         except Exception as hist_ex:
             logger.warning("解析履歴の保存に失敗: %s", hist_ex)
+
+    except AnalysisCancelled:
+        progress_label.text = "🛑 解析がキャンセルされました"
+        progress_pct.text = "—"
+        progress_detail.text = "ユーザーの要求により中断しました"
+        progress_eta.text = ""
+        ui.notify("🛑 解析をキャンセルしました", type="warning")
 
     except Exception as ex:
         error_msg = str(ex)
