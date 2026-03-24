@@ -102,6 +102,47 @@ body {
 
 /* 展開パネルのスタイル */
 .q-expansion-item { border-radius: 8px !important; margin-bottom: 4px; }
+
+/* F-02: フォントサイズ14px下限 — 漢字視認性保証 */
+.text-caption { font-size: 0.82rem !important; }  /* 13px → 下限保証 */
+.q-field__label { font-size: 0.88rem !important; }
+
+/* F-08: 解析開始ボタン — パルスアニメーション */
+@keyframes pulse-glow {
+    0% { box-shadow: 0 0 5px rgba(0,212,255,0.4); }
+    50% { box-shadow: 0 0 20px rgba(0,212,255,0.7), 0 0 40px rgba(123,47,247,0.3); }
+    100% { box-shadow: 0 0 5px rgba(0,212,255,0.4); }
+}
+.btn-run-analysis {
+    animation: pulse-glow 2s ease-in-out infinite !important;
+    font-size: 1.1rem !important;
+    padding: 10px 28px !important;
+    border-radius: 12px !important;
+}
+.btn-run-analysis:hover {
+    animation: none !important;
+    transform: scale(1.05) !important;
+    box-shadow: 0 8px 30px rgba(0,212,255,0.5) !important;
+}
+
+/* F-04: ローディングスピナー */
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-spinner {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.2);
+    border-top-color: var(--accent-blue);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 6px;
+}
+
+/* F-07: タブ別テーマカラー */
+.tab-data .q-tab--active { color: #60a5fa !important; }
+.tab-eda .q-tab--active { color: #34d399 !important; }
+.tab-pipeline .q-tab--active { color: #a78bfa !important; }
+.tab-results .q-tab--active { color: #fbbf24 !important; }
+.tab-inverse .q-tab--active { color: #f472b6 !important; }
 """
 
 
@@ -258,9 +299,10 @@ def main_page():
                     ui.notify(issue, type="warning", timeout=5000)
                 return
 
-            # ボタン無効化（二重実行防止）
+            # ボタン無効化（二重実行防止） + F-04 ローディングUI
             run_btn.disable()
             run_btn.text = "⏳ 解析中..."
+            run_btn._classes = [c for c in run_btn._classes if c != "btn-run-analysis"]
             try:
                 from frontend_nicegui.components.analysis_runner import run_analysis
                 await run_analysis(
@@ -271,11 +313,19 @@ def main_page():
             finally:
                 run_btn.enable()
                 run_btn.text = "🚀 解析開始"
+                run_btn.classes("btn-run-analysis")
 
+        # F-08: 解析開始ボタン — 大きく+パルスアニメーション+改善ツールチップ
         run_btn = ui.button(
             "🚀 解析開始", on_click=_run_analysis,
-        ).classes("btn-primary").props("size=md icon=rocket_launch no-caps")
-        run_btn.tooltip("データ読込 → 自動設定 → AutoML → 評価 → SHAP まで自動実行")
+        ).classes("btn-primary btn-run-analysis").props(
+            "size=lg icon=rocket_launch no-caps unelevated"
+        )
+        # F-13: ヘルプ品質向上 — ラベルの繰り返しを避け、操作の意味を説明
+        run_btn.tooltip(
+            "ワンクリックで全自動ML: データ前処理 → 特徴選択 → "
+            "複数モデル比較 → 最良モデル評価 → SHAP解析まで一括実行"
+        )
 
     # ═════════════════════════════════════════════════
     # スマートデフォルト（データ特性に基づく自動設定）
@@ -451,7 +501,7 @@ def main_page():
         # ── 環境情報 ──
         import sys as _sys
         py_ver = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"
-        ui.label(f"Python {py_ver}").classes("text-caption text-grey-8").style("font-size: 0.6rem;")
+        ui.label(f"Python {py_ver}").classes("text-caption text-grey-8")
 
     # ═══════════════════════════════════════════════════════════
     # メインコンテンツ — 2タブ構造

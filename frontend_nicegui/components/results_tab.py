@@ -121,7 +121,7 @@ def render_results_tab(state: dict[str, Any]) -> None:
                     with ui.row().classes("items-center q-gutter-xs"):
                         ui.icon(icon_name, size="xs", color="cyan")
                         ui.label(str(val)).classes("text-subtitle2 text-bold")
-                    ui.label(lbl).classes("text-caption text-grey-5").style("font-size: 0.65rem;")
+                    ui.label(lbl).classes("text-caption text-grey-5").style("font-size: 0.82rem;")
 
         if runner_up_text:
             ui.label(runner_up_text).classes("text-caption text-grey-5 q-mt-xs")
@@ -237,7 +237,7 @@ def _render_model_evaluation(ar) -> None:
             ):
                 ui.label(icon).style("font-size: 1.2rem;")
                 ui.label(label).classes("text-caption text-bold").style("font-size: 0.75rem;")
-                ui.label(detail).classes("text-caption text-grey").style("font-size: 0.65rem;")
+                ui.label(detail).classes("text-caption text-grey").style("font-size: 0.82rem;")
             if i < len(flow_steps) - 1:
                 ui.label("→").classes("text-grey-5 q-mx-xs").style("font-size: 1.2rem;")
 
@@ -885,7 +885,7 @@ def _render_model_significance(ar) -> None:
                             (f"t={r['t_stat']:.3f}", "t統計量"),
                             (f"d={r['cohens_d']:.3f} ({r['effect']})", "Cohen's d"),
                         ]:
-                            ui.label(f"{lbl}: {val}").classes("text-caption text-grey").style("font-size: 0.65rem;")
+                            ui.label(f"{lbl}: {val}").classes("text-caption text-grey").style("font-size: 0.82rem;")
         else:
             ui.label("Fold数が一致するモデルペアがありません").classes("text-caption text-grey")
 

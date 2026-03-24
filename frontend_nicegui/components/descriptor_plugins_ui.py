@@ -472,17 +472,16 @@ def _ensure_default_sets(state: dict) -> None:
             except Exception as e:
                 _logger.warning("分散Top-Nセット生成エラー: %s", e)
 
-        # デフォルトセット（全記述子）も維持
-        if "デフォルト" not in sets:
-            sets["デフォルト"] = {
-                "engines": [],
-                "active": True,
-                "descriptors": None,
-            }
+        # デフォルトセット: MOLAI+PCA（全記述子は説明変数過多のため非推奨）
+        if "デフォルト" in sets:
+            del sets["デフォルト"]  # 旧バージョンの残骸を削除
 
-        # 現在のセット名が未設定なら汎用QPSRに
-        if "current_set_name" not in state or state["current_set_name"] == "デフォルト":
-            if "🎯 汎用QSPR" in sets:
+        # 現在のセット名が未設定なら MOLAI+PCA → 汎用QSPR の優先順
+        if "current_set_name" not in state or state.get("current_set_name") in ("デフォルト", None, ""):
+            if "🧠 MolAI+PCA" in sets:
+                state["current_set_name"] = "🧠 MolAI+PCA"
+                state["selected_descriptors"] = list(sets["🧠 MolAI+PCA"]["descriptors"])
+            elif "🎯 汎用QSPR" in sets:
                 state["current_set_name"] = "🎯 汎用QSPR"
                 state["selected_descriptors"] = list(sets["🎯 汎用QSPR"]["descriptors"])
 
@@ -902,11 +901,11 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                         ui.badge(
                                             lbl,
                                             color="teal" if avl else "grey",
-                                        ).props("outline dense").style("font-size: 0.6rem;")
+                                        ).props("outline dense").style("font-size: 0.78rem;")
                                 # 含まれる記述子のプレビュー
                                 ui.label(
                                     f"📋 {n_preview}記述子: {preview_text}"
-                                ).classes("text-caption text-grey-5").style("font-size: 0.65rem;")
+                                ).classes("text-caption text-grey-5").style("font-size: 0.82rem;")
 
                             with ui.row().classes("items-center q-gutter-xs"):
                                 ui.badge(
@@ -1084,7 +1083,7 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                 if d_meaning:
                                     ui.label(d_meaning).classes(
                                         "text-caption text-grey"
-                                    ).style("font-size: 0.68rem; min-width: 140px;")
+                                    ).style("font-size: 0.82rem; min-width: 140px;")
                                 ui.linear_progress(
                                     value=int(r_val * 100) / 100, color="cyan",
                                 ).style("width: 120px; height: 6px;").props("rounded")
@@ -1364,7 +1363,7 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                 if _m_meaning:
                                     ui.label(_m_meaning).classes(
                                         "text-caption text-grey"
-                                    ).style("font-size: 0.68rem;")
+                                    ).style("font-size: 0.82rem;")
 
                         if len(matches) > 50:
                             ui.label(f"...他 {len(matches) - 50}件").classes(
@@ -1453,7 +1452,7 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             if _v_meaning:
                                 ui.label(_v_meaning).classes(
                                     "text-caption text-grey"
-                                ).style("font-size: 0.68rem; min-width: 140px;")
+                                ).style("font-size: 0.82rem; min-width: 140px;")
                             ui.linear_progress(
                                 value=nv, color="teal",
                             ).style("width: 120px; height: 6px;").props("rounded")

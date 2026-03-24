@@ -405,7 +405,7 @@ def _tab_estimator(state: dict) -> None:
                         on_change=_toggle,
                     )
                     if mkey in defaults:
-                        ui.badge("推奨", color="teal").props("dense").style("font-size:0.6rem;")
+                        ui.badge("推奨", color="teal").props("dense").style("font-size: 0.78rem;")
 
 
 # ═══════════════════════════════════════════════════════════

@@ -477,7 +477,7 @@ def _render_column_summary(state: dict) -> None:
                     )
 
                 # データ型 + ユニーク数
-                ui.label(f"{dtype_str} | {n_unique}種").classes("text-caption text-grey").style("font-size: 0.65rem;")
+                ui.label(f"{dtype_str} | {n_unique}種").classes("text-caption text-grey").style("font-size: 0.82rem;")
 
                 # 欠損率バー
                 ui.html(
@@ -878,7 +878,7 @@ def _render_pipeline(state: dict) -> None:
                                         ui.label(desc).classes("text-caption text-grey").style("font-size: 0.7rem;")
                                     ui.label(f"{p['n_settings']}個の設定 | {p.get('created_at', '')[:10]}").classes(
                                         "text-caption text-grey"
-                                    ).style("font-size: 0.65rem;")
+                                    ).style("font-size: 0.82rem;")
                                 with ui.row().classes("q-gutter-xs"):
                                     pname = p["name"]
 
