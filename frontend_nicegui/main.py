@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # プレミアム ダークテーマ CSS
 # ─────────────────────────────────────────────
 CUSTOM_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;700&display=swap');
 
 :root {
     --bg-primary: #0d0d1a;
@@ -41,6 +41,10 @@ CUSTOM_CSS = """
     --accent-purple: #7b2ff7;
     --accent-green: #4ade80;
     --accent-amber: #fbbf24;
+
+    /* F-06: フォント設定 — 科学ツールとしての信頼感 */
+    --font-sans: 'Inter', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 
     /* F-05: セマンティックカラー — 状態別 */
     --status-success: #4ade80;
@@ -204,6 +208,19 @@ body {
     }
     .glass-card { border-width: 2px !important; }
 }
+
+/* F-06: フォントファミリーの統一 */
+body, .q-page, .q-drawer, .q-dialog {
+    font-family: var(--font-sans) !important;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+code, pre, .text-monospace, .q-field__native {
+    font-family: var(--font-mono) !important;
+}
+/* 日本語テキストの最小フォントサイズ保証 (F-02: 文字の大きさ) */
+.text-caption { font-size: max(11px, 0.75rem) !important; }
+.text-body2 { font-size: max(13px, 0.85rem) !important; }
 
 /* F-14: Material Icon統一ルール */
 /* アイコンサイズの一貫性: ボタン=20px, ラベル=16px, タイトル=24px */
