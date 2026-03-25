@@ -98,6 +98,7 @@ class AutoMLEngine:
         self.timeout_seconds = timeout_seconds
         self.progress_callback = progress_callback or (lambda s, t, m: None)
         self.selected_descriptors = selected_descriptors
+        self.count_normalization: str = "density"
         self.monotonic_constraints_dict = monotonic_constraints_dict or {}
 
     def run(
@@ -244,7 +245,8 @@ class AutoMLEngine:
                 if smiles_col and smiles_col in X_train.columns:
                     st_trans = SmilesDescriptorTransformer(
                         smiles_col=smiles_col,
-                        selected_descriptors=self.selected_descriptors
+                        selected_descriptors=self.selected_descriptors,
+                        count_normalization=self.count_normalization,
                     )
                     pipeline = Pipeline([
                         ("smiles_vars", st_trans),
@@ -320,7 +322,8 @@ class AutoMLEngine:
         if smiles_col and smiles_col in X_train.columns:
             st_trans = SmilesDescriptorTransformer(
                 smiles_col=smiles_col,
-                selected_descriptors=self.selected_descriptors
+                selected_descriptors=self.selected_descriptors,
+                count_normalization=self.count_normalization,
             )
             best_pipeline = Pipeline([
                 ("smiles_vars", st_trans),

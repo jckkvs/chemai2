@@ -45,6 +45,7 @@ def _run_engine_sync(
     model_params: dict[str, dict] | None = None,
     preprocess_params: dict[str, Any] | None = None,
     monotonic_constraints: dict[str, int] | None = None,
+    count_normalization: str = "density",
 ) -> Any:
     """
     バックグラウンドスレッドで AutoMLEngine を実行する同期関数。
@@ -81,6 +82,7 @@ def _run_engine_sync(
         progress_callback=progress_callback,
         selected_descriptors=selected_desc,
         monotonic_constraints_dict=monotonic_constraints,
+        count_normalization=count_normalization,
     )
 
     result = engine.run(
@@ -308,6 +310,7 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                     model_params=model_params,
                     preprocess_params=preprocess_params if preprocess_params else None,
                     monotonic_constraints=monotonic_constraints,
+                    count_normalization=state.get("count_normalization", "density"),
                 )
                 all_results[set_name] = result
 
