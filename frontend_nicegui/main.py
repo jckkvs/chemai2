@@ -183,6 +183,33 @@ body {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.7; }
 }
+
+/* F-03: WCAG 2.1 色覚対応 — コントラスト比4.5:1以上 */
+/* 色覚多様性(CVD)対応: 赤/緑の区別に依存しないよう形状・アイコンで補完 */
+.color-safe-success { color: var(--status-success); }
+.color-safe-success::before { content: "✅ "; }
+.color-safe-warning { color: var(--status-warning); }
+.color-safe-warning::before { content: "⚠️ "; }
+.color-safe-error { color: var(--status-error); }
+.color-safe-error::before { content: "❌ "; }
+.color-safe-info { color: var(--status-info); }
+.color-safe-info::before { content: "ℹ️ "; }
+
+/* F-03: 高コントラストモード（OSの設定連携） */
+@media (prefers-contrast: high) {
+    :root {
+        --bg-card: rgba(255, 255, 255, 0.12);
+        --border: rgba(255, 255, 255, 0.3);
+        --text-primary: #ffffff;
+    }
+    .glass-card { border-width: 2px !important; }
+}
+
+/* F-14: Material Icon統一ルール */
+/* アイコンサイズの一貫性: ボタン=20px, ラベル=16px, タイトル=24px */
+.q-btn .q-icon { font-size: 20px !important; }
+.text-caption .q-icon { font-size: 16px !important; }
+.text-h5 .q-icon, .text-h6 .q-icon { font-size: 24px !important; }
 """
 
 
@@ -366,6 +393,17 @@ def main_page():
             "ワンクリックで全自動ML: データ前処理 → 特徴選択 → "
             "複数モデル比較 → 最良モデル評価 → SHAP解析まで一括実行"
         )
+
+    # F-11: キーボードショートカット登録
+    ui.keyboard(
+        on_key=lambda e: (
+            _run_analysis() if e.key == 'Enter' and e.modifiers.ctrl and not e.action.repeat else
+            main_tabs.set_value('data') if e.key == '1' and e.modifiers.ctrl else
+            main_tabs.set_value('results') if e.key == '2' and e.modifiers.ctrl else
+            main_tabs.set_value('inverse') if e.key == '3' and e.modifiers.ctrl else
+            None
+        ),
+    )
 
     # ═════════════════════════════════════════════════
     # スマートデフォルト（データ特性に基づく自動設定）
