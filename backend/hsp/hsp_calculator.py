@@ -3,19 +3,22 @@
 backend/hsp/hsp_calculator.py
 
 Hansen Solubility Parameters (HSP) 計算モジュール。
-HSPiPyラッパー + REDスコア計算。
+RED値計算 + Hansen距離 + SMILES→HSP計算。
 
-Implements: HSP球体最適化・RED値・可視化
-引用: Hansen, C.M. "Hansen Solubility Parameters: A User's Handbook", 2nd Ed., CRC Press, 2007
+HSPiPy非依存。SMILES→HSPはvan Krevelen/Hoftyzer Group Contribution法
+(hsp_predictor.py) を使用。
+
+Implements: RED値・Hansen距離・HSP球体フィッティング
+引用: Hansen, C.M. "Hansen Solubility Parameters: A User's Handbook",
+      2nd Ed., CRC Press, 2007
 
 API:
-    load_solvent_data(filepath) → 溶媒データ読み込み
-    calculate_hsp_sphere() → HSP球体最適化
-    calculate_red_value() → RED値計算
-    plot_3d() / plot_2d() → 可視化
+    calculate_red_value()  → RED値計算
+    hansen_distance()      → Hansen距離
+    predict_from_smiles()  → SMILES→HSP (Group Contribution法)
 
 前提:
-    pip install hspipy  # オプション依存
+    pip install rdkit  # SMILES→HSP 計算用
 """
 from __future__ import annotations
 
@@ -26,80 +29,17 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-_HSPIPY_AVAILABLE = False
-try:
-    import hspipy  # noqa: F401
-    _HSPIPY_AVAILABLE = True
-except ImportError:
-    pass
-
-
-def is_hspipy_available() -> bool:
-    """HSPiPyが利用可能か。"""
-    return _HSPIPY_AVAILABLE
-
 
 class HSPCalculator:
-    """HSPiPy を使用した Hansen Solubility Parameters 計算。
+    """Hansen Solubility Parameters の計算・評価ツール。
 
-    Implements: HSP球体最適化（Hansen 2007, Ch.2）
+    Implements: Hansen 2007, Ch.2
     引用: Hansen, C.M. "Hansen Solubility Parameters", 2nd Ed., 2007
 
     RED < 1 → 溶解  /  RED > 1 → 不溶解
     Ra = √(4·ΔδD² + ΔδP² + ΔδH²)   ... 式(1)
     RED = Ra / R₀                      ... 式(2)
     """
-
-    def __init__(self) -> None:
-        self._hsp_obj: Any = None
-        self._result: Any = None
-
-    def load_solvent_data(self, filepath: str) -> None:
-        """溶媒データ読み込み (CSV/HSD/HSDX)。"""
-        if not _HSPIPY_AVAILABLE:
-            raise ImportError(
-                "HSPiPy が未インストールです。pip install hspipy を実行してください。"
-            )
-        from hspipy import HSP
-        self._hsp_obj = HSP()
-        self._hsp_obj.read(filepath)
-        logger.info("HSP 溶媒データ読み込み: %s", filepath)
-
-    def calculate_hsp_sphere(
-        self,
-        inside_limit: float = 1.0,
-        n_spheres: int = 1,
-    ) -> dict:
-        """
-        HSP 球体最適化計算。
-
-        Implements: Hansen 2007, §2.3 球体最適化アルゴリズム
-
-        Args:
-            inside_limit: 球体内判定閾値 (デフォルト 1.0)
-            n_spheres: 球体数 (1 or 2)
-
-        Returns:
-            dict: hsp=[δD,δP,δH], radius, accuracy, datafit, n_solvents_in/out, n_wrong_in/out
-        """
-        if self._hsp_obj is None:
-            raise ValueError("溶媒データ未読み込み。load_solvent_data()を先に実行してください。")
-
-        self._result = self._hsp_obj.get(
-            inside_limit=inside_limit,
-            n_spheres=n_spheres,
-        )
-
-        return {
-            "hsp": self._result.hsp.tolist(),
-            "radius": float(self._result.radius),
-            "accuracy": float(self._result.accuracy),
-            "datafit": float(self._result.datafit),
-            "n_solvents_in": int(self._result.n_solvents_in),
-            "n_solvents_out": int(self._result.n_solvents_out),
-            "n_wrong_in": int(self._result.n_wrong_in),
-            "n_wrong_out": int(self._result.n_wrong_out),
-        }
 
     @staticmethod
     def calculate_red_value(
@@ -121,25 +61,146 @@ class HSPCalculator:
             solvent_hsp: 溶媒の (δD, δP, δH)
             radius: 溶解性球体の半径 R₀
         """
-        d_diff = solute_hsp[0] - solvent_hsp[0]
-        p_diff = solute_hsp[1] - solvent_hsp[1]
-        h_diff = solute_hsp[2] - solvent_hsp[2]
-
-        # Hansenの距離式: 分散力は4倍の重み付け
-        ra = float(np.sqrt(4 * d_diff**2 + p_diff**2 + h_diff**2))
-
+        ra = HSPCalculator.hansen_distance(solute_hsp, solvent_hsp)
         if radius <= 0:
             return float("inf")
         return ra / radius
 
-    def plot_3d(self) -> Any:
-        """3D プロット (HSPiPy)。matplotlibのfigを返す。"""
-        if self._hsp_obj is None:
-            raise ValueError("データ未読み込み")
-        return self._hsp_obj.plot_3d()
+    @staticmethod
+    def hansen_distance(
+        hsp_a: tuple[float, float, float],
+        hsp_b: tuple[float, float, float],
+    ) -> float:
+        """
+        Hansen 距離 Ra 計算。
 
-    def plot_2d(self) -> Any:
-        """2D プロット (HSPiPy)。matplotlibのfigを返す。"""
-        if self._hsp_obj is None:
-            raise ValueError("データ未読み込み")
-        return self._hsp_obj.plot_2d()
+        Implements: Hansen 2007, §2.2 式(1)
+        引用: Ra = √(4·ΔδD² + ΔδP² + ΔδH²)
+
+        分散力は4倍の重み付け（van Krevelen 2009も同様の重み付け）。
+
+        Args:
+            hsp_a: (δD, δP, δH) of compound A
+            hsp_b: (δD, δP, δH) of compound B
+
+        Returns:
+            Hansen距離 Ra (MPa^0.5)
+        """
+        d_diff = hsp_a[0] - hsp_b[0]
+        p_diff = hsp_a[1] - hsp_b[1]
+        h_diff = hsp_a[2] - hsp_b[2]
+
+        return float(np.sqrt(4 * d_diff**2 + p_diff**2 + h_diff**2))
+
+    @staticmethod
+    def predict_from_smiles(smiles: str) -> dict[str, Any]:
+        """
+        SMILES → HSP 予測 (van Krevelen/Hoftyzer Group Contribution法)。
+
+        Implements: van Krevelen 2009, Table 4.3 + 式(4.6)-(4.8)
+
+        Args:
+            smiles: SMILES文字列
+
+        Returns:
+            {"delta_d", "delta_p", "delta_h", "delta_total",
+             "molar_volume", "method", "confidence"}
+        """
+        from backend.hsp.hsp_predictor import HSPPredictor
+        predictor = HSPPredictor()
+        return predictor.predict(smiles)
+
+    @staticmethod
+    def predict_batch(smiles_list: list[str]) -> Any:
+        """
+        バッチ SMILES → HSP 予測。
+
+        Args:
+            smiles_list: SMILES文字列のリスト
+
+        Returns:
+            pd.DataFrame
+        """
+        from backend.hsp.hsp_predictor import HSPPredictor
+        predictor = HSPPredictor()
+        return predictor.predict_batch(smiles_list)
+
+    @staticmethod
+    def fit_sphere(
+        hsp_data: list[tuple[float, float, float]],
+        labels: list[bool],
+    ) -> dict[str, Any]:
+        """
+        HSP球体フィッティング（scipy.optimize使用）。
+
+        実験溶解性データから最適なHSP中心と半径を求める。
+
+        Implements: Hansen 2007, §2.3 球体最適化
+        引用: 「溶解性球体の中心が溶質のHSP、半径がR₀」
+
+        Args:
+            hsp_data: 溶媒の[(δD, δP, δH), ...]
+            labels:   [True=溶解, False=不溶解, ...]
+
+        Returns:
+            {"center": [δD, δP, δH], "radius": R₀,
+             "accuracy": float, "n_correct": int}
+        """
+        if len(hsp_data) < 3:
+            raise ValueError("球体フィッティングには最低3点のデータが必要です")
+
+        from scipy.optimize import minimize
+
+        pts = np.array(hsp_data)
+        labs = np.array(labels, dtype=bool)
+
+        def _objective(params: np.ndarray) -> float:
+            center = params[:3]
+            r = abs(params[3])
+            # Hansen距離（4倍重み付け）
+            diffs = pts - center
+            dists = np.sqrt(4 * diffs[:, 0]**2 + diffs[:, 1]**2 + diffs[:, 2]**2)
+            # RED = dist / r
+            predicted_in = dists <= r
+            # 不一致数をコスト関数に
+            n_wrong = int(np.sum(predicted_in != labs))
+            # 正則化: 半径が極端に大きい/小さいのを防止
+            reg = 0.01 * (r - 5.0)**2
+            return float(n_wrong + reg)
+
+        # 初期値: 溶解点の重心を中心、距離の中央値を半径
+        if np.any(labs):
+            center0 = pts[labs].mean(axis=0)
+        else:
+            center0 = pts.mean(axis=0)
+
+        diffs0 = pts - center0
+        dists0 = np.sqrt(4 * diffs0[:, 0]**2 + diffs0[:, 1]**2 + diffs0[:, 2]**2)
+        r0 = float(np.median(dists0))
+
+        result = minimize(
+            _objective,
+            x0=np.array([*center0, r0]),
+            method="Nelder-Mead",
+            options={"maxiter": 5000, "xatol": 0.01, "fatol": 0.5},
+        )
+
+        center_opt = result.x[:3]
+        r_opt = abs(result.x[3])
+
+        # 精度計算
+        diffs_opt = pts - center_opt
+        dists_opt = np.sqrt(4 * diffs_opt[:, 0]**2 + diffs_opt[:, 1]**2 + diffs_opt[:, 2]**2)
+        predicted_in = dists_opt <= r_opt
+        n_correct = int(np.sum(predicted_in == labs))
+        accuracy = n_correct / len(labs)
+
+        return {
+            "center": center_opt.tolist(),
+            "radius": float(r_opt),
+            "accuracy": float(accuracy),
+            "n_correct": n_correct,
+            "n_total": len(labs),
+            "n_in": int(np.sum(predicted_in)),
+            "n_out": int(np.sum(~predicted_in)),
+        }

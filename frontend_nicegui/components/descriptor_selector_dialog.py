@@ -83,8 +83,8 @@ def open_descriptor_detail_dialog(
             n = len([n for n in all_desc_names if n in selected])
             count_lbl.text = f"{n}/{len(all_desc_names)} 選択中"
 
-        # ── クイックボタン ──
-        with ui.row().classes("q-gutter-sm q-mb-sm"):
+        # ── クイックボタン + 検索 (F-09) ──
+        with ui.row().classes("q-gutter-sm q-mb-sm items-center full-width"):
             def _select_all():
                 for n in all_desc_names:
                     selected.add(n)
@@ -106,6 +106,41 @@ def open_descriptor_detail_dialog(
                 "outline size=sm no-caps color=grey"
             )
 
+            ui.space()
+
+            # F-09: 検索ボックス
+            search_input = ui.input(
+                placeholder="🔍 記述子を検索...",
+            ).props(
+                'dense outlined clearable'
+            ).style("min-width: 280px;").tooltip(
+                "記述子名・カテゴリ名・日本語説明で絞り込み"
+            )
+
+            # 検索フィルタ用リスト
+            _filter_rows: list[tuple] = []
+            _filter_expansions: list[tuple] = []
+
+            def _on_search(e):
+                """検索テキストで記述子行の表示/非表示を切り替え"""
+                query = (e.value or "").lower().strip()
+                for row_el, text in _filter_rows:
+                    if not query or query in text:
+                        row_el.style(remove="display: none")
+                    else:
+                        row_el.style(add="display: none")
+                for exp_el, cat_text, child_texts in _filter_expansions:
+                    if not query:
+                        exp_el.style(remove="display: none")
+                    elif query in cat_text or any(query in t for t in child_texts):
+                        exp_el.style(remove="display: none")
+                        if query and query not in cat_text:
+                            exp_el.value = True
+                    else:
+                        exp_el.style(add="display: none")
+
+            search_input.on('update:model-value', _on_search)
+
         ui.separator()
 
         # ── カテゴリ別記述子一覧 ──
@@ -115,10 +150,14 @@ def open_descriptor_detail_dialog(
                 cat_group = [d for d in descs if d["name"].startswith("_")]
                 n_cat_sel = len([d for d in cat_actual if d["name"] in selected])
 
-                with ui.expansion(
+                exp_panel = ui.expansion(
                     f"{cat_name}  ({n_cat_sel}/{len(cat_actual)})",
                     icon="folder",
-                ).classes("full-width q-mb-xs"):
+                ).classes("full-width q-mb-xs")
+                # F-09: カテゴリのフィルタ登録
+                cat_search_texts = [d["name"].lower() + " " + d.get("short", "").lower() for d in cat_actual]
+                _filter_expansions.append((exp_panel, cat_name.lower(), cat_search_texts))
+                with exp_panel:
                     # カテゴリ内全選択/解除
                     cat_names_list = [d["name"] for d in cat_actual]
                     with ui.row().classes("q-gutter-xs q-mb-xs"):
@@ -157,9 +196,12 @@ def open_descriptor_detail_dialog(
                     for desc in cat_actual:
                         dname = desc["name"]
                         short = desc.get("short", "")
-                        with ui.row().classes("items-center q-gutter-xs").style(
+                        desc_row = ui.row().classes("items-center q-gutter-xs").style(
                             "min-height: 28px;"
-                        ):
+                        )
+                        # F-09: 行のフィルタ登録
+                        _filter_rows.append((desc_row, (dname + " " + short).lower()))
+                        with desc_row:
                             cb = ui.checkbox(
                                 dname,
                                 value=(dname in selected),
