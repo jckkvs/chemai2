@@ -14,6 +14,7 @@ LLM統合モジュール。
 from backend.llm.provider import LLMProvider, StubLLMProvider
 from backend.llm.generator import LLMDescriptorGenerator
 from backend.llm.registry import LLMProviderRegistry
+from backend.llm.reviewer import LLMCodeReviewer, CodeReviewResult
 
 _registry = LLMProviderRegistry()
 _registry.register("stub", StubLLMProvider)
@@ -41,6 +42,8 @@ __all__ = [
     "StubLLMProvider",
     "LLMDescriptorGenerator",
     "LLMProviderRegistry",
+    "LLMCodeReviewer",
+    "CodeReviewResult",
     "get_llm_provider",
     "register_llm_provider",
 ]

@@ -134,6 +134,15 @@ def render_data_tab(state: dict[str, Any]) -> None:
                     logger.debug(f"[DataTab] refreshed tab {key!r}")
                 except Exception as exc:
                     logger.warning(f"[DataTab] refresh failed for {key!r}: {exc}")
+        # 外側タブ（EDA・逆解析・結果・DoE）をコンテナ再描画
+        for refresh_key in ("_refresh_eda_main", "_refresh_inverse", "_refresh_results", "_refresh_doe"):
+            fn = state.get(refresh_key)
+            if callable(fn):
+                try:
+                    fn()
+                    logger.debug(f"[DataTab] called {refresh_key}")
+                except Exception as exc:
+                    logger.warning(f"[DataTab] {refresh_key} failed: {exc}")
 
     state["_refresh_tabs"] = _refresh_tabs_fn
 

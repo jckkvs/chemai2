@@ -681,10 +681,16 @@ def main_page():
             from frontend_nicegui.components.data_tab import render_data_tab
             render_data_tab(state)
 
-        # ── EDAタブ ──
+        # ── EDAタブ（コンテナ方式: データ読み込み後に再描画）──
         with ui.tab_panel(eda_tab):
-            from frontend_nicegui.components.eda_panel import render_eda_panel
-            render_eda_panel(state)
+            _eda_container = ui.column().classes("full-width")
+            def _build_eda():
+                _eda_container.clear()
+                with _eda_container:
+                    from frontend_nicegui.components.eda_panel import render_eda_panel
+                    render_eda_panel(state)
+            _build_eda()
+            state["_refresh_eda_main"] = _build_eda
 
         # ── パイプライン設定タブ ──
         with ui.tab_panel(pipeline_tab):
@@ -697,20 +703,38 @@ def main_page():
             from frontend_nicegui.components.pipeline_config_ui import render_pipeline_config
             render_pipeline_config(state)
 
-        # ── 結果確認タブ ──
+        # ── 結果確認タブ（コンテナ方式）──
         with ui.tab_panel(results_tab):
-            from frontend_nicegui.components.results_tab import render_results_tab
-            render_results_tab(state)
+            _results_container = ui.column().classes("full-width")
+            def _build_results():
+                _results_container.clear()
+                with _results_container:
+                    from frontend_nicegui.components.results_tab import render_results_tab
+                    render_results_tab(state)
+            _build_results()
+            state["_refresh_results"] = _build_results
 
-        # ── 逆解析タブ ──
+        # ── 逆解析タブ（コンテナ方式: データ読み込み後に再描画）──
         with ui.tab_panel(inverse_tab):
-            from frontend_nicegui.components.inverse_analysis_tab import render_inverse_analysis_tab
-            render_inverse_analysis_tab(state)
+            _inverse_container = ui.column().classes("full-width")
+            def _build_inverse():
+                _inverse_container.clear()
+                with _inverse_container:
+                    from frontend_nicegui.components.inverse_analysis_tab import render_inverse_analysis_tab
+                    render_inverse_analysis_tab(state)
+            _build_inverse()
+            state["_refresh_inverse"] = _build_inverse
 
-        # ── 実験計画タブ ──
+        # ── 実験計画タブ（コンテナ方式）──
         with ui.tab_panel(doe_tab):
-            from frontend_nicegui.components.doe_tab import render_doe_tab
-            render_doe_tab(state)
+            _doe_container = ui.column().classes("full-width")
+            def _build_doe():
+                _doe_container.clear()
+                with _doe_container:
+                    from frontend_nicegui.components.doe_tab import render_doe_tab
+                    render_doe_tab(state)
+            _build_doe()
+            state["_refresh_doe"] = _build_doe
 
     # ── SMILES列がある場合、特徴量計算をバックグラウンドで自動実行 ──
     # precalc_done=False の間だけ発火する定期ポーリング型。

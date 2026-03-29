@@ -1480,7 +1480,7 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                     )
 
                     with ui.expansion(
-                        f"{icon} {eng_name} ({n_sel}/{len(descs)})",
+                        f"{icon} {eng_name}  【選択: {n_sel} / 全{len(descs)}個】",
                         icon="memory",
                     ).classes("full-width q-mb-xs").props("dense"):
                         # ── エンジン情報ヘッダー ──
@@ -1509,7 +1509,10 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             ui.button("全解除", on_click=_desel_all_eng).props(
                                 "flat size=xs no-caps color=grey"
                             )
-                            ui.badge(f"{n_sel}/{len(descs)}", color=sel_color).props("outline")
+                            ui.badge(
+                                f"選択中 {n_sel} / 全{len(descs)}",
+                                color=sel_color
+                            ).props("outline")
 
                         # ── カタログベースのグループ分け ──
                         # カタログがあるエンジンはカタログのカテゴリを使用
@@ -1549,7 +1552,7 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                             g_color = "green" if g_sel == len(g_names) else "amber" if g_sel > 0 else "grey"
 
                             with ui.expansion(
-                                f"  {group_name} ({g_sel}/{len(g_names)})",
+                                f"  {group_name}  【選択: {g_sel} / 全{len(g_names)}個】",
                             ).classes("full-width q-mb-xs").props("dense"):
                                 # グループ単位の一括操作
                                 with ui.row().classes("q-gutter-xs q-mb-xs"):
