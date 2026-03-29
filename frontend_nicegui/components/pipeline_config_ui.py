@@ -384,7 +384,7 @@ def _tab_estimator(state: dict) -> None:
             continue
         n_selected = sum(1 for m in models if m["key"] in selected_models)
         with ui.expansion(
-            f"{cat_name} ({n_selected}/{len(models)})",
+            f"{cat_name}  【選択: {n_selected} / 全{len(models)}個】",
         ).classes("full-width q-mb-xs").props("dense"):
             for m in models:
                 mkey = m["key"]

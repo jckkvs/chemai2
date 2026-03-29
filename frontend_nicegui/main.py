@@ -694,6 +694,10 @@ def main_page():
 
         # ── パイプライン設定タブ ──
         with ui.tab_panel(pipeline_tab):
+            # 設定整合性チェッカー（常設）
+            from frontend_nicegui.components.settings_checker import render_settings_checker
+            render_settings_checker(state)
+            ui.separator().classes("q-my-sm")
             from frontend_nicegui.components.leakage_check_ui import render_leakage_check_panel
             render_leakage_check_panel(state)
             ui.separator().classes("q-my-sm")
@@ -702,6 +706,7 @@ def main_page():
             ui.separator().classes("q-my-sm")
             from frontend_nicegui.components.pipeline_config_ui import render_pipeline_config
             render_pipeline_config(state)
+
 
         # ── 結果確認タブ（コンテナ方式）──
         with ui.tab_panel(results_tab):
