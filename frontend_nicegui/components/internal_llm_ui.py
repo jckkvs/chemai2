@@ -257,15 +257,26 @@ async def _do_generate(ui_state: dict, btn, result_area) -> None:
             ui.label("生成されたコード:").classes("text-subtitle2 q-mb-xs")
             ui.code(code, language="python").classes("full-width q-mb-xs")
 
-            # 検証 & 保存ボタン
-            with ui.row().classes("q-gutter-sm"):
+            review_area = ui.column().classes("full-width q-mb-xs")
+
+            # ボタン群
+            with ui.row().classes("q-gutter-sm items-center"):
                 ui.button(
                     "このコードを検証 & 保存",
-                    on_click=lambda: _on_save_generated(code, ui_state),
+                    on_click=lambda c=code: _on_save_generated(c, ui_state),
                 ).props("unelevated no-caps color=teal dense")
 
+                ui.button(
+                    "🔍 LLMでレビュー",
+                    on_click=lambda c=code: asyncio.ensure_future(
+                        _do_review(c, ui_state.get("prompt_input", ""), mid, review_area)
+                    ),
+                ).props("unelevated no-caps color=purple dense")
+
                 def _copy():
-                    ui.clipboard.write(code)
+                    ui.run_javascript(
+                        f"navigator.clipboard.writeText({repr(code)})"
+                    )
                     ui.notify("クリップボードにコピーしました", type="positive")
 
                 ui.button("コピー", on_click=_copy).props("flat no-caps color=grey dense")
@@ -282,6 +293,96 @@ async def _do_generate(ui_state: dict, btn, result_area) -> None:
     finally:
         btn.enable()
         btn.text = "コードを生成（内部LLM）"
+
+
+async def _do_review(code: str, intent: str, model_id: str, review_area) -> None:
+    """LLMでコードをレビューする。"""
+    from backend.llm.providers.hf_provider import is_model_downloaded
+    from nicegui import run as ng_run
+
+    review_area.clear()
+    with review_area:
+        ui.label("レビュー中...").classes("text-grey-5 text-caption")
+
+    try:
+        if not is_model_downloaded(model_id):
+            review_area.clear()
+            with review_area:
+                ui.label("[静的チェックのみ] モデル未取得のため静的解析で代替します").classes("text-amber text-caption")
+            # 静的フォールバック
+            from backend.llm.reviewer import _static_fallback_review
+            result = _static_fallback_review(code)
+        else:
+            from backend.llm.providers.hf_provider import HuggingFaceProvider
+            from backend.llm.reviewer import LLMCodeReviewer
+
+            def _run_review():
+                provider = HuggingFaceProvider(model_id=model_id)
+                reviewer = LLMCodeReviewer(provider)
+                return reviewer.review(code, user_intent=intent)
+
+            result = await ng_run.io_bound(_run_review)
+
+        review_area.clear()
+        with review_area:
+            _render_review_result(result)
+
+    except Exception as e:
+        review_area.clear()
+        with review_area:
+            ui.label(f"レビューエラー: {e}").classes("text-red text-caption")
+        logger.exception("LLMレビューエラー")
+
+
+def _render_review_result(result) -> None:
+    """CodeReviewResult をUIに表示する。"""
+    # verdict に応じたカラー
+    color_map = {"PASS": "positive", "WARN": "warning", "FAIL": "negative"}
+    border_map = {
+        "PASS": "rgba(74,222,128,0.5)",
+        "WARN": "rgba(251,191,36,0.5)",
+        "FAIL": "rgba(239,68,68,0.5)",
+    }
+    icon_map = {"PASS": "check_circle", "WARN": "warning", "FAIL": "cancel"}
+
+    verdict = result.verdict
+    color = border_map.get(verdict, "rgba(99,102,241,0.3)")
+
+    with ui.card().classes("full-width q-pa-sm").style(
+        f"border:1px solid {color}; border-radius:8px; margin-top:4px;"
+    ):
+        # ヘッダー
+        with ui.row().classes("items-center q-gutter-sm q-mb-xs"):
+            ui.icon(icon_map.get(verdict, "info"), color=color_map.get(verdict, "grey")).classes("text-h5")
+            ui.label(f"レビュー結果: {verdict}").classes("text-body1 text-bold")
+            ui.badge(f"スコア {result.score}/100").props(
+                f"color={color_map.get(verdict, 'grey')}"
+            )
+
+        ui.label(result.summary).classes("text-caption q-mb-xs")
+
+        # 問題リスト
+        if result.issues:
+            sev_icon = {"ERROR": "error", "WARN": "warning_amber", "INFO": "info"}
+            sev_color = {"ERROR": "red", "WARN": "amber", "INFO": "grey"}
+            cat_label = {
+                "chemistry": "化学", "robustness": "堅牢性",
+                "completeness": "完全性", "performance": "性能",
+            }
+            for issue in result.issues:
+                with ui.row().classes("items-start q-gutter-xs q-mb-xs"):
+                    ui.icon(
+                        sev_icon.get(issue.severity, "info"),
+                        color=sev_color.get(issue.severity, "grey"),
+                    ).classes("text-body1")
+                    with ui.column().classes("q-gutter-none"):
+                        ui.label(
+                            f"[{issue.severity}][{cat_label.get(issue.category, issue.category)}] {issue.message}"
+                        ).classes("text-caption text-bold")
+                        if issue.suggestion:
+                            ui.label(f"→ {issue.suggestion}").classes("text-caption text-grey-5")
+        else:
+            ui.label("問題は検出されませんでした").classes("text-caption text-positive")
 
 
 def _on_save_generated(code: str, ui_state: dict) -> None:

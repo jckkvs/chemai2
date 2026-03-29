@@ -3218,10 +3218,32 @@ def _render_custom_plugins(state: dict) -> None:
 
                             ui.notify(f"✅ {save_path.name} — テスト済みで保存しました", type="positive")
 
-                    ui.button(
-                        "\U0001f50d 検証して保存（ランタイムテスト付き）",
-                        on_click=_on_validate_save,
-                    ).props("unelevated no-caps color=teal")
+                    _ext_review_area = ui.column().classes("full-width q-mt-xs")
+
+                    with ui.row().classes("q-gutter-sm items-center q-mt-sm"):
+                        ui.button(
+                            "\U0001f50d 検証して保存（ランタイムテスト付き）",
+                            on_click=_on_validate_save,
+                        ).props("unelevated no-caps color=teal")
+
+                        async def _on_ext_review():
+                            raw_code = _ext_state.get("pasted_code", "").strip()
+                            if not raw_code:
+                                ui.notify("レビュー対象のコードを貼り付けてください", type="warning")
+                                return
+                            from frontend_nicegui.components.internal_llm_ui import (
+                                _do_review,
+                            )
+                            from backend.llm.providers.hf_provider import load_hf_config
+                            cfg = load_hf_config()
+                            mid = cfg.get("model_id", "Qwen/Qwen2.5-Coder-1.5B-Instruct")
+                            intent = _ext_state.get("what", "")
+                            await _do_review(raw_code, intent, mid, _ext_review_area)
+
+                        ui.button(
+                            "🔍 LLMでレビュー",
+                            on_click=lambda: __import__("asyncio").ensure_future(_on_ext_review()),
+                        ).props("unelevated no-caps color=purple")
 
             # ══════════════════════════════════════════════
             # 🤖 内部AI（HuggingFace ローカルLLM）タブ
