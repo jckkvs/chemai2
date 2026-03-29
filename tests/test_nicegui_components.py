@@ -337,6 +337,78 @@ class TestAllEngines:
         assert len(_ALL_ENGINES) == 14
 
 
+
+# ================================================================
+# descriptor_plugins_ui.py の _ENGINE_INFO テスト
+# ================================================================
+
+class TestEngineInfo:
+    """_ENGINE_INFO 定数のテスト (manual_url フィールド含む)"""
+
+    def _get_engine_info(self):
+        from frontend_nicegui.components.descriptor_plugins_ui import _ENGINE_INFO
+        return _ENGINE_INFO
+
+    def test_engine_info_not_empty(self):
+        """_ENGINE_INFO が空でないこと"""
+        engines = self._get_engine_info()
+        assert len(engines) > 0
+
+    def test_engine_info_count(self):
+        """14エンジンが定義されていること"""
+        engines = self._get_engine_info()
+        assert len(engines) == 14
+
+    def test_all_engines_have_manual_url(self):
+        """全エンジンに manual_url フィールドが存在すること"""
+        engines = self._get_engine_info()
+        for eng in engines:
+            assert "manual_url" in eng, f"{eng['cls']} に manual_url がありません"
+
+    def test_all_manual_urls_are_non_empty(self):
+        """manual_url が空文字でないこと"""
+        engines = self._get_engine_info()
+        for eng in engines:
+            url = eng.get("manual_url", "")
+            assert url, f"{eng['cls']} の manual_url が空です"
+
+    def test_all_manual_urls_start_with_http(self):
+        """manual_url が http:// または https:// で始まること"""
+        engines = self._get_engine_info()
+        for eng in engines:
+            url = eng.get("manual_url", "")
+            assert url.startswith("http://") or url.startswith("https://"), \
+                f"{eng['cls']} の manual_url ({url}) が無効なURL形式です"
+
+    def test_required_fields_present(self):
+        """必須フィールド (cls, label, category, dims, speed, desc, manual_url) が全て存在すること"""
+        required_keys = {"cls", "label", "category", "dims", "speed", "desc", "manual_url"}
+        engines = self._get_engine_info()
+        for eng in engines:
+            missing = required_keys - set(eng.keys())
+            assert not missing, f"{eng['cls']} にフィールドがありません: {missing}"
+
+    def test_engine_cls_names_unique(self):
+        """cls 名がすべて一意であること"""
+        engines = self._get_engine_info()
+        cls_names = [e["cls"] for e in engines]
+        assert len(cls_names) == len(set(cls_names)), "重複する cls 名があります"
+
+    def test_rdkit_adapter_url(self):
+        """RDKitAdapter のマニュアル URL が正しいこと"""
+        engines = self._get_engine_info()
+        rdkit_eng = next((e for e in engines if e["cls"] == "RDKitAdapter"), None)
+        assert rdkit_eng is not None
+        assert "rdkit.org" in rdkit_eng["manual_url"]
+
+    def test_xtb_adapter_url(self):
+        """XTBAdapter の manual_url が xtb-docs.readthedocs.io であること"""
+        engines = self._get_engine_info()
+        xtb_eng = next((e for e in engines if e["cls"] == "XTBAdapter"), None)
+        assert xtb_eng is not None
+        assert "xtb-docs" in xtb_eng["manual_url"]
+
+
 # ================================================================
 # auto_params_ui.py のインポートテスト
 # ================================================================

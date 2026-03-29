@@ -85,7 +85,12 @@ class UniPkaAdapter(BaseChemAdapter):
             records.append(row)
 
         df = pd.DataFrame(records, columns=list(_UNIPKA_DESCRIPTORS.keys()))
-        return DescriptorResult(descriptors=df)
+        return DescriptorResult(
+            descriptors=df,
+            smiles_list=smiles_list,
+            failed_indices=[],
+            adapter_name=self.name,
+        )
 
     def get_descriptor_names(self) -> list[str]:
         return list(_UNIPKA_DESCRIPTORS.keys())

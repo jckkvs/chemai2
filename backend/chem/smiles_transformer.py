@@ -42,10 +42,12 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
         self,
         smiles_col: str,
         selected_descriptors: list[str] | None = None,
+        active_engines: list[str] | None = None,
         count_normalization: str = "density",
     ) -> None:
         self.smiles_col = smiles_col
         self.selected_descriptors = selected_descriptors
+        self.active_engines = active_engines
         self.count_normalization = count_normalization  # "raw" or "density"
         self._descriptor_cols: list[str] = []
         self._non_smiles_cols: list[str] = []
@@ -123,8 +125,24 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
         else:
             # ── プラグインレジストリ経由で全記述子を計算 ──
             try:
-                from backend.chem.descriptors import compute_all_descriptors
-                X_chem = compute_all_descriptors(smiles_list)
+                from backend.chem.descriptors import compute_all_descriptors, get_plugins_by_engine
+                
+                # エンジン名から必要なプラグイン名を特定
+                plugin_names = None
+                if self.active_engines is not None:
+                    plugin_names = []
+                    for e in self.active_engines:
+                        # RDKitAdapter -> RDKit 等の変換
+                        eng_map = {"RDKitAdapter": "RDKit", "XTBAdapter": "XTB", "MordredAdapter": "Mordred", 
+                                "SkfpAdapter": "scikit-FP", "Mol2VecAdapter": "Mol2Vec", "GroupContribAdapter": "GroupContrib",
+                                "MolAIAdapter": "MolAI", "UMAAdapter": "UMA", "PaDELAdapter": "PaDEL", 
+                                "DescriptaStorusAdapter": "DescriptaStorus", "MolfeatAdapter": "Molfeat", 
+                                "ChempropAdapter": "Chemprop", "CosmoAdapter": "COSMO", "UniPkaAdapter": "UniPKa"}
+                        eng_str = eng_map.get(e, e)
+                        for p in get_plugins_by_engine(eng_str):
+                            plugin_names.append(p.name)
+                            
+                X_chem = compute_all_descriptors(smiles_list, plugin_names=plugin_names)
                 if not X_chem.empty:
                     # 選択されている場合はフィルタリング
                     if self.selected_descriptors:
@@ -133,8 +151,8 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
                             X_chem = X_chem[valid]
                         else:
                             logger.warning(
-                                "selected_descriptorsの記述子がいずれも計算結果に存在しません。"
-                                "全記述子を使用します (フォールバック)。"
+                                f"selected_descriptorsの記述子がいずれも計算結果に存在しません。"
+                                f"フォールバックとして計算結果({X_chem.shape[1]}列)をそのまま使用します。"
                             )
                     return X_chem
                 else:
@@ -267,12 +285,24 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
             return None
 
     def fit(self, X: pd.DataFrame, y: Any = None) -> "SmilesDescriptorTransformer":
-        """学習フェーズで記述子カラム名を記憶する。"""
+        """学習フェーズで記述子カラム名を記憶する。
+
+        全NaN列は除去してから _descriptor_cols を記憶することで、
+        CV fold 間での列名不一致（KeyError）を防ぐ。
+        """
         if self.smiles_col not in X.columns:
             raise ValueError(f"SMILES列 '{self.smiles_col}' がDataFrameに存在しません。")
         smiles_list = X[self.smiles_col].tolist()
         X_chem = self._compute_descriptors(smiles_list)
         X_chem = self._apply_count_normalization(X_chem, smiles_list)
+        # ── 全NaN列の除去（XTB未インストール等で全行NaNになる列を除外）
+        # ── これによりTypeDetectorに渡るDFとCV時のDFが一致する。
+        all_nan_cols = [c for c in X_chem.columns if X_chem[c].isna().all()]
+        if all_nan_cols:
+            logger.info(
+                f"全行NaN列を除去: {len(all_nan_cols)}列 (例: {all_nan_cols[:5]})"
+            )
+            X_chem = X_chem.drop(columns=all_nan_cols)
         self._descriptor_cols = X_chem.columns.tolist()
         self._non_smiles_cols = [c for c in X.columns if c != self.smiles_col]
         return self

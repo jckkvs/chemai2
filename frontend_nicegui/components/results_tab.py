@@ -21,9 +21,9 @@ def render_results_tab(state: dict[str, Any]) -> None:
 
     # 結果が全くない場合
     if not all_results and single_ar is None:
-        with ui.card().classes("glass-card q-pa-xl full-width"):
-            ui.icon("analytics", color="grey-7", size="xl").classes("q-mb-md")
-            ui.label("解析結果がまだありません").classes("text-h6 text-grey-5")
+        with ui.card().classes("glass-card q-pa-xl full-width animate-slide-up items-center justify-center text-center").props('data-testid="no-results-card"'):
+            ui.icon("analytics", color="grey-7", size="xl").classes("q-mb-md").props('aria-hidden="true"')
+            ui.label("解析結果がまだありません").classes("text-h6 text-grey-5").props('role="heading" aria-level="2"')
             ui.label(
                 "「📂 データ設定」タブでデータを読み込み、画面上部の「🚀 解析開始」ボタンを押してください。"
             ).classes("text-grey-6 q-mt-sm")
@@ -36,8 +36,8 @@ def render_results_tab(state: dict[str, Any]) -> None:
 
     # ── セット比較テーブル（2セット以上の場合） ──
     if len(success_results) >= 2:
-        with ui.card().classes("glass-card q-pa-md full-width q-mb-md"):
-            ui.label("📊 記述子セット比較").classes("text-h6 q-mb-sm")
+        with ui.card().classes("glass-card q-pa-md full-width q-mb-md").props('data-testid="set-comparison-card"'):
+            ui.label("📊 記述子セット比較").classes("text-h6 q-mb-sm").props('role="heading" aria-level="2"')
             comp_rows = []
             for sn, sr in success_results.items():
                 proc_X = getattr(sr, "processed_X", None)
@@ -61,7 +61,7 @@ def render_results_tab(state: dict[str, Any]) -> None:
             ]
             ui.table(
                 columns=comp_cols, rows=comp_rows, row_key="set_name",
-            ).classes("full-width").props("dense flat bordered")
+            ).classes("full-width").props('dense flat bordered data-testid="set-comparison-table"')
 
     # ── セット切替ドロップダウン ──
     set_names = list(success_results.keys())
@@ -73,13 +73,13 @@ def render_results_tab(state: dict[str, Any]) -> None:
         current_view = set_names[0]
 
     if len(set_names) >= 2:
-        with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
-            ui.icon("layers", color="cyan")
-            ui.label("表示セット:").classes("text-body2")
+        with ui.row().classes("items-center q-gutter-sm q-mb-sm").props('role="navigation" aria-label="表示セット切り替え"'):
+            ui.icon("layers", color="cyan").props('aria-hidden="true"')
+            ui.label("表示セット:").classes("text-body2").props('id="set-select-label"')
             ui.select(
                 set_names, value=current_view,
                 on_change=lambda e: state.update({"_viewing_set": e.value}),
-            ).props("outlined dense options-dense").style("min-width: 200px;")
+            ).props('outlined dense options-dense aria-labelledby="set-select-label" data-testid="set-selector"').style("min-width: 200px;")
             ui.label(
                 "※ セットを切り替えるとページ下部の詳細結果が変わります"
             ).classes("text-caption text-grey-6")
@@ -87,11 +87,11 @@ def render_results_tab(state: dict[str, Any]) -> None:
     ar = success_results.get(current_view, single_ar)
 
     # ── 結果サマリーカード（ファーストビュー） ──
-    with ui.card().classes("glass-card q-pa-md full-width q-mb-md"):
+    with ui.card().classes("glass-card q-pa-md full-width q-mb-md animate-slide-up best-model-glow").props('data-testid="best-model-summary-card"'):
         # 行1: 最良モデル + スコア
         with ui.row().classes("items-center q-gutter-md"):
-            ui.icon("emoji_events", color="amber", size="lg")
-            ui.label(f"最良モデル: {ar.best_model_key}").classes("text-h5 text-bold hero-gradient")
+            ui.icon("emoji_events", color="amber", size="lg").props('aria-label="最良モデル"')
+            ui.label(f"最良モデル: {ar.best_model_key}").classes("text-h5 text-bold hero-gradient").props('role="heading" aria-level="2" id="best-model-title"')
             ui.badge(f"{ar.best_score:.4f}", color="cyan").props("floating")
 
         # 行2: 統計カード群
@@ -109,13 +109,14 @@ def render_results_tab(state: dict[str, Any]) -> None:
             runner_up_text = f"2位: {runner_up_key} ({runner_up_score:.4f}, 差: {diff:+.4f})"
 
         with ui.row().classes("q-gutter-sm q-mt-sm"):
-            for val, lbl, icon_name in [
+            for i, (val, lbl, icon_name) in enumerate([
                 (ar.task, "タスク", "category"),
                 (f"{ar.elapsed_seconds:.1f}秒", "所要時間", "timer"),
                 (f"{n_models}個", "比較モデル数", "compare_arrows"),
                 (str(n_feats), "特徴量数", "functions"),
-            ]:
-                with ui.card().classes("q-pa-xs").style(
+            ]):
+                delay_class = f"delay-{(i+1)*100}"
+                with ui.card().classes(f"q-pa-xs animate-slide-up hover-bounce {delay_class}").style(
                     "min-width: 90px; background: rgba(0,212,255,0.08); border-radius: 8px;"
                 ):
                     with ui.row().classes("items-center q-gutter-xs"):
@@ -159,22 +160,22 @@ def render_results_tab(state: dict[str, Any]) -> None:
                 ui.notify("📥 CSVダウンロードを開始しました", type="positive")
 
             ui.button("📥 結果CSV", on_click=_export_csv).props(
-                "outline color=cyan size=sm no-caps icon=download"
+                'outline color=cyan size=sm no-caps icon=download data-testid="export-csv-btn" aria-label="結果CSVをダウンロード"'
             ).tooltip("モデル比較表 + OOF予測値をCSVダウンロード")
 
     # ── 警告 ──
     if ar.warnings:
-        with ui.expansion(f"⚠️ 警告 ({len(ar.warnings)}件)", icon="warning").classes("full-width q-mb-md"):
+        with ui.expansion(f"⚠️ 警告 ({len(ar.warnings)}件)", icon="warning").classes("full-width q-mb-md animate-shake"):
             for w in ar.warnings:
                 ui.label(f"⚠️ {w}").classes("text-amber text-caption")
 
     # ── 結果サブタブ ──
-    with ui.tabs().classes("full-width").props("dense active-color=cyan indicator-color=cyan") as res_tabs:
-        tab_eval = ui.tab("eval", label="📈 モデル評価", icon="leaderboard")
-        tab_data = ui.tab("data", label="📊 前処理後データ", icon="table_chart")
-        tab_interp = ui.tab("interp", label="🔬 モデル解釈性", icon="psychology")
-        tab_batch = ui.tab("batch", label="🔮 バッチ予測", icon="batch_prediction")
-        tab_report = ui.tab("report", label="📝 レポート", icon="summarize")
+    with ui.tabs().classes("full-width").props('dense active-color=cyan indicator-color=cyan data-testid="results-tabs"') as res_tabs:
+        tab_eval = ui.tab("eval", label="📈 モデル評価", icon="leaderboard").props('data-testid="tab-eval"')
+        tab_data = ui.tab("data", label="📊 前処理後データ", icon="table_chart").props('data-testid="tab-data"')
+        tab_interp = ui.tab("interp", label="🔬 モデル解釈性", icon="psychology").props('data-testid="tab-interp"')
+        tab_batch = ui.tab("batch", label="🔮 バッチ予測", icon="batch_prediction").props('data-testid="tab-batch"')
+        tab_report = ui.tab("report", label="📝 レポート", icon="summarize").props('data-testid="tab-report"')
 
     with ui.tab_panels(res_tabs, value=tab_eval).classes("full-width"):
 
@@ -231,7 +232,8 @@ def _render_model_evaluation(ar) -> None:
 
     with ui.row().classes("items-center q-gutter-none q-mb-md full-width justify-center"):
         for i, (icon, label, detail) in enumerate(flow_steps):
-            with ui.card().classes("q-pa-xs text-center").style(
+            delay_class = f"delay-{(i+1)*100}"
+            with ui.card().classes(f"q-pa-xs text-center animate-slide-up hover-bounce {delay_class}").style(
                 "min-width: 100px; background: rgba(0,212,255,0.08); border-radius: 8px;"
                 "border: 1px solid rgba(0,212,255,0.2);"
             ):
@@ -271,7 +273,7 @@ def _render_model_evaluation(ar) -> None:
         for key, detail in ar.model_details.items():
             fold_scores = detail.get("fold_scores", [])
             if fold_scores:
-                with ui.card().classes("glass-card q-pa-sm q-mb-sm"):
+                with ui.card().classes("glass-card q-pa-sm q-mb-sm hover-bounce"):
                     ui.label(f"{'🏆 ' if key == ar.best_model_key else ''}{key}").classes(
                         "text-subtitle2 text-bold" if key == ar.best_model_key else "text-subtitle2"
                     )
@@ -294,12 +296,13 @@ def _render_model_evaluation(ar) -> None:
                 rmse = mean_squared_error(ar.oof_true, ar.oof_predictions, squared=False)
                 mae = mean_absolute_error(ar.oof_true, ar.oof_predictions)
                 with ui.row().classes("q-gutter-md"):
-                    for val, lbl in [
+                    for i, (val, lbl) in enumerate([
                         (f"{r2:.4f}", "R² (OOF)"),
                         (f"{rmse:.4f}", "RMSE (OOF)"),
                         (f"{mae:.4f}", "MAE (OOF)"),
-                    ]:
-                        with ui.card().classes("glass-card q-pa-sm"):
+                    ]):
+                        delay_class = f"delay-{(i+1)*100}"
+                        with ui.card().classes(f"glass-card q-pa-sm animate-slide-up hover-bounce {delay_class}"):
                             ui.label(val).classes("text-h6 text-bold hero-gradient")
                             ui.label(lbl).classes("text-caption text-grey-5")
             else:
@@ -307,11 +310,12 @@ def _render_model_evaluation(ar) -> None:
                 acc = accuracy_score(ar.oof_true, ar.oof_predictions)
                 f1 = f1_score(ar.oof_true, ar.oof_predictions, average="weighted", zero_division=0)
                 with ui.row().classes("q-gutter-md"):
-                    for val, lbl in [
+                    for i, (val, lbl) in enumerate([
                         (f"{acc:.4f}", "Accuracy (OOF)"),
                         (f"{f1:.4f}", "F1-weighted (OOF)"),
-                    ]:
-                        with ui.card().classes("glass-card q-pa-sm"):
+                    ]):
+                        delay_class = f"delay-{(i+1)*100}"
+                        with ui.card().classes(f"glass-card q-pa-sm animate-slide-up hover-bounce {delay_class}"):
                             ui.label(val).classes("text-h6 text-bold hero-gradient")
                             ui.label(lbl).classes("text-caption text-grey-5")
         except Exception as ex:
@@ -343,12 +347,13 @@ def _render_processed_data(ar) -> None:
 
     # メトリクスカード
     with ui.row().classes("q-gutter-md"):
-        for val, lbl in [
+        for i, (val, lbl) in enumerate([
             (f"{proc_X.shape[0]:,}", "サンプル数"),
             (f"{proc_X.shape[1]:,}", "特徴量数"),
             (f"{int(proc_X.isnull().sum().sum()):,}" if hasattr(proc_X, "isnull") else "0", "欠損値"),
-        ]:
-            with ui.card().classes("glass-card q-pa-sm"):
+        ]):
+            delay_class = f"delay-{(i+1)*100}"
+            with ui.card().classes(f"glass-card q-pa-sm animate-slide-up hover-bounce {delay_class}"):
                 ui.label(val).classes("text-h6 text-bold hero-gradient")
                 ui.label(lbl).classes("text-caption text-grey-5")
 

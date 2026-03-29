@@ -96,22 +96,28 @@ def render_inverse_analysis_tab(state: dict[str, Any]) -> None:
     # ── ヘッダー ──
     with ui.row().classes("items-center q-gutter-sm full-width q-mb-md"):
         ui.icon("find_replace", color="purple").classes("text-h4")
-        ui.label("逆解析（Inverse Analysis）").classes("text-h5")
+        ui.label("逆解析").classes("text-h5")
         if has_result:
-            ui.badge("順解析完了 ✅", color="green").props("outline")
+            ui.badge("モデル準備完了 ✅", color="green").props("outline")
+        elif has_data:
+            ui.badge("設定可能 / 実行には順解析が必要", color="amber").props("outline")
         else:
-            ui.badge("順解析未完了", color="amber").props("outline")
+            ui.badge("データ未読込", color="grey").props("outline")
 
-    # ── 前提条件チェック ──
-    if not has_result:
-        _render_prerequisite_notice(state)
+    # ── データなし → 最小限のガイドのみ表示して終了 ──
+    if not has_data:
+        with ui.card().classes("full-width q-pa-md").style(
+            "border: 1px dashed rgba(255,255,255,0.2); border-radius: 10px;"
+        ):
+            with ui.row().classes("items-center q-gutter-sm"):
+                ui.icon("upload_file", color="grey").classes("text-h5")
+                ui.label("データを読み込むと逆解析の設定が可能になります").classes("text-body2 text-grey")
         return
 
-    # ── 逆解析設定UI ──
-    # 逆解析用のサブステート
+    # ── 逆解析設定初期化 ──
     if "_inv" not in state:
         state["_inv"] = {
-            "target_mode": "range",       # range / maximize / minimize
+            "target_mode": "range",
             "target_min": None,
             "target_max": None,
             "constraints": {},            # {col: {min, max, fixed, fixed_val}}
@@ -121,32 +127,58 @@ def render_inverse_analysis_tab(state: dict[str, Any]) -> None:
         }
     inv = state["_inv"]
 
-    # ── ワークフロー表示 ──
+    # ── ワークフロー進捗バー ──
     with ui.row().classes("items-center q-gutter-sm q-mb-md"):
         ui.badge("1", color="green").props("rounded")
-        ui.label("順解析完了").classes("text-body2 text-green")
-        ui.icon("check", color="green")
+        ui.label("データ読込").classes("text-body2 text-green")
         ui.icon("arrow_forward", color="grey")
         ui.badge("2", color="cyan").props("rounded")
         ui.label("逆解析設定").classes("text-body2 text-cyan text-bold")
         ui.icon("arrow_forward", color="grey")
-        ui.badge("3", color="grey").props("rounded outline")
-        ui.label("実行・結果").classes("text-body2 text-grey")
+        ui.badge("3", color="green" if has_result else "grey").props(
+            "rounded" if has_result else "rounded outline"
+        )
+        ui.label("順解析完了").classes(f"text-body2 {'text-green' if has_result else 'text-grey'}")
+        if has_result:
+            ui.icon("check", color="green")
+        ui.icon("arrow_forward", color="grey")
+        ui.badge("4", color="grey").props("rounded outline")
+        ui.label("逆解析実行").classes("text-body2 text-grey")
 
-    # ── 使用モデル選択 ──
-    _render_model_selector(state, inv)
+    # ── 使用モデル（順解析完了時のみ） ──
+    if has_result:
+        _render_model_selector(state, inv)
 
-    # ── 目的変数の目標設定 ──
+    # ── 目的変数の目標設定（常に表示） ──
     _render_target_settings(state, inv)
 
-    # ── 説明変数の制約設定 ──
+    # ── 説明変数の制約設定（常に表示） ──
     _render_constraint_settings(state, inv)
 
-    # ── 最適化手法選択 ──
+    # ── 最適化手法選択（常に表示） ──
     _render_method_selector(inv)
 
-    # ── 実行ボタン ──
-    _render_execute_section(state, inv)
+    # ── 実行セクション（モデルなしの場合は無効バナー付き） ──
+    if not has_result:
+        with ui.card().classes("full-width q-pa-sm q-mb-sm").style(
+            "border: 1px solid rgba(251,191,36,0.4); border-radius: 8px;"
+            "background: rgba(50,40,0,0.25);"
+        ):
+            with ui.row().classes("items-center q-gutter-sm"):
+                ui.icon("info_outline", color="amber")
+                ui.label(
+                    "実行には順解析の完了が必要です"
+                ).classes("text-body2 text-amber")
+                ui.space()
+                ui.button(
+                    "🚀 順解析を開始",
+                    on_click=lambda: (
+                        __import__("asyncio").ensure_future(state["_run_analysis"]())
+                        if state.get("_run_analysis") else None
+                    ),
+                ).props("outline size=sm no-caps color=amber")
+
+    _render_execute_section(state, inv, enabled=has_result)
 
     # ── 結果表示 ──
     if inv.get("results") is not None:
@@ -1129,8 +1161,8 @@ def _render_method_params(method: dict, inv: dict) -> None:
 # ═══════════════════════════════════════════════════════════
 # 実行セクション
 # ═══════════════════════════════════════════════════════════
-def _render_execute_section(state: dict, inv: dict) -> None:
-    """逆解析の実行ボタンと進捗表示。"""
+def _render_execute_section(state: dict, inv: dict, enabled: bool = True) -> None:
+    """逆解析の実行ボタンと進捗表示。enabled=Falseでボタンを無効化。"""
     with ui.card().classes("full-width q-pa-md q-mb-sm").style(
         "border: 2px solid rgba(0,212,255,0.5); border-radius: 12px;"
         "background: linear-gradient(135deg, rgba(0,40,80,0.6), rgba(0,20,60,0.4));"
@@ -1267,7 +1299,12 @@ def _render_execute_section(state: dict, inv: dict) -> None:
             ).props("unelevated size=lg no-caps color=purple").classes("text-bold").style(
                 "font-size: 1.05rem;"
             )
-            inv_btn.tooltip("設定した条件で逆解析を実行します（ランダム/グリッド/ベイズ/GA対応）")
+            if not enabled:
+                inv_btn.disable()
+                inv_btn.tooltip("順解析を完了すると実行できます")
+            else:
+                inv_btn.tooltip("設定した条件で逆解析を実行します（ランダム/グリッド/ベイズ/GA対応）")
+
 
 
 # ═══════════════════════════════════════════════════════════

@@ -34,33 +34,47 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════
 _ENGINE_INFO: list[dict[str, Any]] = [
     {"cls": "RDKitAdapter", "label": "RDKit 基本記述子", "category": "物理化学",
-     "dims": "~200", "speed": "⚡高速", "desc": "MW, LogP, TPSA, HBA/HBD等"},
+     "dims": "~200", "speed": "⚡高速", "desc": "MW, LogP, TPSA, HBA/HBD等",
+     "manual_url": "https://www.rdkit.org/docs/GettingStartedInPython.html"},
     {"cls": "GroupContribAdapter", "label": "基団寄与法", "category": "物理化学",
-     "dims": "~15", "speed": "⚡高速", "desc": "Crippen LogP, MR分解"},
+     "dims": "~15", "speed": "⚡高速", "desc": "Crippen LogP, MR分解",
+     "manual_url": "https://www.rdkit.org/docs/GettingStartedInPython.html#descriptor-calculation"},
     {"cls": "SkfpAdapter", "label": "scikit-fingerprints", "category": "フィンガープリント",
-     "dims": "~2200", "speed": "⚡高速", "desc": "ECFP, MACCS, Avalon等30+種"},
+     "dims": "~2200", "speed": "⚡高速", "desc": "ECFP, MACCS, Avalon等30+種",
+     "manual_url": "https://scikit-fingerprints.readthedocs.io/"},
     {"cls": "MolfeatAdapter", "label": "Molfeat", "category": "フィンガープリント",
-     "dims": "可変", "speed": "⚡高速", "desc": "統合FPフレームワーク"},
+     "dims": "可変", "speed": "⚡高速", "desc": "統合FPフレームワーク",
+     "manual_url": "https://molfeat.datamol.io/"},
     {"cls": "MordredAdapter", "label": "Mordred", "category": "包括的QSPR",
-     "dims": "~1800", "speed": "🟡中速", "desc": "2D/3D記述子を網羅的に計算"},
+     "dims": "~1800", "speed": "🟡中速", "desc": "2D/3D記述子を網羅的に計算",
+     "manual_url": "https://mordred-descriptor.github.io/documentation/"},
     {"cls": "DescriptaStorusAdapter", "label": "DescriptaStorus", "category": "包括的QSPR",
-     "dims": "~200", "speed": "⚡高速", "desc": "Merck開発の高速記述子"},
+     "dims": "~200", "speed": "⚡高速", "desc": "Merck開発の高速記述子",
+     "manual_url": "https://github.com/bp-kelley/descriptastorus"},
     {"cls": "PaDELAdapter", "label": "PaDEL", "category": "包括的QSPR",
-     "dims": "~1800", "speed": "🟡中速", "desc": "PaDEL-Descriptor互換"},
+     "dims": "~1800", "speed": "🟡中速", "desc": "PaDEL-Descriptor互換",
+     "manual_url": "http://www.yapcwsoft.com/dd/padeldescriptor/"},
     {"cls": "MolAIAdapter", "label": "MolAI (CNN+PCA)", "category": "深層学習",
-     "dims": "指定可", "speed": "🟡中速", "desc": "CNN潜在ベクトル→PCA次元圧縮"},
+     "dims": "指定可", "speed": "🟡中速", "desc": "CNN潜在ベクトル→PCA次元圧縮",
+     "manual_url": "https://molfeat.datamol.io/featurizers/pretrained"},
     {"cls": "Mol2VecAdapter", "label": "Mol2Vec", "category": "深層学習",
-     "dims": "300", "speed": "🟡中速", "desc": "Word2Vec分散表現"},
+     "dims": "300", "speed": "🟡中速", "desc": "Word2Vec分散表現",
+     "manual_url": "https://github.com/samoturk/mol2vec"},
     {"cls": "ChempropAdapter", "label": "Chemprop (D-MPNN)", "category": "深層学習",
-     "dims": "可変", "speed": "🔴低速", "desc": "Directed Message Passing GNN"},
+     "dims": "可変", "speed": "🔴低速", "desc": "Directed Message Passing GNN",
+     "manual_url": "https://chemprop.readthedocs.io/"},
     {"cls": "XTBAdapter", "label": "xTB (GFN2-xTB)", "category": "量子化学",
-     "dims": "~20", "speed": "🔴低速", "desc": "HOMO, LUMO, 双極子, 分極率"},
+     "dims": "~20", "speed": "🔴低速", "desc": "HOMO, LUMO, 双極子, 分極率",
+     "manual_url": "https://xtb-docs.readthedocs.io/"},
     {"cls": "CosmoAdapter", "label": "COSMO-RS", "category": "量子化学",
-     "dims": "~10", "speed": "🔴低速", "desc": "溶媒和自由エネルギー, σプロファイル"},
+     "dims": "~10", "speed": "🔴低速", "desc": "溶媒和自由エネルギー, σプロファイル",
+     "manual_url": "https://www.scm.com/addon/cosmo-rs/"},
     {"cls": "UniPkaAdapter", "label": "UniPKa", "category": "量子化学",
-     "dims": "~5", "speed": "🟡中速", "desc": "酸解離定数pKa予測"},
+     "dims": "~5", "speed": "🟡中速", "desc": "酸解離定数pKa予測",
+     "manual_url": "https://github.com/mayrf/pkasolver"},
     {"cls": "UMAAdapter", "label": "UMA (Meta FAIR)", "category": "量子化学",
-     "dims": "~7", "speed": "🔴低速", "desc": "DFTレベル分子物性"},
+     "dims": "~7", "speed": "🔴低速", "desc": "DFTレベル分子物性",
+     "manual_url": "https://ai.meta.com/research/publications/uma-universal-models-for-atoms/"},
 ]
 
 
@@ -100,8 +114,8 @@ def _is_available(adapters: dict, cls_name: str) -> bool:
 def render_descriptor_plugins(state: dict[str, Any]) -> None:
     """SMILES記述子パネルの完全なUI。"""
 
-    # アダプタ読み込み（キャッシュ）
-    if "_chem_adapters" not in state:
+    # アダプタ読み込み（キャッシュ: None はキャッシュミス扱い）
+    if not isinstance(state.get("_chem_adapters"), dict):
         state["_chem_adapters"] = _load_adapters()
     adapters = state["_chem_adapters"]
 
@@ -125,26 +139,26 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
         "background: rgba(6,182,212,0.08); border-radius: 8px; padding: 6px 12px;"
     ):
         ui.icon("tune", color="cyan").classes("text-body1")
-        ui.label("カウント系記述子:").classes("text-body2")
+        ui.label("整数カウント系記述子の正規化:").classes("text-body2")
 
         # デフォルト値の設定
         if "count_normalization" not in state:
             state["count_normalization"] = "density"
 
         norm_toggle = ui.toggle(
-            {"density": "密度 (個数/分子量)", "raw": "個数 (そのまま)"},
+            {"density": "密度（分子量で正規化）", "raw": "個数（そのまま）"},
             value=state.get("count_normalization", "density"),
         ).props("dense no-caps color=cyan size=sm").tooltip(
-            "数え上げ系記述子(原子数/環数/官能基数等)を\n"
-            "分子量で割った密度に変換するか、生の個数のまま使うか。\n"
-            "密度モードは分子サイズの影響を除外し、\n"
-            "異なるサイズの分子間での公平な比較が可能。"
+            "原子数・環数・官能基数などの整数カウント記述子を\n"
+            "分子量で割って『密度』に変換するか、生の個数のまま使うかを選択します。\n"
+            "密度モードでは分子サイズの影響を除き、\n"
+            "異なるサイズの分子を公平に比較できます。"
         )
 
         def _on_norm_change(e):
             state["count_normalization"] = e.value
-            mode_label = "密度(個数/分子量)" if e.value == "density" else "個数(そのまま)"
-            ui.notify(f"カウント系記述子: {mode_label}モード", type="info", timeout=2000)
+            mode_label = "密度（分子量で正規化）" if e.value == "density" else "個数（そのまま）"
+            ui.notify(f"整数カウント系記述子: {mode_label}モードに切り替えました", type="info", timeout=2500)
 
         norm_toggle.on("update:model-value", _on_norm_change)
 
@@ -153,8 +167,218 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
         ).classes("text-caption text-grey")
 
     # ─────────────────────────────────────────────────────
-    # セクション1: 計算状態 + 推薦記述子
+    # セクション1: 計算状態UI + 手動計算トリガー
     # ─────────────────────────────────────────────────────
+
+    # 手動計算用UIコンテナ (常時存在させるが進捗は非表示)
+    progress_container = ui.column().classes("full-width q-mt-sm")
+    progress_container.set_visibility(False)
+
+    with progress_container:
+        progress_bar = ui.linear_progress(
+            value=0, show_value=False, color="cyan",
+        ).props("rounded instant-feedback stripe").style("height: 8px;")
+        progress_label = ui.label("準備中...").classes("text-caption text-cyan")
+        progress_step = ui.label("").classes("text-caption text-grey")
+
+    async def _manual_compute():
+        if state.get("df") is None or not state.get("smiles_col"):
+            ui.notify("SMILES列を含むデータを先に読み込んでください", type="warning")
+            return
+        compute_btn.disable()
+        compute_btn.text = "計算中..."
+        progress_container.set_visibility(True)
+        progress_bar.value = 0
+        progress_label.text = "分子構造の解析を開始します..."
+        progress_step.text = ""
+
+        import importlib
+        import pandas as pd
+        from nicegui import run
+
+        smiles_list = state["df"][state["smiles_col"]].dropna().tolist()
+        n_mols = len(smiles_list)
+        target_name = state.get("target_col", "")
+
+        # ── エンジン定義（ユーザー向け表示名） ──
+        # Connection Lost 防止のため、エンジンごとに run.io_bound を分割して実行する。
+        _MANUAL_ENGINE_STEPS = [
+            {
+                "label": "基本物理化学記述子（分子量・LogP・TPSA + フィンガープリント）",
+                "step_msg": "RDKit で物理化学的特性とフィンガープリントを計算中…",
+                "module": "backend.chem.rdkit_adapter",
+                "cls": "RDKitAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "熱力学特性（Joback基団寄与法）",
+                "step_msg": "沸点・融点・臨界温度などを推定中…",
+                "module": "backend.chem.group_contrib_adapter",
+                "cls": "GroupContribAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "包括的2D/3D記述子（Mordred全計算）",
+                "step_msg": "Mordred で1800種以上の記述子を全計算中（少しお待ちください）…",
+                "module": "backend.chem.mordred_adapter",
+                "cls": "MordredAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "フィンガープリント（ECFP・MACCS等）",
+                "step_msg": "分子フィンガープリントを生成中…",
+                "module": "backend.chem.skfp_adapter",
+                "cls": "SkfpAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "Merck高速記述子（DescriptaStorus）",
+                "step_msg": "Merck 開発の高速記述子セットを計算中…",
+                "module": "backend.chem.descriptastorus_adapter",
+                "cls": "DescriptaStorusAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "統合フィンガープリント（Molfeat）",
+                "step_msg": "Molfeat フィンガープリントを計算中…",
+                "module": "backend.chem.molfeat_adapter",
+                "cls": "MolfeatAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "分子埋め込み（Mol2Vec）",
+                "step_msg": "Word2Vec ベースの分子ベクトルを生成中…",
+                "module": "backend.chem.mol2vec_adapter",
+                "cls": "Mol2VecAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "PaDEL記述子",
+                "step_msg": "PaDEL 記述子を計算中…",
+                "module": "backend.chem.padel_adapter",
+                "cls": "PaDELAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "MolAI（CNN潜在ベクトル+PCA）",
+                "step_msg": "深層学習モデルで分子の特徴を抽出中…",
+                "module": "backend.chem.molai_adapter",
+                "cls": "MolAIAdapter",
+                "kwargs": {"n_components": 6},
+            },
+            {
+                "label": "XTB（GFN2-xTB 量子化学計算）",
+                "step_msg": "HOMO・LUMO・双極子モーメントなどを量子化学計算中…",
+                "module": "backend.chem.xtb_adapter",
+                "cls": "XTBAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "UniPKa（pKa/LogD予測）",
+                "step_msg": "pKa・LogD・溶媒和エネルギーを予測中…",
+                "module": "backend.chem.unipka_adapter",
+                "cls": "UniPkaAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "COSMO-RS（溶媒和自由エネルギー）",
+                "step_msg": "溶解度・分配係数を溶媒和モデルで計算中…",
+                "module": "backend.chem.cosmo_adapter",
+                "cls": "CosmoAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "UMA（Meta FAIR 量子化学）",
+                "step_msg": "DFTレベルの高精度エネルギー記述子を計算中…",
+                "module": "backend.chem.uma_adapter",
+                "cls": "UMAAdapter",
+                "kwargs": {},
+            },
+            {
+                "label": "Chemprop（D-MPNN グラフニューラルネット）",
+                "step_msg": "グラフニューラルネットで分子グラフを埋め込み中…",
+                "module": "backend.chem.chemprop_adapter",
+                "cls": "ChempropAdapter",
+                "kwargs": {},
+            },
+        ]
+
+        def _run_one_engine(module_path, class_name, smiles, kwargs):
+            """1エンジン分の記述子を計算する（io_bound から呼ぶ）。"""
+            try:
+                mod = importlib.import_module(module_path)
+                cls = getattr(mod, class_name)
+                adapter = cls(**kwargs)
+                if not adapter.is_available():
+                    return None, 0
+                result = adapter.compute(smiles)
+                df = result.descriptors
+                if df is None or df.empty:
+                    return None, 0
+                return df, df.shape[1]
+            except Exception as exc:
+                logger.debug(f"{class_name} スキップ: {exc}")
+                return None, 0
+
+        try:
+            collected_dfs: list[pd.DataFrame] = []
+            n_steps = len(_MANUAL_ENGINE_STEPS)
+            n_ok = 0
+
+            for i, step in enumerate(_MANUAL_ENGINE_STEPS):
+                pct = i / n_steps
+                progress_bar.value = pct
+                progress_label.text = step["step_msg"]
+                progress_step.text = f"エンジン {i + 1} / {n_steps}: {step['label']}"
+
+                # ── ここで run.io_bound を await → イベントループに制御が戻り
+                # ── WebSocketハートビートが維持されるため Connection Lost を防止
+                df_eng, n_cols = await run.io_bound(
+                    _run_one_engine,
+                    step["module"], step["cls"], smiles_list, step["kwargs"],
+                )
+                if df_eng is not None and not df_eng.empty:
+                    collected_dfs.append(df_eng.reset_index(drop=True))
+                    n_ok += 1
+
+            # 結合
+            if collected_dfs:
+                df_desc = pd.concat(collected_dfs, axis=1)
+                df_desc = df_desc.loc[:, ~df_desc.columns.duplicated()]
+                df_desc = df_desc.apply(pd.to_numeric, errors="coerce")
+            else:
+                df_desc = pd.DataFrame(index=range(n_mols))
+
+            state["precalc_df"] = df_desc
+            state["precalc_done"] = True
+            n_desc = df_desc.shape[1]
+
+            progress_bar.value = 1.0
+            progress_label.text = f"✅ 計算完了！{n_desc}個の記述子が利用可能です"
+            progress_step.text = "記述子を選択して機械学習に進みましょう"
+            ui.notify(
+                f"✅ {n_desc}個の記述子を計算しました",
+                type="positive", timeout=5000,
+            )
+
+            # 再描画をトリガー
+            refresh = state.get("_refresh_tabs")
+            if refresh:
+                refresh()
+
+        except Exception as e:
+            progress_label.text = "⚠️ 計算中にエラーが発生しました"
+            progress_step.text = "「再計算」ボタンで再試行できます"
+            ui.notify(
+                "特徴量の計算中にエラーが発生しました",
+                type="warning", timeout=5000,
+            )
+            logger.warning(f"[ManualCompute] エラー: {e}")
+        finally:
+            compute_btn.enable()
+            compute_btn.text = "再計算" if state.get("precalc_done") else "特徴量を計算する"
+
+
     if not has_precalc:
         with ui.card().classes("full-width q-pa-md q-mb-sm").style(
             "border: 1px solid rgba(251,191,36,0.4); background: rgba(50,40,0,0.3); border-radius: 10px;"
@@ -178,86 +402,6 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
                 "計算が完了すると記述子選択→機械学習に進めます。"
             ).classes("text-body2 text-amber")
 
-            # ── 進捗バー表示エリア ──
-            progress_container = ui.column().classes("full-width q-mt-sm")
-            progress_container.set_visibility(False)
-
-            with progress_container:
-                progress_bar = ui.linear_progress(
-                    value=0, show_value=False, color="cyan",
-                ).props("rounded instant-feedback stripe").style("height: 8px;")
-                progress_label = ui.label("準備中...").classes("text-caption text-cyan")
-                progress_step = ui.label("").classes("text-caption text-grey")
-
-            # 手動計算トリガー
-            async def _manual_compute():
-                if state.get("df") is None or not state.get("smiles_col"):
-                    ui.notify("SMILES列を含むデータを読み込んでください", type="warning")
-                    return
-                compute_btn.disable()
-                compute_btn.text = "計算中..."
-                progress_container.set_visibility(True)
-                progress_bar.value = 0
-                progress_label.text = "エンジンを初期化中..."
-
-                try:
-                    from nicegui import run
-                    from backend.chem.smiles_transformer import precalculate_all_descriptors
-                    smiles_list = state["df"][state["smiles_col"]].dropna().tolist()
-                    target_name = state.get("target_col", "")
-
-                    # 全利用可能エンジンをON（MolAI+PCA を含む）
-                    engine_flags = {}
-                    for eng in _ENGINE_INFO:
-                        key = f"use_{eng['cls'].replace('Adapter', '').lower()}"
-                        if _is_available(adapters, eng["cls"]):
-                            engine_flags[key] = True
-
-                    # 進捗コールバック（UIをリアルタイム更新）
-                    step_messages = {
-                        1: ("推奨記述子を計算中...", "目的変数に関連する記述子を優先計算"),
-                        2: ("数え上げ系記述子を計算中...", "原子数・環数・官能基カウント"),
-                        3: ("主要物理化学記述子を計算中...", "MolWt, LogP, TPSA 等"),
-                        4: ("追加エンジンの記述子を計算中...", "Mordred, XTB, scikit-FP 等"),
-                        5: ("完了処理中...", "記述子の整形・重複除去"),
-                    }
-
-                    def _on_progress(step: int, total: int, msg: str):
-                        pct = step / total if total > 0 else 0
-                        progress_bar.value = pct
-                        progress_label.text = f"[{step}/{total}] {msg}"
-                        detail = step_messages.get(step, ("", ""))
-                        progress_step.text = detail[1] if detail[1] else ""
-
-                    df_desc, molai_var = await run.io_bound(
-                        precalculate_all_descriptors,
-                        smiles_list, target_name, engine_flags,
-                        progress_callback=_on_progress,
-                    )
-                    state["precalc_df"] = df_desc
-                    state["precalc_done"] = True
-                    if molai_var:
-                        state["molai_explained_variance"] = molai_var
-
-                    progress_bar.value = 1.0
-                    progress_label.text = f"{df_desc.shape[1]}個の記述子を計算完了!"
-                    progress_step.text = "次のステップ: 記述子を選択して機械学習に進みましょう"
-                    ui.notify(
-                        f"{df_desc.shape[1]}個の記述子を計算完了。記述子を選択してください。",
-                        type="positive", timeout=5000,
-                    )
-                except Exception as e:
-                    progress_label.text = f"エラー: {e}"
-                    ui.notify(f"記述子計算エラー: {e}", type="warning")
-                finally:
-                    compute_btn.enable()
-                    compute_btn.text = "手動で記述子を計算"
-
-            compute_btn = ui.button(
-                "手動で記述子を計算", on_click=_manual_compute,
-            ).props("outline size=sm no-caps color=amber")
-            compute_btn.tooltip("通常は自動計算されますが、失敗した場合にこのボタンで再実行できます")
-
     # ── 計算完了後: ワークフローガイド（ステップ2がアクティブ）──
     if has_precalc:
         with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
@@ -273,6 +417,19 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
             # ステップ3: ML（灰色）
             ui.badge("3", color="grey").props("rounded outline")
             ui.label("機械学習").classes("text-body2 text-grey")
+            
+    # 再計算/手動計算ボタンの配置
+    compute_btn_text = "再計算" if has_precalc else "特徴量を計算する"
+    btn_color = "grey" if has_precalc else "amber"
+
+    with ui.row().classes("q-mb-md"):
+        compute_btn = ui.button(
+            compute_btn_text, on_click=_manual_compute, color=btn_color
+        ).props("outline size=sm no-caps")
+        compute_btn.tooltip(
+            "通常はデータ読み込み時に自動で計算されます。\n"
+            "SMILES列を変更した後やエラーが発生した場合に押してください。"
+        )
 
     # ─────────────────────────────────────────────────────
     # 計算完了後のみ表示されるセクション群
@@ -297,32 +454,78 @@ def render_descriptor_plugins(state: dict[str, Any]) -> None:
         # ── CTA: 次の行動を明示 ──
         n_active = len(state.get("active_descriptors", []))
         n_selected = len(state.get("selected_descriptors", []))
-        use_count = n_active if n_active > 0 else n_selected if n_selected > 0 else n_desc
+        n_samples = len(state.get("df", [])) if state.get("df") is not None else 0
+
+        # ⚠️ フォールバックで「全記述子」を使うのを禁止
+        # selected_descriptors / active_descriptors が未設定の場合は
+        # デフォルトセットから再取得する
+        if n_active == 0 and n_selected == 0:
+            # デフォルトセットから自動選択
+            sets = state.get("descriptor_sets", {})
+            for preferred in ["📈 相関Top-N", "📊 分散Top-N", "🎯 汎用QSPR", "🧠 MolAI+PCA"]:
+                if preferred in sets and sets[preferred].get("descriptors"):
+                    state["selected_descriptors"] = list(sets[preferred]["descriptors"])
+                    state["current_set_name"] = preferred
+                    n_selected = len(state["selected_descriptors"])
+                    break
+
+        use_count = n_active if n_active > 0 else n_selected
+
+        # サンプル数 vs 記述子数チェック
+        is_overfit_risk = n_samples > 0 and use_count > n_samples
+        is_too_many = use_count > 500
+        is_unset = use_count == 0
 
         with ui.card().classes("full-width q-pa-md q-mt-sm").style(
             "border: 2px solid rgba(0,212,255,0.5); border-radius: 12px;"
             "background: linear-gradient(135deg, rgba(0,40,80,0.6), rgba(0,20,60,0.4));"
         ):
+            # 警告バナー
+            if is_unset:
+                with ui.row().classes("items-center q-gutter-xs q-mb-sm"):
+                    ui.icon("warning", color="amber").classes("text-h6")
+                    ui.label(
+                        "記述子セットが選択されていません。上のセット管理バーからセットを選択してください。"
+                    ).classes("text-amber text-caption")
+            elif is_overfit_risk:
+                with ui.row().classes("items-center q-gutter-xs q-mb-sm"):
+                    ui.icon("warning", color="amber").classes("text-h6")
+                    ui.label(
+                        f"⚠️ 記述子数({use_count}) > サンプル数({n_samples})のため過学習リスクがあります。"
+                        f"「🎯 汎用QSPR」または「📈 相関Top-N」セットの使用を推奨します。"
+                    ).classes("text-amber text-caption")
+            elif is_too_many:
+                with ui.row().classes("items-center q-gutter-xs q-mb-sm"):
+                    ui.icon("info", color="grey").classes("text-h6")
+                    ui.label(
+                        f"記述子が{use_count}個と多めです。計算時間が長くなる場合があります。"
+                    ).classes("text-grey-6 text-caption")
+
             with ui.row().classes("items-center justify-between full-width"):
                 with ui.row().classes("items-center q-gutter-sm"):
-                    ui.icon("rocket_launch", color="cyan").classes("text-h4")
-                    with ui.column().classes("q-gutter-none"):
+                    ui.icon(
+                        "warning" if (is_overfit_risk or is_unset) else "rocket_launch",
+                        color="amber" if (is_overfit_risk or is_unset) else "cyan",
+                    ).classes("text-h4")
+                    if is_unset:
+                        ui.label("セットを選択してください").classes("text-body1 text-bold text-amber")
+                    else:
                         ui.label(
-                            f"{use_count}個の記述子が選択されています"
+                            f"{use_count}個の記述子で解析を実行"
+                            + (f"（サンプル数: {n_samples}）" if n_samples > 0 else "")
                         ).classes("text-body1 text-bold")
-                        ui.label(
-                            "解析開始ボタンを押すか、パイプラインタブで設定を行ってください"
-                        ).classes("text-caption text-grey")
 
                 ui.button(
-                    "この記述子で解析を開始",
-                    on_click=lambda: ui.notify(
-                        "解析開始ボタン（画面左上）から開始できます",
-                        type="info", timeout=3000,
+                    "解析を開始する",
+                    on_click=lambda: (
+                        state.get("_run_analysis") and
+                        __import__("asyncio").ensure_future(state["_run_analysis"]())
                     ),
-                ).props("unelevated size=md no-caps color=cyan").classes(
+                ).props(
+                    f"unelevated size=md no-caps color={'grey' if is_unset else 'cyan'}"
+                ).classes(
                     "text-bold"
-                ).style("font-size: 1.05rem;")
+                ).style("font-size: 1.05rem;").set_enabled(not is_unset)
 
 
     # ─────────────────────────────────────────────────────
@@ -582,7 +785,9 @@ def _render_set_management_bar(state: dict) -> None:
                 if sets[name].get("descriptors"):
                     state["active_descriptors"] = list(sets[name]["descriptors"])
                     state["selected_descriptors"] = list(sets[name]["descriptors"])
-                ui.notify(f"🔄 セット「{name}」に切替", type="info")
+                ui.notify(f"🔄 「{name}」", type="info")
+                if state.get("_refresh_tabs"):
+                    state["_refresh_tabs"]()
 
             btn = ui.button(
                 f"{sn} ({s_count})",
@@ -602,6 +807,8 @@ def _render_set_management_bar(state: dict) -> None:
             active = state.get("active_descriptors", state.get("selected_descriptors", []))
             sets[current]["descriptors"] = list(active)
             ui.notify(f"💾 「{current}」に {len(active)} 記述子を保存", type="positive")
+            if state.get("_refresh_tabs"):
+                state["_refresh_tabs"]()
 
         ui.button(icon="save", on_click=_save_current).props(
             "flat round dense size=sm color=cyan"
@@ -621,7 +828,9 @@ def _render_set_management_bar(state: dict) -> None:
                 "descriptors": list(active) if active else None,
             }
             state["current_set_name"] = name
-            ui.notify(f"➕ セット「{name}」を作成", type="positive")
+            ui.notify(f"➕ 「{name}」を作成", type="positive")
+            if state.get("_refresh_tabs"):
+                state["_refresh_tabs"]()
 
         ui.button(icon="add", on_click=_add_set).props(
             "flat round dense size=sm color=green"
@@ -637,6 +846,8 @@ def _render_set_management_bar(state: dict) -> None:
             sets[new_name] = copy.deepcopy(sets[current])
             state["current_set_name"] = new_name
             ui.notify(f"📋 「{new_name}」を作成", type="info")
+            if state.get("_refresh_tabs"):
+                state["_refresh_tabs"]()
 
         ui.button(icon="content_copy", on_click=_dup_current).props(
             "flat round dense size=sm color=grey"
@@ -648,6 +859,8 @@ def _render_set_management_bar(state: dict) -> None:
                 del sets[current]
                 state["current_set_name"] = "デフォルト"
                 ui.notify(f"🗑️ 「{current}」を削除", type="info")
+                if state.get("_refresh_tabs"):
+                    state["_refresh_tabs"]()
 
             ui.button(icon="delete_outline", on_click=_del_current).props(
                 "flat round dense size=sm color=red-4"
@@ -685,15 +898,44 @@ def _render_set_management_bar(state: dict) -> None:
 _PRESETS = {
     "🧪 基本物性（沸点・密度等）": {
         "engines": ["RDKitAdapter", "GroupContribAdapter"],
-        "desc": "MW, LogP, TPSA, 基団寄与法を中心に物性予測",
+        "desc": "MW, LogP, TPSA等の主要物性15記述子を厳選",
+        "descriptors": [
+            # 分子サイズ
+            "MolWt", "HeavyAtomCount", "LabuteASA",
+            # 極性・溶解性
+            "MolLogP", "TPSA", "MolMR",
+            # 水素結合
+            "NumHAcceptors", "NumHDonors",
+            # トポロジー
+            "NumRotatableBonds", "RingCount", "NumAromaticRings",
+            "FractionCSP3",
+            # 基団寄与法（物性推算）
+            "joback_Tb", "joback_Tc", "joback_Hf",
+        ],
     },
     "🔑 構造活性相関（FP中心）": {
         "engines": ["RDKitAdapter", "SkfpAdapter"],
-        "desc": "ECFP/MACCS等のフィンガープリントで活性予測・QSAR",
+        "desc": "ECFP + 主要物性20記述子で活性予測・QSAR",
+        "descriptors": [
+            # 基本物性（少数）
+            "MolWt", "MolLogP", "TPSA", "NumHAcceptors", "NumHDonors",
+            "NumRotatableBonds", "RingCount", "FractionCSP3",
+            # 電子状態
+            "MaxPartialCharge", "MinPartialCharge",
+            # トポロジー
+            "BertzCT", "HallKierAlpha", "Kappa1", "Kappa2",
+            "Chi1n", "Chi1v",
+            # EState
+            "MaxAbsEStateIndex", "MinAbsEStateIndex",
+            # QED
+            "qed",
+        ],
+        "include_fp_prefix": ["Morgan_r2_"],  # Morganフィンガープリントも含む
     },
     "📐 網羅的記述子（特徴量選択前提）": {
         "engines": ["RDKitAdapter", "MordredAdapter"],
-        "desc": "Mordred 1800+記述子を全計算→特徴量選択で絞り込む",
+        "desc": "RDKit+Mordred全記述子→特徴量選択で自動絞り込み",
+        # descriptors未指定 → エンジンの全記述子を使用
     },
     "🧠 深層学習表現": {
         "engines": ["MolAIAdapter", "Mol2VecAdapter"],
@@ -702,6 +944,17 @@ _PRESETS = {
     "⚛️ 量子化学込み": {
         "engines": ["RDKitAdapter", "XTBAdapter", "CosmoAdapter"],
         "desc": "HOMO/LUMO, 溶媒和エネルギー等を加えた高精度モデル",
+        "descriptors": [
+            # 基本物性
+            "MolWt", "MolLogP", "TPSA", "NumHAcceptors", "NumHDonors",
+            "NumRotatableBonds", "RingCount",
+            # 量子化学
+            "HomoEnergy", "LumoEnergy", "HomoLumoGap",
+            "DipoleMoment", "Polarizability",
+            # xTB
+            "xtb_total_energy", "xtb_homo", "xtb_lumo", "xtb_gap",
+            "xtb_dipole", "xtb_polarizability",
+        ],
     },
     "🚀 フルセット（全エンジン）": {
         "engines": [e["cls"] for e in _ENGINE_INFO],
@@ -787,12 +1040,30 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                     n_avail = sum(
                         1 for e in preset_engines if _is_available(adapters, e)
                     )
+                    # 厳選記述子数（表示用）
+                    n_curated = len(preset_info.get("descriptors", []))
 
-                    def _apply_preset(engines=preset_engines, pname=preset_name):
+                    def _apply_preset(engines=preset_engines, pname=preset_name, pinfo=preset_info):
                         # 全エンジンOFF → 選択エンジンのみON
                         for eng in _ENGINE_INFO:
                             key = f"use_{eng['cls'].replace('Adapter', '').lower()}"
                             state[key] = eng["cls"] in engines
+
+                        # 厳選記述子リストがある場合はそれを優先
+                        curated = pinfo.get("descriptors")
+                        fp_prefixes = pinfo.get("include_fp_prefix", [])
+                        if curated:
+                            selected = [d for d in all_descs if d in curated]
+                            # FPプレフィックス指定があればそれも追加
+                            for pfx in fp_prefixes:
+                                selected += [d for d in all_descs if d.startswith(pfx)]
+                            state["selected_descriptors"] = selected
+                            ui.notify(
+                                f"{pname}: {len(selected)}個の厳選記述子を適用",
+                                type="positive",
+                            )
+                            return
+
                         # 選択エンジンに属する記述子のみを選択
                         engine_cls_set = set(engines)
                         engine_to_cls = {}
@@ -915,41 +1186,52 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                     _eng_label = {e["cls"]: e["label"] for e in _ENGINE_INFO}
 
                     border = "rgba(0,212,255,0.4)" if all_avail else "rgba(255,200,0,0.3)"
-                    with ui.card().classes("full-width q-pa-sm q-mb-xs").style(
+                    with ui.card().classes("full-width q-mb-md").style(
                         f"border: 1px solid {border}; border-radius: 8px;"
-                        "background: rgba(0,20,40,0.3);"
+                        "background: rgba(0,20,40,0.3); padding: 0;"
                     ):
-                        with ui.row().classes("items-center full-width justify-between"):
+                        # --- P-B案 UI実装 ---
+                        with ui.row().classes("items-center full-width justify-between q-pa-sm"):
                             with ui.column().classes("q-gutter-none").style("flex: 1;"):
-                                ui.label(preset_name).classes("text-body2 text-bold")
-                                ui.label(preset_desc).classes("text-caption text-grey").style(
-                                    "font-size: 0.7rem;"
-                                )
+                                ui.label(preset_name).classes("text-body1 text-bold")
+                                ui.label(preset_desc).classes("text-caption text-grey")
                                 # エンジンバッジ
                                 with ui.row().classes("q-gutter-xs q-mt-xs"):
                                     for pe in preset_engines:
                                         lbl = _eng_label.get(pe, pe.replace("Adapter", ""))
                                         avl = _is_available(adapters, pe)
                                         ui.badge(
-                                            lbl,
-                                            color="teal" if avl else "grey",
+                                            lbl, color="teal" if avl else "grey",
                                         ).props("outline dense").style("font-size: 0.78rem;")
-                                # 含まれる記述子のプレビュー
-                                ui.label(
-                                    f"📋 {n_preview}記述子: {preview_text}"
-                                ).classes("text-caption text-grey-5").style("font-size: 0.82rem;")
 
-                            with ui.row().classes("items-center q-gutter-xs"):
+                            with ui.row().classes("items-center q-gutter-sm"):
+                                # 厳選バッジ（「2/2」等の内部都合を排し、人間がわかる表示へ）
+                                display_badge_text = f"{n_curated}個厳選" if n_curated > 0 else f"全{n_preview}個"
                                 ui.badge(
-                                    f"{n_avail}/{len(preset_engines)}",
+                                    display_badge_text,
                                     color="green" if all_avail else "amber",
                                 ).props("outline")
                                 ui.button(
                                     "適用", on_click=_apply_preset,
                                 ).props(
                                     f"{'unelevated' if all_avail else 'outline'}"
-                                    " size=sm no-caps color=cyan"
+                                    " size=md no-caps color=cyan"
                                 )
+                        
+                        # --- アコーディオン展開で透明性確保（研究者・数学者用） ---
+                        with ui.expansion("内訳を表示", icon="view_list").classes("full-width bg-transparent"):
+                            with ui.row().classes("q-gutter-xs q-pa-sm"):
+                                _disp_limit = 50
+                                for dp in _pv_non_fp[:_disp_limit]:
+                                    _meaning = _catalog_meanings.get(dp, "")
+                                    _tt = _meaning if _meaning else "詳細情報なし"
+                                    ui.chip(dp, icon="science", color="cyan").props("outline size=sm").tooltip(_tt)
+                                
+                                for gl, bits in sorted(_pv_fp_groups.items(), key=lambda x: -len(x[1])):
+                                    ui.chip(f"{gl}({len(bits)}bit)", icon="fingerprint", color="purple").props("outline size=sm")
+                                
+                                if len(_pv_non_fp) > _disp_limit:
+                                    ui.chip(f"他 {len(_pv_non_fp) - _disp_limit} 個の機能...", color="grey").props("outline size=sm")
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # タブ2: 目的変数で選ぶ
@@ -2284,15 +2566,28 @@ def _render_engine_details(adapters: dict, state: dict) -> None:
                         "CosmoAdapter": "COSMO-RS",
                     }
                     catalog_name = _engine_catalog_map.get(cls_name)
-                    if catalog_name and avail:
-                        ui.button(
-                            "詳細選択",
-                            on_click=lambda cn=catalog_name: open_descriptor_detail_dialog(
-                                cn, state
-                            ),
-                        ).props("flat dense size=xs no-caps color=cyan").tooltip(
-                            "個別の記述子を選択・解除"
-                        )
+                    manual_url = eng.get("manual_url", "")
+
+                    with ui.row().classes("items-center q-gutter-xs q-mt-xs"):
+                        if catalog_name and avail:
+                            ui.button(
+                                "詳細選択",
+                                on_click=lambda cn=catalog_name: open_descriptor_detail_dialog(
+                                    cn, state
+                                ),
+                            ).props("flat dense size=xs no-caps color=cyan").tooltip(
+                                "個別の記述子を選択・解除"
+                            )
+
+                        if manual_url:
+                            ui.button(
+                                "📖 マニュアル",
+                                on_click=lambda url=manual_url: ui.run_javascript(
+                                    f"window.open('{url}', '_blank')"
+                                ),
+                            ).props("flat dense size=xs no-caps color=grey-5").tooltip(
+                                f"公式ドキュメントを開く: {manual_url}"
+                            )
 
 
 
@@ -2573,7 +2868,7 @@ def _render_custom_plugins(state: dict) -> None:
                     on_click=lambda _, p=tpl_path: ui.download(str(p)),
                 ).props("flat dense size=sm color=cyan no-caps")
 
-    # ── 既存記述子アダプタからコピーして作成 ──
+    # ── 既存記述子アダプタからコピーして作成 ──────────────────────────────────
     ui.separator()
     ui.label("📋 既存記述子からカスタムプラグインを作成").classes("text-subtitle2 q-mt-sm")
     ui.label(
@@ -2581,22 +2876,352 @@ def _render_custom_plugins(state: dict) -> None:
         "カスタムプラグインとして保存してから編集できます。"
     ).classes("text-grey text-caption q-mb-sm")
 
-    # 既存アダプタのソースファイルを検出
     adapter_sources = _detect_adapter_sources()
     if adapter_sources:
         with ui.row().classes("q-gutter-sm flex-wrap"):
-            for adapter_name, source_path in adapter_sources.items():
+            for _adp_name, _adp_path in adapter_sources.items():
                 ui.button(
-                    f"📄 {adapter_name}",
-                    on_click=lambda _, n=adapter_name, p=source_path: _copy_adapter_to_custom(
+                    f"📄 {_adp_name}",
+                    on_click=lambda _, n=_adp_name, p=_adp_path: _copy_adapter_to_custom(
                         n, p, custom_dir,
                     ),
                 ).props("outline dense size=sm no-caps color=teal").tooltip(
-                    f"{source_path.name} をカスタムプラグインとしてコピー"
+                    f"{_adp_path.name} をカスタムプラグインとしてコピー"
                 )
     else:
         ui.label("利用可能なアダプタが見つかりません").classes("text-grey text-caption")
 
+    # ── AI で記述子を生成（実験的・上級者向け） ─────────────────────────────
+    ui.separator().classes("q-mt-md")
+    with ui.expansion(
+        "🤖 AI で記述子を生成（実験的・上級者向け）",
+        icon="auto_awesome",
+    ).classes("full-width text-grey-6").props("dense"):
+        ui.label(
+            "⚠️ この機能は実験的です。外部AI（ChatGPT/Copilot等）または内部API連携を使って"
+            "カスタム記述子のコードを自動生成できます。"
+        ).classes("text-grey-6 text-caption q-mb-xs q-mt-xs")
+
+        with ui.tabs().props("dense active-color=grey-7 indicator-color=grey-7 align=left") as _ai_tabs:
+            _tab_ext = ui.tab("external", label="🌐 外部AI（ChatGPT/Copilot）", icon="language")
+            _tab_int = ui.tab("internal", label="🤖 内部AI（API連携）", icon="smart_toy")
+
+        with ui.tab_panels(_ai_tabs, value=_tab_ext).classes("full-width q-pt-sm"):
+
+            # ══════════════════════════════════════════════
+            # 🌐 外部AI タブ
+            # ══════════════════════════════════════════════
+            with ui.tab_panel(_tab_ext):
+                _ext_state: dict = {
+                    "library": "", "what": "", "output_type": "single",
+                    "notes": "", "generated_prompt": "", "pasted_code": "",
+                }
+
+                ui.label(
+                    "ChatGPT / Copilot / Claude などの外部AIに貼り付けるプロンプトを生成します。"
+                    "生成されたコードをアプリに貼り付けるだけで記述子が使えるようになります。"
+                ).classes("text-grey text-caption q-mb-sm")
+
+                # ① 意図の入力
+                with ui.card().classes("full-width q-pa-sm q-mb-sm").style(
+                    "border: 1px solid rgba(99,102,241,0.3); border-radius: 8px;"
+                ):
+                    ui.label("① 作りたい記述子を教えてください").classes("text-caption text-bold text-indigo q-mb-xs")
+
+                    ui.input(
+                        "使用ライブラリ（任意）",
+                        placeholder="例: rdkit, padelpy, descriptastorus, molfeat",
+                        on_change=lambda e: _ext_state.update({"library": e.value}),
+                    ).props("dense outlined").classes("full-width q-mb-xs").tooltip(
+                        "空欄にするとAIが適切なライブラリを選択します"
+                    )
+
+                    ui.textarea(
+                        "計算したい記述子・物性",
+                        placeholder=(
+                            "例: SMILESから分子の水溶性（logS）を予測する記述子\n"
+                            "例: TDA（位相的データ解析）を使った分子の持続的ホモロジー記述子\n"
+                            "例: HOMO-LUMOギャップのエネルギー（eV単位）"
+                        ),
+                        on_change=lambda e: _ext_state.update({"what": e.value}),
+                    ).props("outlined dense rows=3").classes("full-width q-mb-xs")
+
+                    with ui.row().classes("items-center q-gutter-sm q-mb-xs"):
+                        ui.label("出力形式:").classes("text-caption text-grey")
+                        ui.toggle(
+                            {"single": "1つの値", "multi": "複数の値（DataFrame）"},
+                            value="single",
+                            on_change=lambda e: _ext_state.update({"output_type": e.value}),
+                        ).props("dense")
+
+                    ui.input(
+                        "追加の注意事項（任意）",
+                        placeholder="例: NumPyのみ使用、インターネット接続不可、Windowsで動作必須",
+                        on_change=lambda e: _ext_state.update({"notes": e.value}),
+                    ).props("dense outlined").classes("full-width")
+
+                # ② プロンプト生成
+                _prompt_container = ui.column().classes("full-width")
+
+                def _on_build_prompt():
+                    from backend.llm.prompt_builder import DescriptorIntent, build_external_llm_prompt
+                    intent = DescriptorIntent(
+                        library=_ext_state.get("library", ""),
+                        what_to_calc=_ext_state.get("what", ""),
+                        output_type=_ext_state.get("output_type", "single"),
+                        extra_notes=_ext_state.get("notes", ""),
+                    )
+                    if not intent.is_valid:
+                        ui.notify("「計算したい記述子」を入力してください", type="warning")
+                        return
+
+                    prompt_text = build_external_llm_prompt(intent)
+                    _ext_state["generated_prompt"] = prompt_text
+
+                    _prompt_container.clear()
+                    with _prompt_container:
+                        with ui.card().classes("full-width q-pa-sm").style(
+                            "border: 1px solid rgba(99,102,241,0.4); border-radius: 8px;"
+                            "background: rgba(10,10,40,0.3);"
+                        ):
+                            with ui.row().classes("items-center justify-between q-mb-xs"):
+                                ui.label("② 生成されたプロンプト").classes("text-caption text-indigo text-bold")
+                                ui.button(
+                                    "📋 コピー",
+                                    on_click=lambda: (
+                                        ui.run_javascript(
+                                            f"navigator.clipboard.writeText({repr(prompt_text)})"
+                                        ),
+                                        ui.notify("プロンプトをコピーしました", type="positive", timeout=2000),
+                                    ),
+                                ).props("flat dense size=sm no-caps color=indigo")
+
+                            ui.textarea(
+                                value=prompt_text,
+                            ).props("outlined dense rows=14 readonly").classes("full-width").style(
+                                "font-family: monospace; font-size: 0.75rem;"
+                                "background: rgba(0,0,0,0.2);"
+                            )
+
+                            ui.label(
+                                "👆 このプロンプトをChatGPT / Copilot / Claude にそのまま貼り付けてください"
+                            ).classes("text-caption text-grey q-mt-xs")
+
+                ui.button(
+                    "🔨 プロンプトを生成",
+                    on_click=_on_build_prompt,
+                ).props("unelevated no-caps color=indigo q-mb-sm")
+
+                # ③ コードを貼り付けて保存
+                ui.separator().classes("q-my-sm")
+                with ui.card().classes("full-width q-pa-sm").style(
+                    "border: 1px solid rgba(20,184,166,0.3); border-radius: 8px;"
+                ):
+                    ui.label("③ 生成されたコードを貼り付けて保存").classes("text-caption text-bold text-teal q-mb-xs")
+                    ui.label(
+                        "外部AIが出力したPythonコードをそのまま貼り付けてください。"
+                        "保存前にセキュリティ検証・形式チェックを自動実行します。"
+                    ).classes("text-grey text-caption q-mb-xs")
+
+                    _paste_area = ui.textarea(
+                        "ここにAI生成コードを貼り付け",
+                        placeholder="DESCRIPTOR_NAME = \"...\"\ndef compute(smiles_list): ...",
+                        on_change=lambda e: _ext_state.update({"pasted_code": e.value}),
+                    ).props("outlined dense rows=10").classes("full-width q-mb-sm").style(
+                        "font-family: monospace; font-size: 0.8rem;"
+                    )
+
+                    _paste_result = ui.column().classes("full-width")
+
+                    # よくある失敗パターンのヘルプ
+                    with ui.expansion("❓ 読み込み失敗した場合のチェックリスト", icon="help_outline").classes(
+                        "full-width q-mb-sm"
+                    ).style("border: 1px solid rgba(99,102,241,0.2); border-radius: 8px;"):
+                        _problems = [
+                            ("🚫 コードブロック記号が残っている", "AIが ``` python ... ``` の形式で出力した場合。→ 自動除去します"),
+                            ("🚫 DESCRIPTOR_NAME が未定義",     "先頭に DESCRIPTOR_NAME = '英語名' を追加してください"),
+                            ("🚫 compute() 関数がない",         "def compute(smiles_list): ... を実装してください"),
+                            ("🚫 import os / subprocess を使用", "外部コマンド実行は禁止です。RDKit等のライブラリ内APIを使用してください"),
+                            ("⚠️ 戻り値がリストでない",          "compute()は list[float|None] か pd.DataFrame を返す必要があります"),
+                            ("⚠️ 戻り値の長さが入力と異なる",    "len(result) == len(smiles_list) になるよう、各SMILES1件に1値を返してください"),
+                            ("⚠️ エラーが例外を投げる",          "try/except で囲み、失敗した分子は None を返してください"),
+                        ]
+                        with ui.column().classes("q-gutter-xs q-pa-xs"):
+                            for prob, fix in _problems:
+                                with ui.row().classes("items-start q-gutter-sm"):
+                                    ui.label(prob).classes("text-body2 col-5")
+                                    ui.label(fix).classes("text-caption text-grey col-7")
+
+                    def _on_validate_save():
+                        from backend.llm.generator import _check_security, _validate_code_format, _strip_code_fences
+                        from backend.chem.descriptors import get_custom_dir, invalidate_cache
+                        from backend.chem.descriptors.base import validate_plugin, safe_compute
+                        import re as _re, importlib.util as _ilu, tempfile, pathlib
+
+                        raw_code = _ext_state.get("pasted_code", "").strip()
+                        if not raw_code:
+                            ui.notify("コードを貼り付けてください", type="warning")
+                            return
+
+                        # ── STEP 1: コードブロック記号を自動除去 ──────────────────
+                        code = _strip_code_fences(raw_code)
+                        stripped = (code != raw_code)
+
+                        _paste_result.clear()
+                        with _paste_result:
+                            if stripped:
+                                with ui.row().classes("items-center q-gutter-xs q-mb-xs"):
+                                    ui.icon("auto_fix_high", color="cyan").classes("text-body2")
+                                    ui.label("```python ... ``` を自動除去しました").classes("text-caption text-cyan")
+
+                            # ── STEP 2: セキュリティチェック ──────────────────────
+                            warns = _check_security(code)
+                            blocked = [w for w in warns if "[BLOCKED]" in w]
+                            if blocked:
+                                with ui.card().classes("full-width q-pa-sm").style(
+                                    "border: 1px solid rgba(239,68,68,0.6); border-radius:8px;"
+                                ):
+                                    ui.label("🚫 セキュリティ検証 — 保存ブロック").classes("text-red text-body2 text-bold")
+                                    for b in blocked:
+                                        ui.label(f"  • {b.replace('[BLOCKED] ', '')}").classes("text-caption text-red")
+                                    with ui.expansion("💡 対策方法", icon="lightbulb").classes("q-mt-xs"):
+                                        ui.label(
+                                            "外部コマンド実行（os.system等）・ファイルI/O（open）・eval/execは禁止です。\n"
+                                            "RDKit・NumPy・pandas のような科学計算ライブラリのAPIのみ使用可能です。\n"
+                                            "プロンプトに「os, subprocess, eval, exec を一切使用しないこと」と追記して再生成してください。"
+                                        ).classes("text-caption text-grey").style("white-space: pre-line;")
+                                return
+
+                            # ── STEP 3: 形式チェック ──────────────────────────────
+                            plugin_name, ferr = _validate_code_format(code)
+                            if ferr:
+                                with ui.card().classes("full-width q-pa-sm").style(
+                                    "border: 1px solid rgba(251,191,36,0.5); border-radius:8px;"
+                                ):
+                                    ui.label(f"⚠️ 形式チェック失敗: {ferr}").classes("text-amber text-body2 text-bold")
+                                    with ui.expansion("💡 修正方法", icon="lightbulb").classes("q-mt-xs"):
+                                        ui.code(
+                                            "DESCRIPTOR_NAME = \"MyDescriptor\"     # ← 必須\n"
+                                            "DESCRIPTOR_CATEGORY = \"物理化学\"      # ← 必須\n"
+                                            "DESCRIPTOR_ENGINE = \"RDKit\"           # ← 必須\n\n"
+                                            "def compute(smiles_list: list[str]) -> list[float | None]:  # ← 必須\n"
+                                            "    results = []\n"
+                                            "    for smi in smiles_list:\n"
+                                            "        try:\n"
+                                            "            results.append(1.0)  # ← 計算ロジック\n"
+                                            "        except Exception:\n"
+                                            "            results.append(None)\n"
+                                            "    return results"
+                                        ).classes("text-caption")
+                                return
+
+                            # ── STEP 4: ランタイムテスト（サンプルSMILESで実際に実行）──
+                            _TEST_SMILES = [
+                                "CC(=O)Oc1ccccc1C(=O)O",  # アスピリン
+                                "c1ccc(cc1)N",             # アニリン
+                                "INVALID_SMILES_TEST",     # 壊れたSMILES（Noneを返すべき）
+                                "C",                       # メタン
+                            ]
+                            runtime_ok = True
+                            runtime_msg = ""
+                            runtime_result = None
+
+                            try:
+                                # 一時ファイルを使ってモジュールとしてロード
+                                tmp = pathlib.Path(tempfile.mktemp(suffix=".py"))
+                                tmp.write_text(code, encoding="utf-8")
+                                spec = _ilu.spec_from_file_location("__ext_test__", tmp)
+                                mod = _ilu.module_from_spec(spec)
+                                spec.loader.exec_module(mod)
+                                tmp.unlink(missing_ok=True)
+
+                                info = validate_plugin(mod, "<test>")
+                                if info is None:
+                                    runtime_ok = False
+                                    runtime_msg = "validate_plugin が None を返しました（形式チェック参照）"
+                                else:
+                                    runtime_result = safe_compute(info, _TEST_SMILES)
+
+                                    # 戻り値型チェック
+                                    import pandas as _pd, numpy as _np
+                                    if isinstance(runtime_result, _pd.DataFrame):
+                                        if len(runtime_result) != len(_TEST_SMILES):
+                                            runtime_ok = False
+                                            runtime_msg = (
+                                                f"DataFrame の行数({len(runtime_result)})が"
+                                                f"入力SMILES数({len(_TEST_SMILES)})と一致しません。\n"
+                                                "各SMILESに1行対応するよう rows.append() を全ループで実行してください。"
+                                            )
+                                    elif isinstance(runtime_result, (list, _np.ndarray)):
+                                        if len(runtime_result) != len(_TEST_SMILES):
+                                            runtime_ok = False
+                                            runtime_msg = (
+                                                f"戻り値の長さ({len(runtime_result)})が"
+                                                f"入力SMILES数({len(_TEST_SMILES)})と一致しません。\n"
+                                                "ループで各SMILESに1値を results.append() してから return results してください。"
+                                            )
+                                    elif runtime_result is None or not hasattr(runtime_result, "__len__"):
+                                        runtime_ok = False
+                                        runtime_msg = (
+                                            f"戻り値の型が不正です: {type(runtime_result).__name__}\n"
+                                            "compute() は list[float|None] または pd.DataFrame を返す必要があります。"
+                                        )
+                            except Exception as ex:
+                                runtime_ok = False
+                                runtime_msg = f"実行時エラー: {ex}"
+
+                            if not runtime_ok:
+                                with ui.card().classes("full-width q-pa-sm").style(
+                                    "border: 1px solid rgba(239,68,68,0.5); border-radius:8px;"
+                                ):
+                                    ui.label("🔴 ランタイムテスト失敗").classes("text-red text-body2 text-bold")
+                                    ui.label(runtime_msg).classes("text-caption text-red").style("white-space: pre-line;")
+                                    with ui.expansion("💡 対策方法", icon="lightbulb").classes("q-mt-xs"):
+                                        ui.label(
+                                            "外部AIにこのエラーメッセージをそのままフィードバックして修正を依頼してください:\n\n"
+                                            f"「以下のエラーが発生しました。修正してください:\n{runtime_msg}」"
+                                        ).classes("text-caption text-grey").style("white-space: pre-line;")
+                                return
+
+                            # ── STEP 5: 全チェック通過 → 保存 ────────────────────
+                            safe_name = _re.sub(r"[^\w]", "_", plugin_name.lower())[:40]
+                            save_path = get_custom_dir() / f"ext_{safe_name}.py"
+                            i = 2
+                            while save_path.exists():
+                                save_path = get_custom_dir() / f"ext_{safe_name}_{i}.py"
+                                i += 1
+                            save_path.write_text(code, encoding="utf-8")
+                            invalidate_cache()
+
+                            with ui.card().classes("full-width q-pa-sm").style(
+                                "border: 1px solid rgba(74,222,128,0.6); border-radius:8px;"
+                            ):
+                                with ui.row().classes("items-center q-gutter-sm q-mb-xs"):
+                                    ui.icon("check_circle", color="green").classes("text-h6")
+                                    ui.label(f"✅ 登録完了: {plugin_name}").classes("text-green text-body2 text-bold")
+
+                                # ランタイムテスト結果サマリー
+                                import pandas as _pd2
+                                if isinstance(runtime_result, _pd2.DataFrame):
+                                    ui.label(
+                                        f"テスト計算: {runtime_result.shape[1]}列の記述子 × {runtime_result.shape[0]}分子"
+                                    ).classes("text-caption text-grey")
+                                else:
+                                    ok_count = sum(1 for v in runtime_result if v is not None)
+                                    ui.label(
+                                        f"テスト計算: {ok_count}/{len(_TEST_SMILES)}分子 正常（NULLは壊れたSMILES分）"
+                                    ).classes("text-caption text-grey")
+
+                                ui.label(f"保存先: {save_path.name}").classes("text-caption text-grey")
+                                if warns:
+                                    ui.label(f"⚠️ 非致命的警告: {len(warns)}件").classes("text-caption text-amber")
+
+                            ui.notify(f"✅ {save_path.name} — テスト済みで保存しました", type="positive")
+
+                    ui.button(
+                        "\U0001f50d 検証して保存（ランタイムテスト付き）",
+                        on_click=_on_validate_save,
+                    ).props("unelevated no-caps color=teal")
 
 def _detect_adapter_sources() -> dict[str, Path]:
     """backend/chem/以下のSMILES記述子アダプタのソースファイルを検出。"""
@@ -2686,7 +3311,7 @@ def _delete_custom(filepath: Path) -> None:
 # ═══════════════════════════════════════════════════════════
 # アダプタパラメータ動的UI
 # ═══════════════════════════════════════════════════════════
-def _render_adapter_params(adapters: list[tuple], state: dict) -> None:
+def _render_adapter_params(adapters: dict, state: dict) -> None:
     """
     各SMILESアダプタのパラメータを introspect_params で自動検出し、
     動的UIを生成する。パラメータが0個のエンジンはスキップ。
@@ -2699,8 +3324,22 @@ def _render_adapter_params(adapters: list[tuple], state: dict) -> None:
         "変更しなければデフォルト設定で計算されます。"
     ).classes("text-caption text-grey q-mb-sm")
 
+    # data_tab._ALL_ENGINES の (name, mod_path, cls_name, kwargs) タプル形式に対応
+    # descriptor_plugins_ui._ENGINE_INFO の dict 形式にも対応
+    _ALL_ENGINES_COMPAT = [
+        ("RDKit",           "backend.chem.rdkit_adapter",           "RDKitAdapter",           {}),
+        ("Mordred",         "backend.chem.mordred_adapter",         "MordredAdapter",         {}),
+        ("GroupContrib",    "backend.chem.group_contrib_adapter",   "GroupContribAdapter",    {}),
+        ("DescriptaStorus", "backend.chem.descriptastorus_adapter", "DescriptaStorusAdapter", {}),
+        ("MolAI",           "backend.chem.molai_adapter",           "MolAIAdapter",           {}),
+        ("scikit-FP",       "backend.chem.skfp_adapter",            "SkfpAdapter",            {}),
+        ("XTB",             "backend.chem.xtb_adapter",             "XTBAdapter",             {}),
+        ("Mol2Vec",         "backend.chem.mol2vec_adapter",         "Mol2VecAdapter",         {}),
+        ("Molfeat",         "backend.chem.molfeat_adapter",         "MolfeatAdapter",         {}),
+    ]
+
     any_shown = False
-    for name, mod_path, cls_name, _kwargs in adapters:
+    for name, mod_path, cls_name, _kwargs in _ALL_ENGINES_COMPAT:
         try:
             import importlib
             mod = importlib.import_module(mod_path)
@@ -2729,4 +3368,5 @@ def _render_adapter_params(adapters: list[tuple], state: dict) -> None:
 
     if not any_shown:
         ui.label("設定可能なパラメータを持つエンジンはありません").classes("text-grey text-caption")
+
 

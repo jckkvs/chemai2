@@ -21,46 +21,76 @@ from nicegui import ui
 
 def render_eda_panel(state: dict) -> None:
     """EDA + 次元削減パネルをレンダリング。"""
-    df = state.get("df")
-    if df is None:
-        ui.label("データが読み込まれていません。").classes("text-caption text-grey")
-        return
+    
+    container = ui.column().classes("full-width")
+    
+    def _build():
+        container.clear()
+        with container:
+            with ui.row().classes("full-width justify-between items-center q-mb-sm"):
+                ui.label("").classes("col-grow")
+                ui.button("🔄 最新のデータで更新", on_click=_build).props("outline color=cyan size=sm no-caps").tooltip("データタブで読み込んだ内容を反映")
+                
+            df = state.get("df")
+            if df is None:
+                with ui.card().classes("glass-card q-pa-xl full-width flex flex-center items-center text-center"):
+                    ui.icon("analytics", color="grey-6", size="xl").classes("q-mb-md")
+                    ui.label("データが読み込まれていません。").classes("text-h6 text-grey-5")
+                    ui.label("「📂 データ設定」タブでデータを読み込んでから、上の更新ボタンを押してください。").classes("text-caption text-grey-6 q-mt-sm")
+                return
 
-    target_col = state.get("target_col", "")
+            target_col = state.get("target_col", "")
 
-    with ui.card().classes("full-width q-pa-md").style(
-        "border:1px solid rgba(0,188,212,0.3);border-radius:12px;"
-        "background:rgba(0,20,40,0.25);"
-    ):
-        with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
-            ui.icon("query_stats", color="cyan").classes("text-h5")
-            ui.label("探索的データ分析（EDA）").classes("text-h6")
+            with ui.card().classes("full-width q-pa-md").style(
+                "border:1px solid rgba(0,188,212,0.3);border-radius:12px;"
+                "background:rgba(0,20,40,0.25);"
+            ):
+                with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+                    ui.icon("query_stats", color="cyan").classes("text-h5")
+                    ui.label("探索的データ分析（EDA）").classes("text-h6")
 
-        with ui.tabs().classes("full-width").props(
-            "dense no-caps active-color=cyan indicator-color=cyan"
-        ) as eda_tabs:
-            ui.tab("eda_stats", label="📋 統計サマリー")
-            ui.tab("eda_dist", label="📊 分布")
-            ui.tab("eda_corr", label="🔥 相関行列")
-            ui.tab("eda_dr", label="🌀 次元削減")
+                with ui.tabs().classes("full-width").props(
+                    "dense no-caps active-color=cyan indicator-color=cyan scrollable"
+                ) as eda_tabs:
+                    ui.tab("eda_stats", label="📋 統計サマリー")
+                    ui.tab("eda_dist", label="📊 分布")
+                    ui.tab("eda_corr", label="🔥 相関行列")
+                    ui.tab("eda_dr", label="🌀 次元削減")
+                    ui.tab("eda_pairplot", label="📈 Pairplot")
+                    ui.tab("eda_outliers", label="🎯 外れ値")
+                    ui.tab("eda_missing", label="🧩 欠損解析")
 
-        with ui.tab_panels(eda_tabs, value="eda_stats").classes("full-width"):
+                with ui.tab_panels(eda_tabs, value="eda_stats").classes("full-width bg-transparent"):
+                    # ── 統計サマリー ──
+                    with ui.tab_panel("eda_stats"):
+                        _render_stats(df, target_col)
 
-            # ── 統計サマリー ──
-            with ui.tab_panel("eda_stats"):
-                _render_stats(df, target_col)
+                    # ── 分布 ──
+                    with ui.tab_panel("eda_dist"):
+                        _render_distribution(df, target_col)
 
-            # ── 分布 ──
-            with ui.tab_panel("eda_dist"):
-                _render_distribution(df, target_col)
+                    # ── 相関行列 ──
+                    with ui.tab_panel("eda_corr"):
+                        _render_correlation(df, target_col)
 
-            # ── 相関行列 ──
-            with ui.tab_panel("eda_corr"):
-                _render_correlation(df, target_col)
+                    # ── 次元削減 ──
+                    with ui.tab_panel("eda_dr"):
+                        _render_dim_reduction(df, state)
 
-            # ── 次元削減 ──
-            with ui.tab_panel("eda_dr"):
-                _render_dim_reduction(df, state)
+                    # ── Pairplot ──
+                    with ui.tab_panel("eda_pairplot"):
+                        _render_pairplot(df, target_col)
+
+                    # ── 外れ値 ──
+                    with ui.tab_panel("eda_outliers"):
+                        _render_outliers(df, target_col)
+
+                    # ── 欠損解析 ──
+                    with ui.tab_panel("eda_missing"):
+                        _render_missing(df)
+                    
+    state["_refresh_eda_main"] = _build
+    _build()
 
 
 def _render_stats(df: pd.DataFrame, target_col: str) -> None:
@@ -271,3 +301,199 @@ def _render_dim_reduction(df: pd.DataFrame, state: dict) -> None:
     ui.button(f"🌀 次元削減を実行", on_click=_run_dr).props(
         "color=cyan no-caps size=sm"
     ).classes("q-mb-sm")
+
+
+def _render_pairplot(df: pd.DataFrame, target_col: str) -> None:
+    """Pairplot（変数の散布図マトリックス）。"""
+    num_df = df.select_dtypes(include="number")
+    if num_df.shape[1] < 2:
+        ui.label("数値列が2列未満です").classes("text-caption text-grey")
+        return
+
+    num_cols = num_df.columns.tolist()
+    if target_col in num_cols:
+        num_cols.remove(target_col)
+        default_cols = [target_col] + num_cols[:4]
+    else:
+        default_cols = num_cols[:5]
+
+    ui.label("Pairplot (変数間の散布図マトリックス)").classes("text-subtitle2 q-mb-xs")
+    ui.label("描画する特徴量を選択してください（最大5〜6個程度を推奨）").classes("text-caption text-grey q-mb-sm")
+
+    selected_cols = ui.select(
+        num_df.columns.tolist(), value=default_cols, label="特徴量", multiple=True
+    ).props("outlined dense use-chips").classes("full-width q-mb-md")
+
+    chart_container = ui.column().classes("full-width")
+
+    def _draw():
+        chart_container.clear()
+        cols = selected_cols.value
+        if not cols or len(cols) < 2:
+            with chart_container:
+                ui.label("2つ以上の特徴量を選択してください").classes("text-caption text-amber")
+            return
+
+        try:
+            import plotly.express as px
+            plot_df = num_df[cols].dropna(how="any").copy()
+            if plot_df.empty:
+                with chart_container:
+                    ui.label("選択した列の共通有効データがありません").classes("text-caption text-amber")
+                return
+
+            if len(plot_df) > 1000:
+                plot_df = plot_df.sample(1000, random_state=42)
+                with chart_container:
+                    ui.label("※ データサイズが大きいため、ランダムに1000件サンプリング表示しています").classes("text-caption text-amber q-mb-sm")
+
+            color_col = target_col if target_col in cols and df[target_col].nunique() < 20 else None
+
+            fig = px.scatter_matrix(
+                plot_df,
+                dimensions=cols,
+                color=color_col if color_col in plot_df.columns else None,
+                template="plotly_dark",
+                color_continuous_scale="Viridis",
+            )
+            fig.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#e0e0f0", size=10),
+                margin=dict(l=20, r=20, t=40, b=20),
+                height=max(450, len(cols)*120),
+            )
+            fig.update_traces(diagonal_visible=False)
+            with chart_container:
+                ui.plotly(fig).classes("full-width")
+        except Exception as e:
+            with chart_container:
+                ui.label(f"描画エラー: {e}").classes("text-caption text-red")
+
+    ui.button("描画更新", on_click=_draw).props("outline color=cyan size=sm no-caps").classes("q-mb-md")
+    _draw()
+
+def _render_outliers(df: pd.DataFrame, target_col: str) -> None:
+    """外れ値検出とボックスプロット表示。"""
+    num_df = df.select_dtypes(include="number")
+    if num_df.empty:
+        ui.label("数値列がありません").classes("text-caption text-grey")
+        return
+
+    ui.label("外れ値検出 (四分位範囲 IQR 方式に基づくボックスプロット)").classes("text-subtitle2 q-mb-sm")
+
+    num_cols = num_df.columns.tolist()
+    default_col = target_col if target_col in num_cols else num_cols[0]
+    col_select = ui.select(
+        num_cols, value=default_col, label="列を選択",
+    ).props("outlined dense").classes("q-mb-sm")
+
+    chart_container = ui.column().classes("full-width")
+    def _draw():
+        chart_container.clear()
+        col = col_select.value
+        if not col or col not in num_cols:
+            return
+        series = num_df[col].dropna()
+        if series.empty:
+            return
+
+        q1 = series.quantile(0.25)
+        q3 = series.quantile(0.75)
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        outliers = series[(series < lower_bound) | (series > upper_bound)]
+
+        with chart_container:
+            with ui.row().classes("q-gutter-md q-mb-md items-center"):
+                ui.label(f"外れ値数 (IQR): {len(outliers)}").classes("text-body2 text-bold text-amber")
+                ui.label(f"全有効データ数: {len(series)}").classes("text-caption text-grey")
+                ui.label(f"下限: {lower_bound:.4g} | 上限: {upper_bound:.4g}").classes("text-caption text-cyan")
+
+            try:
+                import plotly.express as px
+                fig = px.box(
+                    num_df, y=col,
+                    template="plotly_dark",
+                    points="outliers",
+                    title=f"{col} のボックスプロット",
+                )
+                fig.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e0e0f0", size=11),
+                    margin=dict(l=40, r=20, t=40, b=30),
+                    height=350,
+                )
+                ui.plotly(fig).classes("full-width")
+            except Exception as e:
+                ui.label(f"描画エラー: {e}").classes("text-caption text-red")
+
+    col_select.on("update:model-value", lambda: _draw())
+    _draw()
+
+
+def _render_missing(df: pd.DataFrame) -> None:
+    """欠損値パターン解析（棒グラフ・ヒートマップ）。"""
+    ui.label("欠損解析").classes("text-subtitle2 q-mb-sm")
+    total_missing = df.isna().sum().sum()
+    if total_missing == 0:
+        ui.label("データセットに欠損値はありません。").classes("text-body1 text-green text-bold")
+        return
+
+    with ui.row().classes("q-gutter-md q-mb-md"):
+        ui.label(f"総欠損セル数: {total_missing}").classes("text-body2 text-bold text-amber")
+        ui.label(f"欠損行を含む行数: {df.isna().any(axis=1).sum()}").classes("text-body2 text-grey")
+
+    try:
+        import plotly.express as px
+        missing_counts = df.isna().sum()
+        missing_counts = missing_counts[missing_counts > 0].sort_values(ascending=True)
+
+        fig_bar = px.bar(
+            x=missing_counts.values,
+            y=missing_counts.index,
+            orientation='h',
+            title="列ごとの欠損値数",
+            labels={"x": "欠損数", "y": "列名"},
+            template="plotly_dark",
+            color_discrete_sequence=["#fbbf24"],
+            text_auto=True
+        )
+        fig_bar.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#e0e0f0", size=11),
+            margin=dict(l=10, r=20, t=40, b=30),
+            height=max(300, len(missing_counts) * 25),
+        )
+        ui.plotly(fig_bar).classes("full-width")
+
+        # 欠損マップ
+        if len(df) > 1000:
+            sample_df = df.sample(1000, random_state=42).sort_index()
+            missing_matrix = sample_df.isna().astype(int).T
+            map_title = "欠損値ヒートマップ (ランダムサンプリング1000行) (黄: 欠損)"
+        else:
+            missing_matrix = df.isna().astype(int).T
+            map_title = "欠損値ヒートマップ (黄: 欠損)"
+
+        fig_map = px.imshow(
+            missing_matrix,
+            color_continuous_scale=["rgba(0,0,0,0)", "#fbbf24"],
+            title=map_title,
+            template="plotly_dark",
+        )
+        fig_map.update_layout(
+            coloraxis_showscale=False,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=40, r=20, t=40, b=20),
+            height=max(300, missing_matrix.shape[0] * 15),
+        )
+        fig_map.update_xaxes(showticklabels=False)
+        ui.plotly(fig_map).classes("full-width q-mt-md")
+
+    except Exception as e:
+        ui.label(f"描画エラー: {e}").classes("text-caption text-red")

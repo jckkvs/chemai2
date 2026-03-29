@@ -53,86 +53,89 @@ def render_data_tab(state: dict[str, Any]) -> None:
         tab_cols = ui.tab("columns", label="🏷️ 列の役割", icon="settings")
         tab_smiles = ui.tab("smiles", label="⚗️ SMILES特徴量", icon="science")
         tab_eda = ui.tab("eda", label="📊 EDA", icon="analytics")
-        tab_pipeline = ui.tab("pipeline", label="⚙️ パイプライン", icon="tune")
 
-    # ── 各タブ内のコンテナ（遅延レンダリング用） ──
-    containers: dict[str, ui.column] = {}
-    rendered: dict[str, bool] = {}
+    # ── @ui.refreshable を使った各タブの描画関数定義 ──
+    # NiceGUI では全タブパネルが初期時に描画されるため遅延描画は行わない。
+    # データ更新後は view_fn.refresh() を呼ぶことで再描画する。
 
-    with ui.tab_panels(sub_tabs, value=tab_load).classes("full-width") as panels:
+    @ui.refreshable
+    def _tab_load_view():
+        _render_data_load(state)
 
-        with ui.tab_panel(tab_load):
-            containers["load"] = ui.column().classes("full-width")
-            rendered["load"] = False
+    @ui.refreshable
+    def _tab_columns_view():
+        _render_column_roles(state)
 
-        with ui.tab_panel(tab_cols):
-            containers["columns"] = ui.column().classes("full-width")
-            rendered["columns"] = False
+    # _tab_smiles_view は @ui.refreshable を使わず
+    # コンテナ+タイマー方式で確実に描画する（後述）
 
-        with ui.tab_panel(tab_smiles):
-            containers["smiles"] = ui.column().classes("full-width")
-            rendered["smiles"] = False
+    @ui.refreshable
+    def _tab_eda_view():
+        _render_eda(state)
 
-        with ui.tab_panel(tab_eda):
-            containers["eda"] = ui.column().classes("full-width")
-            rendered["eda"] = False
+    @ui.refreshable
+    def _tab_pipeline_view():
+        _render_pipeline(state)
 
-        with ui.tab_panel(tab_pipeline):
-            containers["pipeline"] = ui.column().classes("full-width")
-            rendered["pipeline"] = False
-
-    # ── レンダラーマップ ──
-    _renderers = {
-        "load":     _render_data_load,
-        "columns":  _render_column_roles,
-        "smiles":   _render_smiles_features,
-        "eda":      _render_eda,
-        "pipeline": _render_pipeline,
+    _refreshable_views = {
+        "load":     _tab_load_view,
+        "columns":  _tab_columns_view,
+        # "smiles" は コンテナ方式で管理（_rebuild_smiles参照）
+        "eda":      _tab_eda_view,
     }
 
-    def _render_tab(tab_key: str, force: bool = False) -> None:
-        """指定タブのコンテナ内容を（再）構築する。"""
-        if tab_key not in containers:
-            return
-        # 初回 or 強制リフレッシュ
-        if force or not rendered.get(tab_key):
-            c = containers[tab_key]
-            c.clear()
-            with c:
-                _renderers[tab_key](state)
-            rendered[tab_key] = True
+    # ── タブパネルを描画（全パネル即時描画） ──
+    with ui.tab_panels(sub_tabs, value=tab_load).classes("full-width"):
 
-    # ── 初回: データ読込タブだけ即座にレンダリング ──
-    _render_tab("load")
+        with ui.tab_panel(tab_load):
+            _tab_load_view()
 
-    # ── SMILESタブの計算状態スナップショット ──
-    _smiles_precalc_snapshot: dict = {"precalc_done": False, "n_cols": 0}
+        with ui.tab_panel(tab_cols):
+            _tab_columns_view()
 
-    # ── タブ切り替え時 ──
-    def _on_tab_change(e) -> None:
-        tab_key = e.value if isinstance(e.value, str) else getattr(e.value, "value", str(e.value))
+        with ui.tab_panel(tab_smiles):
+            # コンテナ方式で確実に描画（@ui.refreshable のサイレント失敗問題を回避）
+            _smiles_container = ui.column().classes("full-width")
 
-        # SMILESタブ: 記述子計算状態が変化した場合のみ再描画
-        if tab_key == "smiles":
-            cur_done = bool(state.get("precalc_done"))
-            cur_n = 0
-            precalc = state.get("precalc_df")
-            if precalc is not None and hasattr(precalc, 'shape'):
-                cur_n = precalc.shape[1]
-            prev_done = _smiles_precalc_snapshot.get("precalc_done")
-            prev_n = _smiles_precalc_snapshot.get("n_cols", 0)
-            if cur_done != prev_done or cur_n != prev_n:
-                rendered[tab_key] = False  # 状態変化 → 再描画
-                _smiles_precalc_snapshot["precalc_done"] = cur_done
-                _smiles_precalc_snapshot["n_cols"] = cur_n
+            def _rebuild_smiles():
+                """SMILESタブの内容をクリアして再描画する。"""
+                _smiles_container.clear()
+                with _smiles_container:
+                    try:
+                        _render_smiles_features(state)
+                    except Exception as _e:
+                        logger.error(
+                            f"[DataTab] SMILES tab render error: {_e}",
+                            exc_info=True,
+                        )
+                        ui.label(f"⚠️ 表示エラー: {_e}").classes("text-red q-pa-md")
 
-        # 初回未描画の場合のみ描画（force=Falseで不要な再描画を防止）
-        _render_tab(tab_key)
+            _rebuild_smiles()  # 初期描画
 
-    sub_tabs.on_value_change(_on_tab_change)
+        with ui.tab_panel(tab_eda):
+            _tab_eda_view()
 
-    # ── stateに再描画ヘルパーを登録（データ読込からタブ更新を要求可能にする） ──
-    state["_refresh_tabs"] = lambda: [rendered.update({k: False}) for k in rendered]
+        # 設定タブは外側「⚙️ 設定」タブに統合済み。内側に重複する必要なし。
+
+    # ── stateに再描画ヘルパーを登録 ──
+    def _refresh_tabs_fn():
+        """全サブタブを再描画する（load タブ除く）。"""
+        # SMILESタブ: コンテナ方式で確実に再描画
+        try:
+            _rebuild_smiles()
+            logger.debug("[DataTab] rebuilt smiles tab via container")
+        except Exception as exc:
+            logger.warning(f"[DataTab] smiles container rebuild failed: {exc}")
+        # その他のタブ: refreshable 方式
+        for key, view_fn in _refreshable_views.items():
+            if key != "load":
+                try:
+                    view_fn.refresh()
+                    logger.debug(f"[DataTab] refreshed tab {key!r}")
+                except Exception as exc:
+                    logger.warning(f"[DataTab] refresh failed for {key!r}: {exc}")
+
+    state["_refresh_tabs"] = _refresh_tabs_fn
 
 
 
@@ -142,8 +145,19 @@ def render_data_tab(state: dict[str, Any]) -> None:
 def _render_data_load(state: dict) -> None:
     """ファイルアップロード + サンプル + ベンチマークのデータ読込UI"""
 
-    upload_status = ui.label("").classes("text-grey-5 q-mt-sm")
+    # データ読み込み済みの場合はステータスを復元
+    df_existing = state.get("df")
+    fn_existing = state.get("filename", "")
+    if df_existing is not None and not df_existing.empty:
+        status_text = f"\u2705 {fn_existing} ({len(df_existing)}行 \u00d7 {len(df_existing.columns)}列)"
+        upload_status = ui.label(status_text).classes("text-green q-mt-sm")
+    else:
+        upload_status = ui.label("").classes("text-grey-5 q-mt-sm")
     preview_container = ui.column().classes("full-width q-mt-md")
+
+    # 既存データがある場合はプレビューを即座に表示（タブ切替でリセットされない）
+    if df_existing is not None and not df_existing.empty:
+        _show_preview(df_existing, preview_container)
 
     async def handle_upload(e):
         content = e.content.read()
@@ -165,9 +179,12 @@ def _render_data_load(state: dict) -> None:
             upload_status.classes(remove="text-red", add="text-green")
             _show_preview(df, preview_container)
             _update_metrics(state, metrics_row)
-            refresh = state.get("_refresh_tabs")
-            if refresh:
-                refresh()
+            refresh = state.get("_refresh_tabs")
+
+            if refresh:
+
+                refresh()
+
             ui.notify(f"✅ {name} を読み込みました", type="positive")
         except Exception as ex:
             upload_status.text = f"❌ エラー: {ex}"
@@ -200,15 +217,21 @@ def _render_data_load(state: dict) -> None:
                 state["automl_result"] = None
                 state["pipeline_result"] = None
                 state["precalc_done"] = False
+                state["precalc_df"] = None
+                state["_chem_adapters"] = None
+                state["_applied_recommendation"] = None
                 _auto_detect_columns(state)
                 state["task_type"] = "regression"
                 upload_status.text = f"✅ 回帰サンプル ({n}行)"
                 upload_status.classes(remove="text-red", add="text-green")
                 _show_preview(state["df"], preview_container)
                 _update_metrics(state, metrics_row)
-                refresh = state.get("_refresh_tabs")
-                if refresh:
-                    refresh()
+                refresh = state.get("_refresh_tabs")
+
+                if refresh:
+
+                    refresh()
+
                 ui.notify("回帰サンプルデータを読み込みました", type="positive")
 
             def _load_sample_classification():
@@ -222,15 +245,21 @@ def _render_data_load(state: dict) -> None:
                 state["automl_result"] = None
                 state["pipeline_result"] = None
                 state["precalc_done"] = False
+                state["precalc_df"] = None
+                state["_chem_adapters"] = None
+                state["_applied_recommendation"] = None
                 _auto_detect_columns(state)
                 state["task_type"] = "classification"
                 upload_status.text = f"✅ 分類サンプル ({n}行)"
                 upload_status.classes(remove="text-red", add="text-green")
                 _show_preview(state["df"], preview_container)
                 _update_metrics(state, metrics_row)
-                refresh = state.get("_refresh_tabs")
-                if refresh:
-                    refresh()
+                refresh = state.get("_refresh_tabs")
+
+                if refresh:
+
+                    refresh()
+
                 ui.notify("分類サンプルデータを読み込みました", type="positive")
 
             def _load_sample_numeric():
@@ -247,6 +276,9 @@ def _render_data_load(state: dict) -> None:
                 state["automl_result"] = None
                 state["pipeline_result"] = None
                 state["precalc_done"] = False
+                state["precalc_df"] = None
+                state["_chem_adapters"] = None
+                state["_applied_recommendation"] = None
                 _auto_detect_columns(state)
                 state["smiles_col"] = ""
                 state["task_type"] = "regression"
@@ -254,9 +286,12 @@ def _render_data_load(state: dict) -> None:
                 upload_status.classes(remove="text-red", add="text-green")
                 _show_preview(state["df"], preview_container)
                 _update_metrics(state, metrics_row)
-                refresh = state.get("_refresh_tabs")
-                if refresh:
-                    refresh()
+                refresh = state.get("_refresh_tabs")
+
+                if refresh:
+
+                    refresh()
+
                 ui.notify("数値サンプルデータを読み込みました", type="positive")
 
             ui.button("🧪 回帰 (SMILES)", on_click=_load_sample_regression).props("outline color=purple size=sm")
@@ -283,15 +318,21 @@ def _render_data_load(state: dict) -> None:
                         state["automl_result"] = None
                         state["pipeline_result"] = None
                         state["precalc_done"] = False
+                        state["precalc_df"] = None
+                        state["_chem_adapters"] = None
+                        state["_applied_recommendation"] = None
                         _auto_detect_columns(state)
                         state["target_col"] = btarget
                         upload_status.text = f"✅ {bname} ロード完了 ({len(df_bench)}行)"
                         upload_status.classes(remove="text-red", add="text-green")
                         _show_preview(df_bench, preview_container)
                         _update_metrics(state, metrics_row)
-                        refresh = state.get("_refresh_tabs")
-                        if refresh:
-                            refresh()
+                        refresh = state.get("_refresh_tabs")
+
+                        if refresh:
+
+                            refresh()
+
                         ui.notify(f"✅ {bname} をロードしました", type="positive")
                     except Exception as ex:
                         ui.notify(f"エラー: {ex}", type="negative")
@@ -410,6 +451,8 @@ def _render_column_roles(state: dict) -> None:
                         ).classes("full-width q-mb-sm").tooltip(
                             "各サンプルの重みを示す列。信頼度の高いサンプルを重視する場合に指定。"
                         )
+
+
 
             # ── 列役割サマリー ──
             ui.separator()
@@ -1019,7 +1062,7 @@ def _render_pipeline(state: dict) -> None:
             ui.table(columns=columns, rows=rows).classes("full-width").props("dense flat bordered")
 
     # ────────────────────────────────────────────
-    # 1. 交差検証設定（全20種CV対応・ドロップダウン不使用）
+    # 1. 交差検証設定
     # ────────────────────────────────────────────
     from frontend_nicegui.components.cv_config_ui import render_cv_config
     render_cv_config(state)

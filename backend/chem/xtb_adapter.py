@@ -407,6 +407,8 @@ class XTBAdapter(BaseChemAdapter):
                                 cwd=tmpdir,
                                 capture_output=True,
                                 text=True,
+                                encoding="utf-8",
+                                errors="replace",
                                 timeout=self.timeout,
                             )
                             if result.returncode == 0:
@@ -462,7 +464,10 @@ class XTBAdapter(BaseChemAdapter):
                             )
                             result_sp = subprocess.run(
                                 cmd_sp, cwd=tmpdir,
-                                capture_output=True, text=True,
+                                capture_output=True,
+                                text=True,
+                                encoding="utf-8",
+                                errors="replace",
                                 timeout=120,
                             )
                             if result_sp.returncode == 0:

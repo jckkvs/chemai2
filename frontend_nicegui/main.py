@@ -227,6 +227,48 @@ code, pre, .text-monospace, .q-field__native {
 .q-btn .q-icon { font-size: 20px !important; }
 .text-caption .q-icon { font-size: 16px !important; }
 .text-h5 .q-icon, .text-h6 .q-icon { font-size: 24px !important; }
+
+/* ── F-22: 桜井メソッド UI拡張 (ワクワク感とフィードバック) ── */
+@keyframes slide-up-fade {
+    0% { opacity: 0; transform: translateY(30px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up {
+    animation: slide-up-fade 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+}
+.delay-100 { animation-delay: 0.1s; }
+.delay-200 { animation-delay: 0.2s; }
+.delay-300 { animation-delay: 0.3s; }
+.delay-400 { animation-delay: 0.4s; }
+.delay-500 { animation-delay: 0.5s; }
+
+.hover-bounce {
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+}
+.hover-bounce:hover {
+    transform: scale(1.03) translateY(-4px) !important;
+    box-shadow: 0 12px 35px rgba(0, 212, 255, 0.25) !important;
+    z-index: 10;
+}
+
+@keyframes success-glow {
+    0% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.3); }
+    50% { box-shadow: 0 0 25px rgba(74, 222, 128, 0.6), inset 0 0 10px rgba(74, 222, 128, 0.1); border-color: rgba(74, 222, 128, 0.7); }
+    100% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.3); }
+}
+.best-model-glow {
+    animation: success-glow 3s infinite;
+    background: linear-gradient(135deg, rgba(74, 222, 128, 0.08), rgba(0, 212, 255, 0.05)) !important;
+}
+
+@keyframes shake-warning {
+    0%, 100% { transform: translateX(0); }
+    10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+    20%, 40%, 60%, 80% { transform: translateX(4px); }
+}
+.animate-shake {
+    animation: shake-warning 0.6s cubic-bezier(.36,.07,.19,.97) both;
+}
 """
 
 
@@ -405,11 +447,12 @@ def main_page():
         ).classes("btn-primary btn-run-analysis").props(
             "size=lg icon=rocket_launch no-caps unelevated"
         )
-        # F-13: ヘルプ品質向上 — ラベルの繰り返しを避け、操作の意味を説明
         run_btn.tooltip(
             "ワンクリックで全自動ML: データ前処理 → 特徴選択 → "
             "複数モデル比較 → 最良モデル評価 → SHAP解析まで一括実行"
         )
+        # _run_analysis を state に格納 → descriptor_plugins_ui から呼べるようにする
+        state["_run_analysis"] = _run_analysis
 
     # F-11: キーボードショートカット登録
     ui.keyboard(
@@ -593,7 +636,7 @@ def main_page():
             "🔬 EDA", on_click=lambda: main_tabs.set_value("eda")
         ).props("flat color=white align=left size=sm no-caps").classes("full-width")
         ui.button(
-            "⚙️ パイプライン", on_click=lambda: main_tabs.set_value("pipeline")
+            "⚙️ 設定", on_click=lambda: main_tabs.set_value("pipeline")
         ).props("flat color=white align=left size=sm no-caps").classes("full-width")
         ui.button(
             "📊 結果確認", on_click=lambda: main_tabs.set_value("results")
@@ -626,9 +669,10 @@ def main_page():
     ) as main_tabs:
         data_tab = ui.tab("data", label="📂 データ設定", icon="settings")
         eda_tab = ui.tab("eda", label="🔬 EDA", icon="query_stats")
-        pipeline_tab = ui.tab("pipeline", label="⚙️ パイプライン", icon="tune")
+        pipeline_tab = ui.tab("pipeline", label="⚙️ 設定", icon="tune")
         results_tab = ui.tab("results", label="📊 結果確認", icon="analytics")
         inverse_tab = ui.tab("inverse", label="🔮 逆解析", icon="find_replace")
+        doe_tab = ui.tab("doe", label="🧪 実験計画", icon="science")
 
     with ui.tab_panels(main_tabs, value=data_tab).classes("full-width"):
 
@@ -647,6 +691,9 @@ def main_page():
             from frontend_nicegui.components.leakage_check_ui import render_leakage_check_panel
             render_leakage_check_panel(state)
             ui.separator().classes("q-my-sm")
+            from frontend_nicegui.components.cv_config_ui import render_cv_config
+            render_cv_config(state)
+            ui.separator().classes("q-my-sm")
             from frontend_nicegui.components.pipeline_config_ui import render_pipeline_config
             render_pipeline_config(state)
 
@@ -660,10 +707,114 @@ def main_page():
             from frontend_nicegui.components.inverse_analysis_tab import render_inverse_analysis_tab
             render_inverse_analysis_tab(state)
 
+        # ── 実験計画タブ ──
+        with ui.tab_panel(doe_tab):
+            from frontend_nicegui.components.doe_tab import render_doe_tab
+            render_doe_tab(state)
+
     # ── SMILES列がある場合、特徴量計算をバックグラウンドで自動実行 ──
     # precalc_done=False の間だけ発火する定期ポーリング型。
     # SMILES列変更時に precalc_done=False にリセットすれば再計算がトリガーされる。
+    #
+    # ⚠️ Connection Lost 防止の設計:
+    #   compute_all_descriptors を単一の run.io_bound で呼ぶと、重い計算（Mordred等）で
+    #   WebSocket ハートビートが長時間止まり Connection Lost が発生する。
+    #   対策: エンジンごとに run.io_bound を分割し、各呼び出し間でイベントループに制御を返す。
     _computing = {"active": False}  # 二重実行防止フラグ
+
+    # エンジン定義: 全14エンジン
+    # ※ is_available()=False のエンジンは _compute_one_engine が自動スキップするため安全。
+    # ※ エンジンを増減してはならない。利用可否に関わらず全エンジンを常に試みること。
+    _ENGINE_STEPS = [
+        {
+            "label": "RDKit（基本物理化学記述子 + フィンガープリント）",
+            "adapter_cls": ("backend.chem.rdkit_adapter", "RDKitAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "基団寄与法（Joback法）",
+            "adapter_cls": ("backend.chem.group_contrib_adapter", "GroupContribAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "Mordred（包括的2D/3D記述子 全計算）",
+            "adapter_cls": ("backend.chem.mordred_adapter", "MordredAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "scikit-fingerprints（ECFP・MACCS等）",
+            "adapter_cls": ("backend.chem.skfp_adapter", "SkfpAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "DescriptaStorus（Merck高速記述子）",
+            "adapter_cls": ("backend.chem.descriptastorus_adapter", "DescriptaStorusAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "Molfeat（統合フィンガープリント）",
+            "adapter_cls": ("backend.chem.molfeat_adapter", "MolfeatAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "Mol2Vec（分子埋め込み）",
+            "adapter_cls": ("backend.chem.mol2vec_adapter", "Mol2VecAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "PaDEL（包括的記述子）",
+            "adapter_cls": ("backend.chem.padel_adapter", "PaDELAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "MolAI（CNN潜在ベクトル+PCA）",
+            "adapter_cls": ("backend.chem.molai_adapter", "MolAIAdapter"),
+            "kwargs": {"n_components": 6},
+        },
+        {
+            "label": "XTB（GFN2-xTB 量子化学計算）",
+            "adapter_cls": ("backend.chem.xtb_adapter", "XTBAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "UniPKa（pKa/LogD予測）",
+            "adapter_cls": ("backend.chem.unipka_adapter", "UniPkaAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "COSMO-RS（溶媒和自由エネルギー）",
+            "adapter_cls": ("backend.chem.cosmo_adapter", "CosmoAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "UMA（Meta FAIR 量子化学）",
+            "adapter_cls": ("backend.chem.uma_adapter", "UMAAdapter"),
+            "kwargs": {},
+        },
+        {
+            "label": "Chemprop（D-MPNN グラフニューラルネット）",
+            "adapter_cls": ("backend.chem.chemprop_adapter", "ChempropAdapter"),
+            "kwargs": {},
+        },
+    ]
+
+    def _compute_one_engine(module_path: str, class_name: str, smiles_list: list, kwargs: dict):
+        """1エンジンの記述子を計算する（run.io_bound で呼ぶ純粋関数）。"""
+        import importlib
+        try:
+            mod = importlib.import_module(module_path)
+            cls = getattr(mod, class_name)
+            adapter = cls(**kwargs)
+            if not adapter.is_available():
+                return None, 0
+            result = adapter.compute(smiles_list)
+            df = result.descriptors
+            if df is None or df.empty:
+                return None, 0
+            return df, df.shape[1]
+        except Exception as exc:
+            logger.debug(f"エンジン {class_name} スキップ: {exc}")
+            return None, 0
 
     async def _auto_compute_descriptors():
         if _computing["active"]:
@@ -680,27 +831,87 @@ def main_page():
         _computing["active"] = True
         try:
             from nicegui import run
-            from backend.chem.descriptors import compute_all_descriptors
+            import pandas as pd
+
             smiles_list = state["df"][smiles_col].dropna().tolist()
             if not smiles_list:
                 state["precalc_done"] = True
                 return
-            ui.notify("⚗️ 全エンジンで記述子を自動計算中...", type="info", timeout=3000)
-            df_desc = await run.io_bound(compute_all_descriptors, smiles_list)
+
+            n_mols = len(smiles_list)
+            _calc_notif = ui.notify(
+                f"⚗️ SMILES特徴量を計算中（{n_mols}件）",
+                type="info", timeout=0,  # 手動でdismissするまで表示
+            )
+
+            # ── エンジンごとにチャンク実行 (Connection Lost 防止) ──
+            # 各 run.io_bound の間でイベントループに制御が戻り、WebSocketハートビートが維持される。
+            collected_dfs: list[pd.DataFrame] = []
+            n_ok = 0
+
+            for step_info in _ENGINE_STEPS:
+                label = step_info["label"]
+                module_path, class_name = step_info["adapter_cls"]
+                kwargs = step_info["kwargs"]
+
+                logger.debug(f"[AutoCalc] {label} 計算中...")
+                try:
+                    df_eng, n_cols = await run.io_bound(
+                        _compute_one_engine,
+                        module_path, class_name, smiles_list, kwargs,
+                    )
+                    if df_eng is not None and not df_eng.empty:
+                        collected_dfs.append(df_eng.reset_index(drop=True))
+                        n_ok += 1
+                        logger.debug(f"[AutoCalc] {label}: {n_cols}個")
+                except Exception as exc:
+                    logger.debug(f"[AutoCalc] {label}: スキップ ({exc})")
+                # ← ここでイベントループに制御が戻る（await の効果）
+
+            # 全て結合
+            if collected_dfs:
+                df_desc = pd.concat(collected_dfs, axis=1)
+                df_desc = df_desc.loc[:, ~df_desc.columns.duplicated()]
+                df_desc = df_desc.apply(pd.to_numeric, errors="coerce")
+            else:
+                df_desc = pd.DataFrame(index=range(n_mols))
+
             state["precalc_df"] = df_desc
             state["precalc_done"] = True
+            n_desc = df_desc.shape[1]
+
+            # 計算中通知を閉じ、完了通知を表示
+            try:
+                _calc_notif.dismiss()
+            except Exception:
+                pass
             ui.notify(
-                f"✅ 記述子計算完了: {df_desc.shape[1]}個",
+                f"✅ {n_desc}個の記述子を計算しました",
                 type="positive", timeout=5000,
             )
+
             # 目的変数名から推薦記述子セットを自動適用
             _auto_apply_recommendation(state)
+
+            # UIの再描画をトリガー
+            refresh_fn = state.get("_refresh_tabs")
+            if refresh_fn is not None:
+                try:
+                    refresh_fn()
+                except Exception as exc:
+                    logger.warning(f"[AutoCalc] UI更新失敗: {exc}")
+
         except Exception as e:
-            logger.warning(f"自動記述子計算エラー: {e}")
-            ui.notify(f"⚠️ 記述子計算エラー: {e}", type="warning", timeout=5000)
+            logger.warning(f"[AutoCalc] 特徴量計算エラー: {e}")
+            ui.notify(
+                "特徴量の計算中にエラーが発生しました",
+                type="warning", timeout=5000,
+            )
             state["precalc_done"] = True  # エラー時も無限ループ防止
         finally:
             _computing["active"] = False
+
+
 
     def _auto_apply_recommendation(state: dict):
         """目的変数名から推薦記述子セットを自動適用する。"""
@@ -714,8 +925,8 @@ def main_page():
                 state["selected_descriptors"] = [d.name for d in rec.descriptors]
                 state["_applied_recommendation"] = rec
                 ui.notify(
-                    f"📌 推薦適用: {rec.target_name} ({len(rec.descriptors)}記述子)",
-                    type="info", timeout=5000,
+                    f"📌 {rec.target_name}: {len(rec.descriptors)}記述子を推込",
+                    type="info", timeout=4000,
                 )
         except ImportError:
             pass
@@ -751,7 +962,7 @@ def help_page():
 - **🏷️ 列の役割**: 目的変数・SMILES列の手動変更、除外列・グループ列・時系列列の設定
 - **⚗️ SMILES特徴量**: 14エンジンの記述子を個別に選択（サブカテゴリ分類付き）
 - **📊 EDA**: データ品質チェック・統計量サマリー
-- **⚙️ パイプライン**: CV分割数、使用モデル、スケーラー、単調性制約
+- **⚙️ 設定**: CV分割数、使用モデル、スケーラー、単調性制約
 - **🔮 逆解析**: ランダムサンプリング / グリッドサーチ / ベイズ最適化 / 遺伝的アルゴリズム / MOLAI逆変換
 
 ## UI設計思想
@@ -822,5 +1033,6 @@ if __name__ in {"__main__", "__mp_main__"}:
         port=8085,
         reload=False,
         storage_secret="chemai-v3-clean",
+        reconnect_timeout=120,  # 記述子計算などの重い処理中の再接続タイムアウトを120秒に延長
     )
 

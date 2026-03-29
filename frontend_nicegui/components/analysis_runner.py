@@ -41,6 +41,7 @@ def _run_engine_sync(
     selected_desc: list[str] | None,
     progress_queue: queue.Queue,
     *,
+    active_engines: list[str] | None = None,
     cv_key: str = "auto",
     model_params: dict[str, dict] | None = None,
     preprocess_params: dict[str, Any] | None = None,
@@ -49,27 +50,17 @@ def _run_engine_sync(
 ) -> Any:
     """
     バックグラウンドスレッドで AutoMLEngine を実行する同期関数。
-
-    進捗情報は progress_queue に送信される。
-    NiceGUI の run.io_bound から呼ばれるため、
-    この関数内で UI 操作を行ってはいけない。
-
-    Implements: WebSocket切断修正 + パイプライン設定統合
-    注意点: run.cpu_bound ではなく run.io_bound を使用。
-            AutoMLEngine 内部で numpy/sklearn が GIL リリースするため、
-            io_bound（スレッド）で十分かつ pickle 不要で簡潔。
     """
     from backend.models.automl import AutoMLEngine
 
     def progress_callback(step: int, total: int, msg: str) -> None:
-        """進捗をキューに送信（スレッドセーフ）+ キャンセルチェック"""
         global _cancel_requested
         if _cancel_requested:
             raise AnalysisCancelled("ユーザーが解析をキャンセルしました")
         try:
             progress_queue.put_nowait(("progress", step, total, msg))
         except queue.Full:
-            pass  # キューが満杯なら進捗をスキップ
+            pass 
 
     engine = AutoMLEngine(
         task=task,
@@ -81,6 +72,7 @@ def _run_engine_sync(
         timeout_seconds=timeout,
         progress_callback=progress_callback,
         selected_descriptors=selected_desc,
+        active_engines=active_engines,
         monotonic_constraints_dict=monotonic_constraints,
         count_normalization=count_normalization,
     )
@@ -294,6 +286,16 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             set_timer = ui.timer(0.5, _poll_set_progress)
 
             try:
+                # アクティブエンジンの抽出
+                _engine_map = {
+                    "use_rdkit": "RDKitAdapter", "use_xtb": "XTBAdapter", "use_mordred": "MordredAdapter",
+                    "use_skfp": "SkfpAdapter", "use_mol2vec": "Mol2VecAdapter", "use_groupcontrib": "GroupContribAdapter",
+                    "use_molai": "MolAIAdapter", "use_uma": "UMAAdapter", "use_padel": "PaDELAdapter",
+                    "use_descriptastorus": "DescriptaStorusAdapter", "use_molfeat": "MolfeatAdapter",
+                    "use_chemprop": "ChempropAdapter", "use_cosmo": "CosmoAdapter", "use_unipka": "UniPkaAdapter"
+                }
+                active_engines = [cls_name for k, cls_name in _engine_map.items() if state.get(k)]
+
                 result = await run.io_bound(
                     _run_engine_sync,
                     df_work,
@@ -306,6 +308,7 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                     state.get("timeout", 300),
                     selected_desc,
                     set_queue,
+                    active_engines=active_engines,
                     cv_key=cv_key,
                     model_params=model_params,
                     preprocess_params=preprocess_params if preprocess_params else None,

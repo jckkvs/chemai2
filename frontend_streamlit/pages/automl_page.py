@@ -299,9 +299,8 @@ def _run_full_pipeline(
     """Full pipeline. All CV, preprocessor, and model settings are fully configurable."""
     extra_params = extra_params or {}
     TOTAL_PHASES = sum([do_eda, do_prep, do_ml, do_eval, do_pca, do_shap])
-    if smiles_col and smiles_col in df.columns:
-        TOTAL_PHASES += 1
-        
+    # SMILES変換はAutoMLEngine.run()内で処理するため、独立フェーズとして数えない
+
     result = PipelineResult()
     start_time = time.time()
 
@@ -330,31 +329,10 @@ def _run_full_pipeline(
 
     try:
         # ── Phase 0: SMILES記述子変換 ────────────────────
-        if smiles_col and smiles_col in df.columns:
-            phase_status.markdown("**Phase 0 — SMILES記述子変換 実行中…**")
-            try:
-                from backend.chem.smiles_transformer import SmilesDescriptorTransformer
-                smiles_transformer = SmilesDescriptorTransformer(
-                    smiles_col=smiles_col,
-                    selected_descriptors=selected_descriptors,
-                )
-                df = smiles_transformer.fit_transform(df)
-                result.smiles_transformer = smiles_transformer
-                
-                # 相関再計算
-                if pd.api.types.is_numeric_dtype(df[target_col]):
-                    desc_cols = smiles_transformer._descriptor_cols
-                    valid_cols = [c for c in desc_cols if c in df.columns]
-                    if valid_cols:
-                        corr = df[valid_cols].corrwith(df[target_col]).dropna()
-                        result.smiles_correlations = corr.to_dict()
-                _advance("Phase 0: SMILES変換")
-            except Exception as e:
-                result.warnings.append(f"SMILES変換エラー: {e}")
-                _log(f"⚠️ SMILES変換スキップ: {e}")
-                # df = df.drop(columns=[smiles_col], errors="ignore")
-            # 二重処理を防ぐためにNoneにしていたが、Pipeline側で変換させるために維持する
-            # smiles_col = None 
+        # NOTE: Phase 0でSMILES変換は行わない。
+        # AutoMLEngine.run()内でSmilesDescriptorTransformerを使って変換する。
+        # 二重変換（Phase 0 + engine.run()内）が解析失敗の主因だったため廃止。
+        # smiles_col はそのままengine.run()に渡す。
 
         # ── Phase 1: EDA ─────────────────────────────────
         if do_eda:
@@ -386,37 +364,42 @@ def _run_full_pipeline(
                 )
                 _log(f"  [{step}/{total}] {msg}")
 
-        cfg = PreprocessConfig(
-            numeric_scaler=numeric_scaler,
-            numeric_imputer=numeric_imputer,
-            add_missing_indicator=add_missing_indicator,
-            cat_low_encoder=cat_low_encoder,
-            cat_high_encoder=cat_high_encoder,
-            categorical_imputer=categorical_imputer,
-        )
-        engine = AutoMLEngine(
-            task=task_override,
-            cv_folds=cv_folds,
-            cv_key=cv_key,
-            cv_groups_col=cv_groups_col,
-            model_keys=models if models else None,
-            model_params=model_params or {},
-            timeout_seconds=timeout,
-            progress_callback=_cb,
-            selected_descriptors=selected_descriptors,
-            monotonic_constraints_dict=monotonic_constraints_dict or {},
-        )
-        automl_res = engine.run(
-            df, target_col=target_col, smiles_col=smiles_col,
-            preprocess_config=cfg,
-            cv_extra_params=cv_params or {},
-        )
-        result.automl_result = automl_res
-        result.task = automl_res.task if hasattr(automl_res, "task") else task_override
-        st.session_state["automl_result"] = automl_res
-        if automl_res.warnings:
-            result.warnings.extend(automl_res.warnings)
-        _advance("Phase 3: AutoML")
+            cfg = PreprocessConfig(
+                numeric_scaler=numeric_scaler,
+                numeric_imputer=numeric_imputer,
+                add_missing_indicator=add_missing_indicator,
+                cat_low_encoder=cat_low_encoder,
+                cat_high_encoder=cat_high_encoder,
+                categorical_imputer=categorical_imputer,
+            )
+            engine = AutoMLEngine(
+                task=task_override,
+                cv_folds=cv_folds,
+                cv_key=cv_key,
+                cv_groups_col=cv_groups_col,
+                model_keys=models if models else None,
+                model_params=model_params or {},
+                timeout_seconds=timeout,
+                progress_callback=_cb,
+                selected_descriptors=selected_descriptors,
+                monotonic_constraints_dict=monotonic_constraints_dict or {},
+            )
+            automl_res = engine.run(
+                df, target_col=target_col, smiles_col=smiles_col,
+                preprocess_config=cfg,
+                cv_extra_params=cv_params or {},
+            )
+            result.automl_result = automl_res
+            result.task = automl_res.task if hasattr(automl_res, "task") else task_override
+            st.session_state["automl_result"] = automl_res
+            # SMILES相関を結果に保持（AutoMLEngine内で計算済みの場合）
+            if hasattr(automl_res, 'smiles_transformer') and automl_res.smiles_transformer is not None:
+                result.smiles_transformer = automl_res.smiles_transformer
+            if hasattr(automl_res, 'smiles_correlations') and automl_res.smiles_correlations:
+                result.smiles_correlations = automl_res.smiles_correlations
+            if automl_res.warnings:
+                result.warnings.extend(automl_res.warnings)
+            _advance("Phase 3: AutoML")
 
         # X_base: AutoML側で目的変数の欠損除外等が適用された「実際に学習に使われたデータ」
         if result.automl_result and result.automl_result.processed_X is not None:

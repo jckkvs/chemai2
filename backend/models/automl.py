@@ -86,7 +86,9 @@ class AutoMLEngine:
         timeout_seconds: int = 600,
         progress_callback: Callable[[int, int, str], None] | None = None,
         selected_descriptors: list[str] | None = None,
+        active_engines: list[str] | None = None,
         monotonic_constraints_dict: dict[str, int] | None = None,
+        count_normalization: str = "density",
     ) -> None:
         self.task = task
         self.cv_folds = cv_folds
@@ -98,7 +100,8 @@ class AutoMLEngine:
         self.timeout_seconds = timeout_seconds
         self.progress_callback = progress_callback or (lambda s, t, m: None)
         self.selected_descriptors = selected_descriptors
-        self.count_normalization: str = "density"
+        self.active_engines = active_engines
+        self.count_normalization = count_normalization
         self.monotonic_constraints_dict = monotonic_constraints_dict or {}
 
     def run(
@@ -140,9 +143,16 @@ class AutoMLEngine:
             logger.info(f"目的変数の欠損により {initial_len - len(df)} 行を除去しました。")
 
         # Step 2: 変数型判定（SMILES等を検出）
+        # ── 重要: smiles_col は SmilesDescriptorTransformer で別途処理するため
+        # ── TypeDetector（→ColumnTransformer構築）の対象から除外する。
+        # ── 除外しないとColumnTransformerがSMILS文字列列を処理しようとし、
+        # ── SmilesDescriptorTransformerの出力（SMILES列なし）と列ミスマッチが起きる。
         self.progress_callback(2, total_steps, "変数型を自動判定中...")
         detector = TypeDetector()
-        detection_result = detector.detect(df.drop(columns=[target_col]))
+        _detect_cols_to_drop = [target_col]
+        if smiles_col and smiles_col in df.columns:
+            _detect_cols_to_drop.append(smiles_col)
+        detection_result = detector.detect(df.drop(columns=_detect_cols_to_drop))
 
         # Step 3: タスク判定
         self.progress_callback(3, total_steps, "タスク種別を判定中...")
@@ -207,7 +217,33 @@ class AutoMLEngine:
         preprocess_cfg = preprocess_config or PreprocessConfig()
         deadline = start + self.timeout_seconds
 
-        X_train = X
+        # ── SMILES列が存在する場合: 先にfit_transformして記述子DFを取得。
+        # ── これによりTypeDetector・build_full_pipelineが記述子列を正しく認識できる。
+        # ── 従来の「SmilesTransformer先頭挿入→変換前DFのdetection_result使用」という
+        # ── 設計は TypeDetector が変換後の記述子列を認識できずColumnTransformerが空になるバグがあった。
+        _smiles_transformer_for_cv: SmilesDescriptorTransformer | None = None
+        X_train = X.copy()
+
+        if smiles_col and smiles_col in X_train.columns:
+            logger.info(f"SMILES列 '{smiles_col}' を事前変換して記述子DFを構築します。")
+            _smiles_transformer_for_cv = SmilesDescriptorTransformer(
+                smiles_col=smiles_col,
+                selected_descriptors=self.selected_descriptors,
+                count_normalization=self.count_normalization,
+            )
+            try:
+                X_train = _smiles_transformer_for_cv.fit_transform(X_train)
+                logger.info(f"SMILES変換後のDF: {X_train.shape[1]}列")
+                # 変換後のDFで TypeDetector を再実行 → detection_resultを更新
+                detector_post = TypeDetector()
+                detection_result = detector_post.detect(X_train)
+                logger.info(f"SMILES変換後のTypeDetection結果: "
+                           f"numeric={len(detection_result.numeric_columns)}列, "
+                           f"categorical={len(detection_result.categorical_columns)}列")
+            except Exception as _e:
+                logger.warning(f"SMILES事前変換に失敗: {_e}。元のDFで続行します。")
+                _smiles_transformer_for_cv = None
+                X_train = X.copy()
 
         for i, mkey in enumerate(model_keys):
             if time.time() > deadline:
@@ -225,7 +261,6 @@ class AutoMLEngine:
                     try:
                         from backend.pipeline.column_selector import ColumnMeta
                         from backend.pipeline.pipeline_builder import apply_monotonic_constraints
-                        # feature_namesのマッピング（X列名 → monotonic値 → ColumnMeta）
                         _col_meta = {
                             col: ColumnMeta(monotonic=self.monotonic_constraints_dict.get(col, 0))
                             for col in X_train.columns
@@ -241,26 +276,19 @@ class AutoMLEngine:
                     target_col=target_col,
                     config=preprocess_cfg,
                 )
-                # SMILES列がある場合、パイプラインの先頭にTransformerを挿入
-                if smiles_col and smiles_col in X_train.columns:
-                    st_trans = SmilesDescriptorTransformer(
-                        smiles_col=smiles_col,
-                        selected_descriptors=self.selected_descriptors,
-                        count_normalization=self.count_normalization,
-                    )
-                    pipeline = Pipeline([
-                        ("smiles_vars", st_trans),
-                        ("main_pipe", pipeline_base)
-                    ])
-                else:
-                    pipeline = pipeline_base
+                # SMILES列があった場合: CV実行は変換済みX_trainで行う（smiles_varsなし）。
+                # ── 理由: fold毎にSMILS変換すると、fold内の分子セットによって生成される記述子列が
+                # ── 変わり「A given column is not a column of the dataframe」KeyErrorが発生する。
+                # ── 事前変換済みX_trainはfitと同じ列セットを保証する。
+                pipeline = pipeline_base  # smiles_varsなしでCV実行
+                X_for_cv = X_train        # 変換済みDF
                 cv_config = CVConfig(
-                    cv_key=cv_key, 
+                    cv_key=cv_key,
                     n_splits=self.cv_folds,
                     extra_params=cv_extra_params
                 )
                 result = run_cross_validation(
-                    pipeline, X_train, y, cv_config,
+                    pipeline, X_for_cv, y, cv_config,
                     scoring=scoring,
                     groups=groups,
                     n_jobs=1,
@@ -319,20 +347,19 @@ class AutoMLEngine:
             target_col=target_col,
             config=preprocess_cfg,
         )
-        if smiles_col and smiles_col in X_train.columns:
-            st_trans = SmilesDescriptorTransformer(
-                smiles_col=smiles_col,
-                selected_descriptors=self.selected_descriptors,
-                count_normalization=self.count_normalization,
-            )
+        # SMILES変換済みTransformerがある場合はbest_pipelineにも先頭挿入
+        if _smiles_transformer_for_cv is not None:
+            from sklearn.base import clone as sklearn_clone
             best_pipeline = Pipeline([
-                ("smiles_vars", st_trans),
+                ("smiles_vars", sklearn_clone(_smiles_transformer_for_cv)),
                 ("main_pipe", best_pipeline_base)
             ])
+            best_pipeline.fit(X, y)   # 元のDF（SMILES列含む）で全データ学習
+            X_for_eda = X_train       # EDA用は変換後DFを使用
         else:
             best_pipeline = best_pipeline_base
-            
-        best_pipeline.fit(X_train, y)
+            best_pipeline.fit(X_train, y)
+            X_for_eda = X_train
 
         # パイプラインの前処理部分(estimator以外)でtransformし、
         # 「実際にモデルに入力された最終データ」を取得する
@@ -340,7 +367,7 @@ class AutoMLEngine:
         try:
             # Pipeline[-1]がestimator。Pipeline[:-1]が前処理ステップ群。
             preprocessor_steps = best_pipeline[:-1]
-            X_transformed = preprocessor_steps.transform(X_train)
+            X_transformed = preprocessor_steps.transform(X_for_eda)
             # 特徴量名の取得
             try:
                 feat_names = preprocessor_steps.get_feature_names_out().tolist()
@@ -351,11 +378,11 @@ class AutoMLEngine:
             if hasattr(X_transformed, "toarray"):
                 X_transformed = X_transformed.toarray()
             processed_X_final = pd.DataFrame(
-                X_transformed, columns=feat_names, index=X_train.index
+                X_transformed, columns=feat_names, index=X_for_eda.index
             )
         except Exception as e:
             logger.warning(f"前処理後データの取得に失敗: {e}")
-            processed_X_final = X_train  # フォールバック: 生データ
+            processed_X_final = X_for_eda  # フォールバック: 変換済データ
 
         # OOF (Out-Of-Fold) 予測を計算（最良モデルで cross_val_predict）
         oof_preds: np.ndarray | None = None
@@ -365,7 +392,7 @@ class AutoMLEngine:
             _cv_splitter = get_cv(CVConfig(cv_key=cv_key, n_splits=self.cv_folds, extra_params=cv_extra_params))
             _cv_method = "predict_proba" if task == "classification" and hasattr(best_pipeline, "predict_proba") else "predict"
             oof_preds = cross_val_predict(
-                best_pipeline, X_train, y,
+                best_pipeline, X_for_eda if _smiles_transformer_for_cv is None else X, y,
                 cv=_cv_splitter, method=_cv_method, n_jobs=1,
                 groups=groups,
             )
@@ -383,6 +410,18 @@ class AutoMLEngine:
             f"AutoML完了: {elapsed:.1f}秒 / 最良モデル={best_key} / score={best_score:.4f}"
         )
 
+        # SMILES記述子と目的変数の相関を計算
+        _smiles_correlations: dict[str, float] = {}
+        if _smiles_transformer_for_cv is not None:
+            try:
+                _target_series = pd.Series(y, index=X_train.index)
+                _num_cols = X_train.select_dtypes(include="number").columns.tolist()
+                if _num_cols and pd.api.types.is_numeric_dtype(_target_series):
+                    _corr = X_train[_num_cols].corrwith(_target_series).dropna()
+                    _smiles_correlations = _corr.to_dict()
+            except Exception as _e:
+                logger.debug(f"SMILES相関計算失敗: {_e}")
+
         return AutoMLResult(
             task=task,
             best_model_key=best_key,
@@ -399,6 +438,8 @@ class AutoMLEngine:
             y_train=y,
             oof_predictions=oof_preds,
             oof_true=y if oof_preds is not None else None,
+            smiles_transformer=_smiles_transformer_for_cv,
+            smiles_correlations=_smiles_correlations,
         )
 
     @staticmethod
