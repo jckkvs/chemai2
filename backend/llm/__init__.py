@@ -18,6 +18,13 @@ from backend.llm.registry import LLMProviderRegistry
 _registry = LLMProviderRegistry()
 _registry.register("stub", StubLLMProvider)
 
+# HuggingFaceプロバイダーを登録（transformers がインストール済みの場合のみ）
+try:
+    from backend.llm.providers.hf_provider import HuggingFaceProvider
+    _registry.register("huggingface", HuggingFaceProvider)
+except ImportError:
+    pass
+
 
 def get_llm_provider(name: str = "stub") -> LLMProvider:
     """登録済みLLMプロバイダーを取得する。"""

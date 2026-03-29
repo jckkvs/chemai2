@@ -3223,6 +3223,18 @@ def _render_custom_plugins(state: dict) -> None:
                         on_click=_on_validate_save,
                     ).props("unelevated no-caps color=teal")
 
+            # ══════════════════════════════════════════════
+            # 🤖 内部AI（HuggingFace ローカルLLM）タブ
+            # ══════════════════════════════════════════════
+            with ui.tab_panel(_tab_int):
+                try:
+                    from frontend_nicegui.components.internal_llm_ui import render_internal_llm_tab
+                    render_internal_llm_tab(state)
+                except Exception as _hf_err:
+                    ui.label(
+                        f"内部LLMモジュールの読み込みに失敗しました: {_hf_err}"
+                    ).classes("text-red text-caption")
+
 def _detect_adapter_sources() -> dict[str, Path]:
     """backend/chem/以下のSMILES記述子アダプタのソースファイルを検出。"""
     import inspect

@@ -71,3 +71,6 @@ staticfiles/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# HuggingFace token config (contains secret token)
+.hf_config.json
