@@ -20,7 +20,17 @@ from nicegui import ui
 # ═══════════════════════════════════════════════════════════
 
 _CV_CATEGORIES = {
-    "基本": {
+    "🤖 自動": {
+        "icon": "🤖",
+        "methods": {
+            "auto": {
+                "label": "auto（タスクに応じて自動選択）",
+                "desc": "回帰→KFold / 分類→StratifiedKFold を自動判定",
+                "params": {},
+            },
+        },
+    },
+    "📐 基本": {
         "icon": "📐",
         "methods": {
             "kfold": {
@@ -42,7 +52,24 @@ _CV_CATEGORIES = {
             },
         },
     },
-    "グループ系": {
+    "🚪 Leave系": {
+        "icon": "🚪",
+        "methods": {
+            "loo": {
+                "label": "Leave-One-Out (LOO)",
+                "desc": "1サンプルずつ除外（小データ向け、計算コスト高）",
+                "params": {},
+            },
+            "lpo": {
+                "label": "Leave-P-Out",
+                "desc": "Pサンプルずつ除外（計算コスト：C(n,p) 通り）",
+                "params": {
+                    "p": {"type": "slider", "label": "除外サンプル数 (P)", "min": 1, "max": 5, "step": 1, "default": 2},
+                },
+            },
+        },
+    },
+    "👥 グループ系": {
         "icon": "👥",
         "requires_groups": True,
         "methods": {
@@ -62,16 +89,8 @@ _CV_CATEGORIES = {
                     "shuffle": {"type": "checkbox", "label": "シャッフル", "default": True},
                 },
             },
-            "group_shuffle_split": {
-                "label": "Group Shuffle Split",
-                "desc": "グループ考慮のランダム分割",
-                "params": {
-                    "n_splits": {"type": "slider", "label": "繰返し回数", "min": 1, "max": 20, "step": 1, "default": 5},
-                    "test_size": {"type": "slider_float", "label": "テスト比率", "min": 0.05, "max": 0.5, "step": 0.05, "default": 0.2},
-                },
-            },
             "logo": {
-                "label": "Leave-One-Group-Out",
+                "label": "Leave-One-Group-Out (LOGO)",
                 "desc": "1グループずつ除外して検証",
                 "params": {},
             },
@@ -82,9 +101,17 @@ _CV_CATEGORIES = {
                     "n_groups": {"type": "slider", "label": "除外グループ数 (P)", "min": 1, "max": 10, "step": 1, "default": 2},
                 },
             },
+            "group_shuffle_split": {
+                "label": "Group Shuffle Split",
+                "desc": "グループ考慮のランダム分割",
+                "params": {
+                    "n_splits": {"type": "slider", "label": "繰返し回数", "min": 1, "max": 20, "step": 1, "default": 5},
+                    "test_size": {"type": "slider_float", "label": "テスト比率", "min": 0.05, "max": 0.5, "step": 0.05, "default": 0.2},
+                },
+            },
         },
     },
-    "繰返し": {
+    "🔁 繰返し": {
         "icon": "🔁",
         "methods": {
             "repeated_kfold": {
@@ -106,7 +133,7 @@ _CV_CATEGORIES = {
             },
         },
     },
-    "シャッフル": {
+    "🎲 シャッフル": {
         "icon": "🎲",
         "methods": {
             "shuffle_split": {
@@ -128,7 +155,7 @@ _CV_CATEGORIES = {
             },
         },
     },
-    "時系列": {
+    "📈 時系列": {
         "icon": "📈",
         "methods": {
             "timeseries": {
@@ -141,29 +168,12 @@ _CV_CATEGORIES = {
                 },
             },
             "walk_forward": {
-                "label": "Walk-Forward Validation",
+                "label": "Walk-Forward Validation（WalkCV）",
                 "desc": "拡張窓方式のウォークフォワード検証",
                 "params": {
                     "n_splits": {"type": "slider", "label": "分割数", "min": 2, "max": 20, "step": 1, "default": 5},
                     "min_train_size": {"type": "number", "label": "最小学習サンプル数（0=自動）", "min": 0, "max": 100000, "step": 10, "default": 0},
                     "gap": {"type": "slider", "label": "ギャップ", "min": 0, "max": 50, "step": 1, "default": 0},
-                },
-            },
-        },
-    },
-    "Leave系": {
-        "icon": "🚪",
-        "methods": {
-            "loo": {
-                "label": "Leave-One-Out (LOO)",
-                "desc": "1サンプルずつ除外（小データ向け、計算コスト高）",
-                "params": {},
-            },
-            "lpo": {
-                "label": "Leave-P-Out",
-                "desc": "Pサンプルずつ除外（計算コスト：C(n,p) 通り）",
-                "params": {
-                    "p": {"type": "slider", "label": "除外サンプル数 (P)", "min": 1, "max": 5, "step": 1, "default": 2},
                 },
             },
         },
@@ -205,7 +215,6 @@ def _render_dynamic_params(
                 def _on_slider(e, key=pkey, vlbl=val_label):
                     cv_params[key] = int(e.value)
                     vlbl.set_text(str(int(e.value)))
-                    # n_splits はstateにも反映
                     if key == "n_splits":
                         state["cv_folds"] = int(e.value)
 
@@ -245,64 +254,29 @@ def _render_dynamic_params(
 
 
 def _render_cv_dialog_content(state: dict) -> None:
-    """CV設定ダイアログの本体コンテンツ。"""
+    """CV設定ダイアログの本体コンテンツ。
+    
+    全CV手法（LOO/LOGO/KFold/Stratified/WalkCV等）を常に表示。
+    カテゴリトグル → ラジオボタンで選択する。
+    """
     task_type = state.get("task_type", "regression")
     has_groups = bool(state.get("group_col"))
     current_cv = state.get("cv_key", "auto")
 
-    # ── auto モード ──
-    is_auto = current_cv == "auto"
-    auto_desc = "回帰→KFold / 分類→StratifiedKFold"
-
-    with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
-        ui.checkbox(
-            "🤖 auto（タスクに応じて自動選択）",
-            value=is_auto,
-            on_change=lambda e: (
-                state.update({"cv_key": "auto"}) if e.value
-                else state.update({"cv_key": "kfold"})
-            ),
-        )
-        if is_auto:
-            ui.label(f"（{auto_desc}）").classes("text-caption text-grey")
-
-    if is_auto:
-        ui.label(
-            "autoモード: データ特性に基づき最適なCV手法を自動選択します。"
-        ).classes("text-caption text-cyan q-mb-sm")
-        with ui.row().classes("items-center q-gutter-sm"):
-            ui.label("⏱️ タイムアウト").classes("text-body2")
-            ui.slider(
-                min=30, max=3600, step=30,
-                value=state.get("timeout", 300),
-            ).props("label-always").classes("col-6").on(
-                "update:model-value",
-                lambda e: state.update({"timeout": int(e.value)}),
-            )
-            ui.label(f"{state.get('timeout', 300)}秒").classes("text-body2 text-bold")
-        return
-
-    # ── カテゴリ選択（ui.toggle） ──
-    cat_names = list(_CV_CATEGORIES.keys())
-    cat_labels = {
-        name: f"{info['icon']} {name}"
-        for name, info in _CV_CATEGORIES.items()
-    }
-
-    current_cat = cat_names[0]
+    # ── 現在のカテゴリを特定 ──
+    current_cat = list(_CV_CATEGORIES.keys())[0]
     for cname, cinfo in _CV_CATEGORIES.items():
         if current_cv in cinfo["methods"]:
             current_cat = cname
             break
 
-    cat_state = {"value": current_cat}
-
-    ui.label("カテゴリ").classes("text-body2 text-bold q-mt-sm")
-    ui.toggle(
-        {name: cat_labels[name] for name in cat_names},
+    # ── カテゴリトグル ──
+    ui.label("① CVカテゴリを選択").classes("text-subtitle2 text-bold q-mb-xs")
+    cat_names = list(_CV_CATEGORIES.keys())
+    cat_toggle = ui.toggle(
+        {name: name for name in cat_names},
         value=current_cat,
-        on_change=lambda e: _on_cat_change(e),
-    ).props("no-caps dense rounded").classes("q-mb-sm")
+    ).props("no-caps dense rounded").classes("q-mb-md flex-wrap")
 
     method_container = ui.column().classes("full-width")
 
@@ -315,25 +289,32 @@ def _render_cv_dialog_content(state: dict) -> None:
         with method_container:
             if is_group_cat and not has_groups:
                 ui.label(
-                    "⚠️ グループ列が未設定です。データ設定タブで「グループ列」を指定してください。"
+                    "⚠️ グループ列が未設定です。「列の役割」タブでグループ列を指定してください。\n"
+                    "　  グループ列なしでも選択はできますが、解析時に自動でKFoldに切り替わります。"
                 ).classes("text-warning text-caption q-mb-sm")
 
             available = {}
             for mkey, minfo in methods.items():
                 if minfo.get("classification_only") and task_type != "classification":
                     continue
-                available[mkey] = f"{minfo['label']}  —  {minfo['desc']}"
+                available[mkey] = f"{minfo['label']}"
 
             if not available:
-                ui.label("このカテゴリで利用可能なCV手法がありません。").classes("text-caption text-grey")
+                ui.label("このカテゴリで利用可能なCV手法はありません（分類タスクのみ対応）。").classes("text-caption text-grey")
                 return
 
             sel_key = current_cv if current_cv in available else list(available.keys())[0]
 
-            ui.radio(
+            ui.label("② CV手法を選択").classes("text-subtitle2 text-bold q-mb-xs")
+
+            method_radio = ui.radio(
                 available, value=sel_key,
-                on_change=lambda e: _on_method_change(e),
             ).props("dense").classes("full-width q-mb-sm")
+
+            # 手法の説明表示
+            desc_label = ui.label(
+                methods.get(sel_key, {}).get("desc", "")
+            ).classes("text-caption text-cyan q-mb-sm q-pl-sm")
 
             param_container = ui.column().classes("full-width q-pl-lg").style(
                 "border-left:3px solid rgba(0,212,255,0.3);margin-left:12px;padding:8px;"
@@ -343,26 +324,26 @@ def _render_cv_dialog_content(state: dict) -> None:
                 new_key = e.value
                 state["cv_key"] = new_key
                 state["_cv_extra_params"] = {}
-                param_container.clear()
                 minfo = methods.get(new_key, {})
+                desc_label.set_text(minfo.get("desc", ""))
+                param_container.clear()
                 with param_container:
                     _render_dynamic_params(new_key, minfo, state)
+
+            method_radio.on_value_change(_on_method_change)
 
             state["cv_key"] = sel_key
             minfo = methods.get(sel_key, {})
             with param_container:
                 _render_dynamic_params(sel_key, minfo, state)
 
-    def _on_cat_change(e):
-        cat_state["value"] = e.value
-        _rebuild_methods(e.value)
-
+    cat_toggle.on_value_change(lambda e: _rebuild_methods(e.value))
     _rebuild_methods(current_cat)
 
     # ── タイムアウト ──
     ui.separator().classes("q-my-sm")
+    ui.label("⏱️ タイムアウト設定").classes("text-subtitle2 text-bold q-mb-xs")
     with ui.row().classes("items-center q-gutter-sm"):
-        ui.label("⏱️ タイムアウト").classes("text-body2")
         timeout_slider = ui.slider(
             min=30, max=3600, step=30,
             value=state.get("timeout", 300),
@@ -404,7 +385,7 @@ def render_cv_config(state: dict) -> None:
 
     # サマリー行
     summary = [f"方法: {cv_name}"]
-    if cv_key != "auto" and cv_key not in ("loo", "leave_one_out"):
+    if cv_key not in ("auto", "loo", "logo", "leave_one_out"):
         summary.append(f"分割数: {folds}")
     summary.append(f"タイムアウト: {timeout}秒")
 
