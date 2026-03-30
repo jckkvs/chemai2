@@ -1265,40 +1265,62 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                         type="positive",
                                     )
 
-                                with ui.row().classes(
-                                    "items-center full-width q-py-xs"
-                                ).style(
-                                    "border-bottom: 1px solid rgba(255,255,255,0.05);"
-                                ):
-                                    ui.button(
-                                        rec.target_name,
-                                        on_click=_apply_rec,
-                                    ).props(
-                                        "flat dense no-caps color=cyan"
-                                    ).tooltip(rec.summary)
+                                # ── 各物性をアコーディオンに変更し全ON/OFF/個別チェックを追加 ──
+                                _valid_dn = [d.name for d in rec.descriptors if d.name in all_descs]
+                                _n_valid = len(_valid_dn)
+                                _n_total_rec = len(rec.descriptors)
+                                _n_sel = sum(1 for dn in _valid_dn if dn in state.get("selected_descriptors", []))
+                                _badge_col = "teal" if _n_valid == _n_total_rec else "amber"
 
-                                    n_in = sum(
-                                        1 for d in rec.descriptors if d.name in all_descs
-                                    )
-                                    ui.badge(
-                                        f"{n_in}/{len(rec.descriptors)}",
-                                        color="teal" if n_in == len(rec.descriptors) else "amber",
-                                    ).props("outline")
+                                with ui.expansion(
+                                    rec.target_name, icon="science",
+                                ).classes("full-width q-mb-xs").props("dense"):
+                                    # バッジ行
+                                    with ui.row().classes("items-center q-gutter-sm q-mb-xs"):
+                                        ui.badge(
+                                            f"計算済 {_n_valid} / 推奨 {_n_total_rec} 個",
+                                            color=_badge_col,
+                                        ).props("outline")
+                                        ui.badge(
+                                            f"選択中 {_n_sel} 個",
+                                            color="green" if _n_sel > 0 else "grey",
+                                        ).props("outline")
+                                    # 一括操作ボタン
+                                    with ui.row().classes("q-gutter-xs q-mb-sm"):
+                                        def _all_on_r(ds=_valid_dn):
+                                            s = set(state.get("selected_descriptors", []))
+                                            s.update(ds)
+                                            state["selected_descriptors"] = list(s)
+                                            ui.notify(f"{len(ds)}個 全ON", type="positive")
+                                        def _all_off_r(ds=_valid_dn):
+                                            s = set(state.get("selected_descriptors", []))
+                                            s -= set(ds)
+                                            state["selected_descriptors"] = list(s)
+                                            ui.notify(f"{len(ds)}個 全OFF", type="info")
+                                        def _apply_only_r(ds=_valid_dn, r=rec):
+                                            state["selected_descriptors"] = list(ds)
+                                            state["_applied_recommendation"] = r
+                                            ui.notify(f"{r.target_name}: {len(ds)}個だけ選択", type="positive")
+                                        ui.button("全ON", on_click=_all_on_r).props("unelevated size=xs no-caps color=teal")
+                                        ui.button("全OFF", on_click=_all_off_r).props("outline size=xs no-caps color=grey")
+                                        ui.button("これだけ適用", on_click=_apply_only_r).props("outline size=xs no-caps color=cyan")
+                                    # 個別ON/OFFチェックボックス
+                                    with ui.row().classes("q-gutter-xs flex-wrap"):
+                                        for _d in rec.descriptors:
+                                            if _d.name not in all_descs:
+                                                ui.badge(_d.name, color="grey-7").props("outline dense").tooltip("未計算")
+                                            else:
+                                                _is_on = _d.name in state.get("selected_descriptors", [])
+                                                def _tog(val, dn=_d.name):
+                                                    s = set(state.get("selected_descriptors", []))
+                                                    if val: s.add(dn)
+                                                    else: s.discard(dn)
+                                                    state["selected_descriptors"] = list(s)
+                                                ui.checkbox(
+                                                    _d.name, value=_is_on,
+                                                    on_change=lambda e, dn=_d.name: _tog(e.value, dn),
+                                                ).props("dense").tooltip(_d.meaning or _d.name)
 
-                                    for d in rec.descriptors[:4]:
-                                        with ui.badge(
-                                            d.name, color="grey-8",
-                                        ).props("outline dense").classes("text-xs"):
-                                            ui.tooltip(
-                                                f"{d.meaning}\n"
-                                                f"ライブラリ: {d.library}\n"
-                                                f"分類: {d.category}\n"
-                                                f"出典: {d.source}"
-                                            )
-                                    if len(rec.descriptors) > 4:
-                                        ui.label(
-                                            f"+{len(rec.descriptors) - 4}..."
-                                        ).classes("text-caption text-grey")
 
                 except ImportError:
                     ui.label("recommender.py が利用できません").classes("text-warning")

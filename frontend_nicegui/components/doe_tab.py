@@ -51,6 +51,7 @@ def render_doe_tab(app_state: dict | None = None) -> None:
         "n_starts": 5,
         "max_iter": 200,
         "result": None,          # DoEResult | None
+        "_app_state": app_state,  # app_stateへの参照を保持
     }
 
     # ── ヘッダー ─────────────────────────────────────────────────────────────
@@ -258,20 +259,18 @@ def _render_existing_mode(state: dict) -> None:
 
 
 def _use_app_state_data(state: dict, area: ui.column, file_info: ui.label) -> None:
-    """app_stateのDataFrameをそのまま使う（データ設定タブから連携）。"""
-    # グローバルapp_stateから取得を試みる
-    try:
-        from frontend_nicegui.state import get_app_state
-        app_st = get_app_state()
-        df = app_st.get("df")
-        if df is None or len(df) == 0:
-            ui.notify("データが読み込まれていません。先に「データ設定」タブでデータを読み込んでください。", type="warning")
-            return
-        state["existing_df"] = df.copy()
-        file_info.set_text(f"✅ 現在のデータ ({len(df)}行 × {len(df.columns)}列)")
-        _show_existing_factor_editor(area, df, state)
-    except Exception as ex:
-        ui.notify(f"データ取得失敗: {ex}", type="warning")
+    """app_stateのDataFrameをそのまま使う（render_doe_tabで渡されたapp_stateから取得）。"""
+    app_st = state.get("_app_state")
+    if app_st is None:
+        ui.notify("データ連携未設定です。", type="warning")
+        return
+    df = app_st.get("df")
+    if df is None or len(df) == 0:
+        ui.notify("データが読み込まれていません。先に「データ設定」タブでデータを読み込んでください。", type="warning")
+        return
+    state["existing_df"] = df.copy()
+    file_info.set_text(f"✅ 現在のデータ ({len(df)}行 × {len(df.columns)}列)")
+    _show_existing_factor_editor(area, df, state)
 
 
 def _show_existing_factor_editor(area: ui.column, df: pd.DataFrame, state: dict) -> None:
