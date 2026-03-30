@@ -329,8 +329,108 @@ def _tab_selector(state: dict) -> None:
 
 
 # ═══════════════════════════════════════════════════════════
-# Tab 6: 推定器
+# Tab 7: JLランダム射影 (Johnson-Lindenstrauss)
 # ═══════════════════════════════════════════════════════════
+
+def _tab_jl_rp(state: dict) -> None:
+    """JL補題に基づくランダム射影設定UI。"""
+    _section("🎲", "JLランダム射影（Johnson-Lindenstrauss）",
+             "n_features > jl_min_dim(n_samples, ε) の場合のみ自動適用。條件不成立時は完全スキップ。")
+
+    enabled = state.get("_pg_rp_enable", False)
+    eps = state.get("_pg_rp_eps", 0.1)
+    method = state.get("_pg_rp_method", "auto")
+
+    # 有効/無効トグル
+    ui.switch(
+        "ランダム射影を有効化",
+        value=enabled,
+        on_change=lambda e: state.update({"_pg_rp_enable": e.value}),
+    ).props("color=indigo")
+
+    # JL条件のリアルタイム表示
+    df = state.get("df")
+    precalc_df = state.get("precalc_df")
+    n_samples = len(df) if df is not None else 0
+    # 現在の発構済み記述子＋データDFの列数で計算
+    if precalc_df is not None and df is not None:
+        n_features_est = precalc_df.shape[1] + max(0, df.shape[1] - 2)  # SMILES・目的変数を除いた導入
+    elif df is not None:
+        n_features_est = max(0, df.shape[1] - 2)
+    else:
+        n_features_est = 0
+
+    if n_samples > 0 and n_features_est > 0:
+        try:
+            from sklearn.random_projection import johnson_lindenstrauss_min_dim
+            jl_min = int(johnson_lindenstrauss_min_dim(n_samples, eps=eps))
+            should_apply = n_features_est > jl_min
+            status_color = "green" if should_apply else "grey"
+            status_text = (
+                f"✅ 適用溈: {n_features_est} → {jl_min} 次元（刂減 {n_features_est-jl_min}次元、{(1-jl_min/n_features_est)*100:.0f}%圧縮）"
+                if should_apply else
+                f"⏩ 不要（n_features={n_features_est} ≤ jl_min_dim={jl_min}） — 無効で自動スキップ"
+            )
+        except Exception:
+            jl_min = 0
+            status_color = "grey"
+            status_text = "計算中にエラー"
+
+        with ui.card().classes("full-width q-pa-sm q-my-sm").style(
+            f"border:1px solid rgba(0,188,212,0.3); border-radius:8px;"
+        ):
+            ui.label("📊 JL補題による自動判定（現在のデータで予測）").classes("text-caption text-bold text-cyan q-mb-xs")
+            with ui.row().classes("q-gutter-sm items-center"):
+                ui.badge(f"n_samples={n_samples}", color="blue-grey").props("outline")
+                ui.badge(f"n_features≈{n_features_est}", color="blue-grey").props("outline")
+                ui.badge(f"ε={eps}", color="blue-grey").props("outline")
+            ui.label(status_text).classes(f"text-body2 text-bold text-{status_color} q-mt-xs")
+            ui.label(
+                "jl_min_dim = 4 log(n) / (ε²/2 - ε³/3)「これ以上の次元は副作用なしに刢減できることが保証される"
+            ).classes("text-caption text-grey q-mt-xs").style("font-size:0.72rem;")
+    else:
+        ui.label("データ読み込後に自動判定結果を表示します").classes("text-caption text-grey")
+
+    ui.separator().classes("q-my-sm")
+
+    # 詳細設定
+    _section("⚙️", "パラメータ設定")
+    with ui.row().classes("q-gutter-md items-center flex-wrap"):
+        ui.number(
+            "ε（歪み許容誤差）",
+            value=eps, min=0.01, max=0.5, step=0.01, format="%.2f",
+            on_change=lambda e: state.update({"_pg_rp_eps": float(e.value or 0.1)}),
+        ).props("outlined dense").style("width:160px;").tooltip(
+            "小さいほど距離保全性↑・次元↑、大きいほど圧縮率↑・距離誤差↑。\n"
+            "推奨: 0.05～0.2。\n"
+            "eps=0.1 → 各点間距離の誤差を最大±10%に抖えることを保証。"
+        )
+        ui.select(
+            {
+                "auto": "auto（d>1000→sparse, それ以下→gaussian）",
+                "sparse": "Sparse RP（メモリ効率↑, 超高次元向き）",
+                "gaussian": "Gaussian RP（理論的保証厳密, 中規模向き）",
+            },
+            value=method,
+            label="射影手法",
+            on_change=lambda e: state.update({"_pg_rp_method": e.value}),
+        ).props("outlined dense").style("min-width:300px;")
+
+    # 理論的根拠の表示
+    with ui.expansion("📚 理論的根拠（JL Lemma）", icon="info").classes("full-width q-mt-sm"):
+        ui.html("""
+        <div style='font-size:0.82rem; color:#aaa; line-height:1.7;'>
+        <b style='color:#00bcd4;'>Johnson-Lindenstrauss Lemma (1984):</b><br>
+        n点のデータを．──────────────────────────────<br>
+        &emsp;<i>d_jl = O(log(n) / &epsilon;&sup2;)</i> 次元の空間に射影するとき、<br>
+        &emsp;任意の2点間距離を (1±&epsilon;) 倍の精度で保全できる。<br><br>
+        <b>適用条件:</b> n_features &gt; d_jl のときのみ RP を適用<br>
+        <b style='color:#4ade80;'>利点:</b> 計算時間素, メモリ削減, 次元の呪い緩和<br>
+        <b style='color:#facc15;'>注意:</b> モデル解釈性が低下する。解釈性高いモデル（線形回帰等）には非推奨。
+        </div>
+        """)
+
+
 
 def _tab_estimator(state: dict) -> None:
     task = state.get("task_type", "regression")

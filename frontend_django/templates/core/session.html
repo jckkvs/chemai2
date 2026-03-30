@@ -261,17 +261,54 @@
     </div>
 </div>
 
-<div class="card" style="margin-top:1rem;">
-    <button class="btn btn-primary btn-lg" id="btn-run-analysis"
-            onclick="runAnalysis('{{ session.id }}')">
-        🚀 AutoML 解析を開始
+<!-- ═══════════════════ マルチセット解析 ═══════════════════ -->
+<div class="card" style="margin-top:1rem;border:1px solid rgba(0,229,255,0.2);">
+    <div class="card-header" style="background:linear-gradient(90deg,rgba(0,60,120,0.4),rgba(0,30,60,0.2));">
+        <span style="font-size:1.3rem">🧩</span>
+        <h3 class="card-title">特徴量セット × パイプライン 設定</h3>
+        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:auto;">
+            高次元セットにはSparse Random Projection（JL補題）が自動適用されます
+        </span>
+    </div>
+
+    <!-- JL補題の説明 -->
+    <div style="background:rgba(0,40,80,0.3);border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;font-size:0.82rem;color:var(--text-secondary);border-left:3px solid rgba(0,229,255,0.4);">
+        💡 <strong>特殊パイプライン（JL-RP）とは：</strong>
+        説明変数が <em>n_features &gt; johnson_lindenstrauss_min_dim(n_samples, ε)</em> を満たす場合のみ
+        <strong>SparseRandomProjection</strong> で次元削減を行います。条件を満たさない場合はPassthrough（削減なし）になります。
+    </div>
+
+    <!-- セットリスト -->
+    <div id="feature-set-list" style="display:flex;flex-direction:column;gap:0.75rem;margin-bottom:1rem;"></div>
+
+    <!-- 新規セット追加ボタン -->
+    <button class="btn btn-secondary btn-sm" onclick="addFeatureSet()">
+        ＋ 特徴量セットを追加
     </button>
+</div>
+
+<!-- 実行ボタン群 -->
+<div class="card" style="margin-top:1rem;">
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;">
+        <button class="btn btn-primary btn-lg" id="btn-run-multi"
+                onclick="runMultiAnalysis('{{ session.id }}')">
+            🧩 マルチセット解析を開始
+        </button>
+        <span style="color:var(--text-muted);font-size:0.85rem;">または</span>
+        <button class="btn btn-secondary" id="btn-run-analysis"
+                onclick="runAnalysis('{{ session.id }}')">
+            🚀 通常 AutoML（全列・単一セット）
+        </button>
+    </div>
     <div id="analysis-progress" style="display:none;margin-top:1rem;">
         <div class="progress-bar"><div class="progress-fill" id="analysis-progress-fill" style="width:0%"></div></div>
         <p id="analysis-progress-text" style="margin-top:0.5rem;font-size:0.85rem;color:var(--text-secondary);"></p>
     </div>
     <div id="analysis-result-summary" style="margin-top:1rem;"></div>
 </div>
+
+<!-- マルチ解析 結果プレビュー（解析完了後インラインで表示） -->
+<div id="multi-result-preview" style="display:none;margin-top:1.5rem;"></div>
 {% endif %}
 
 {% elif step == 'results' %}
@@ -422,9 +459,268 @@ async function runAnalysis(sessionId) {
         summary.innerHTML = `<div class="alert alert-error">${err.message}</div>`;
     } finally {
         btn.disabled = false;
-        btn.textContent = '🚀 AutoML 解析を開始';
+        btn.textContent = '🚀 通常 AutoML（全列・単一セット）';
     }
 }
+
+/* ─── 特徴量セット管理 ─── */
+let _fsCounter = 0;
+const _featureSetDefs = [];   // {id, name, descriptors, pipeline, rp_eps}
+
+function addFeatureSet() {
+    _fsCounter++;
+    const id = `fs${_fsCounter}`;
+    const def = { id, name: `特徴量セット${_fsCounter}`, descriptors: '', pipeline: 'normal', rp_eps: 0.1 };
+    _featureSetDefs.push(def);
+    _renderFeatureSets();
+}
+
+function removeFeatureSet(id) {
+    const idx = _featureSetDefs.findIndex(d => d.id === id);
+    if (idx >= 0) _featureSetDefs.splice(idx, 1);
+    _renderFeatureSets();
+}
+
+function _renderFeatureSets() {
+    const container = document.getElementById('feature-set-list');
+    if (!container) return;
+    container.innerHTML = _featureSetDefs.map((def, i) => {
+        const isHighdim = def.pipeline === 'highdim';
+        const pipeLabel = isHighdim
+            ? '<span style="background:rgba(255,152,0,0.2);color:#ffcc02;border:1px solid rgba(255,152,0,0.4);border-radius:4px;padding:1px 7px;font-size:0.72rem;font-weight:600;">🔬 特殊(JL-RP)</span>'
+            : '<span style="background:rgba(0,188,212,0.15);color:#00e5ff;border:1px solid rgba(0,188,212,0.3);border-radius:4px;padding:1px 7px;font-size:0.72rem;font-weight:600;">📊 通常</span>';
+        return `
+        <div id="fs-card-${def.id}" style="
+            background:rgba(0,30,60,0.5);border:1px solid rgba(0,188,212,0.2);
+            border-radius:10px;padding:0.875rem 1rem;position:relative;
+            ${isHighdim ? 'border-left:3px solid rgba(255,152,0,0.7);' : 'border-left:3px solid rgba(0,229,255,0.4);'}
+        ">
+            <!-- ヘッダー行 -->
+            <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.6rem;">
+                <span style="font-weight:700;color:var(--text-primary);">セット ${i+1}</span>
+                ${pipeLabel}
+                <input type="text" value="${def.name}"
+                    onchange="_featureSetDefs[${i}].name=this.value"
+                    style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);
+                           border-radius:6px;padding:3px 8px;color:#fff;font-size:0.82rem;flex:1;min-width:120px;"
+                    placeholder="セット名">
+                <button onclick="removeFeatureSet('${def.id}')" style="
+                    background:rgba(244,67,54,0.15);border:1px solid rgba(244,67,54,0.3);
+                    color:#f44336;border-radius:6px;padding:2px 10px;cursor:pointer;font-size:0.8rem;">✕</button>
+            </div>
+            <!-- パイプライン選択 -->
+            <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.5rem;">
+                <label style="font-size:0.8rem;color:var(--text-secondary);">パイプライン:</label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.82rem;cursor:pointer;">
+                    <input type="radio" name="pipe-${def.id}" value="normal"
+                        ${!isHighdim ? 'checked' : ''}
+                        onchange="_featureSetDefs[${i}].pipeline='normal';_renderFeatureSets();">
+                    📊 通常パイプライン
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.82rem;cursor:pointer;">
+                    <input type="radio" name="pipe-${def.id}" value="highdim"
+                        ${isHighdim ? 'checked' : ''}
+                        onchange="_featureSetDefs[${i}].pipeline='highdim';_renderFeatureSets();">
+                    🔬 特殊(JL-RP): 高次元のみ適用
+                </label>
+                ${isHighdim ? `
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;color:var(--text-muted);">
+                    ε=<input type="number" value="${def.rp_eps}" min="0.01" max="0.5" step="0.01"
+                        onchange="_featureSetDefs[${i}].rp_eps=parseFloat(this.value)"
+                        style="width:55px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);
+                               border-radius:4px;padding:2px 4px;color:#fff;font-size:0.78rem;">
+                    <span title="小さいほど精度↑次元↑">（JL歪み許容誤差）</span>
+                </label>` : ''}
+            </div>
+            <!-- 記述子列指定 -->
+            <div>
+                <label style="font-size:0.78rem;color:var(--text-secondary);">
+                    使用する記述子列（カンマ区切り、空=全列）:
+                </label>
+                <input type="text" value="${def.descriptors}"
+                    onchange="_featureSetDefs[${i}].descriptors=this.value"
+                    style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);
+                           border-radius:6px;padding:4px 8px;color:#ddd;font-size:0.78rem;margin-top:3px;
+                           font-family:monospace;"
+                    placeholder="例: MW,LogP,TPSA,HBD,HBA（空欄=全列使用）">
+            </div>
+        </div>`;
+    }).join('');
+}
+
+/* ─── マルチセット解析実行 ─── */
+async function runMultiAnalysis(sessionId) {
+    if (_featureSetDefs.length === 0) {
+        alert('特徴量セットを1つ以上追加してください。');
+        return;
+    }
+
+    const btn = document.getElementById('btn-run-multi');
+    const progress = document.getElementById('analysis-progress');
+    const progressFill = document.getElementById('analysis-progress-fill');
+    const progressText = document.getElementById('analysis-progress-text');
+    const summary = document.getElementById('analysis-result-summary');
+    const preview = document.getElementById('multi-result-preview');
+
+    const cvFolds = parseInt(document.getElementById('cv-folds')?.value || '5');
+
+    // セット定義をAPI用に変換
+    const featureSets = _featureSetDefs.map(def => ({
+        id: def.id,
+        name: def.name,
+        descriptors: def.descriptors ? def.descriptors.split(',').map(s => s.trim()).filter(Boolean) : [],
+        pipeline: def.pipeline,
+        rp_eps: parseFloat(def.rp_eps) || 0.1,
+    }));
+
+    btn.disabled = true;
+    btn.textContent = '⏳ マルチ解析中...';
+    progress.style.display = 'block';
+    progressFill.style.width = '10%';
+    progressText.textContent = `${featureSets.length}個の特徴量セットを解析中...`;
+    preview.style.display = 'none';
+
+    try {
+        progressFill.style.width = '30%';
+        progressText.textContent = '各セットでAutoML実行中（時間がかかります）...';
+
+        const resp = await fetch(`/api/session/${sessionId}/run_multi/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cv_folds: cvFolds, feature_sets: featureSets }),
+        });
+        const data = await resp.json();
+        progressFill.style.width = '100%';
+
+        if (data.success) {
+            const results = data.results;
+            const bestSet = results.find(r => r.is_best_set) || results[0];
+            progressText.textContent = `✅ ${results.length}セット完了 — 最良: ${bestSet.set_name} (${bestSet.best_score.toFixed(4)})`;
+
+            summary.innerHTML = `
+                <div class="alert alert-success">
+                    🏆 最良セット: <strong>${bestSet.set_name}</strong>
+                    (${bestSet.scoring}: ${bestSet.best_score.toFixed(4)})
+                    — モデル: ${bestSet.best_model_key}
+                </div>
+                <a href="?step=results" class="btn btn-primary" style="margin-top:0.5rem;">📊 詳細結果を確認 →</a>
+            `;
+
+            // インライン結果カード表示
+            _renderMultiResults(results, preview);
+            preview.style.display = 'block';
+        } else {
+            progressText.textContent = `❌ エラー: ${data.error}`;
+            summary.innerHTML = `<div class="alert alert-error">${data.error}</div>`;
+        }
+    } catch (err) {
+        progressText.textContent = `❌ ネットワークエラー`;
+        summary.innerHTML = `<div class="alert alert-error">${err.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🧩 マルチセット解析を開始';
+    }
+}
+
+/* ─── マルチ解析 結果カード描画 ─── */
+function _renderMultiResults(results, container) {
+    let html = '<h3 style="margin:0 0 1rem;color:#00e5ff;">🧩 特徴量セット別 解析結果</h3>';
+    html += '<div style="display:flex;flex-direction:column;gap:1rem;">';
+
+    for (const r of results) {
+        const isHighdim = r.pipeline_type === 'highdim';
+        const rpApplied = r.rp_applied;
+        const isBest = r.is_best_set;
+
+        // パイプラインバッジ
+        const pipeBadge = isHighdim
+            ? `<span style="background:rgba(255,152,0,0.2);color:#ffcc02;border:1px solid rgba(255,152,0,0.5);
+                            border-radius:5px;padding:2px 9px;font-size:0.73rem;font-weight:700;white-space:nowrap;">
+                🔬 特殊パイプライン(JL-RP)</span>`
+            : `<span style="background:rgba(0,188,212,0.15);color:#00e5ff;border:1px solid rgba(0,188,212,0.3);
+                            border-radius:5px;padding:2px 9px;font-size:0.73rem;font-weight:700;white-space:nowrap;">
+                📊 通常パイプライン</span>`;
+
+        // RP適用ステータス
+        let rpStatus = '';
+        if (isHighdim) {
+            if (rpApplied) {
+                rpStatus = `<span style="color:#76ff03;font-size:0.78rem;">
+                    ✅ JL-RP適用: ${r.n_features_in} → ${r.n_features_out} 次元削減
+                    (SparseRandomProjection)</span>`;
+            } else {
+                rpStatus = `<span style="color:var(--text-muted);font-size:0.78rem;">
+                    ⏭ JL条件不成立: Passthrough（削減不要）</span>`;
+            }
+        }
+
+        const bestBorder = isBest ? '2px solid #00e5ff' : '1px solid rgba(255,255,255,0.1)';
+        const bestBg = isBest
+            ? 'background:linear-gradient(135deg,rgba(0,60,120,0.5),rgba(0,40,80,0.4));'
+            : 'background:rgba(0,20,40,0.4);';
+
+        // モデル比較テーブル（上位3件）
+        const sorted = Object.entries(r.model_details).sort((a, b) => b[1].mean - a[1].mean);
+        const top3 = sorted.slice(0, 3);
+        const tableRows = top3.map(([k, d]) => {
+            const ib = k === r.best_model_key;
+            return `<tr style="${ib ? 'color:#00e5ff;font-weight:600;' : 'color:var(--text-secondary);'}">
+                <td style="padding:3px 8px;">${ib ? '🏆 ' : ''}${k}</td>
+                <td style="padding:3px 8px;">${d.mean.toFixed(4)}</td>
+                <td style="padding:3px 8px;font-size:0.75rem;">±${d.std.toFixed(3)}</td>
+            </tr>`;
+        }).join('');
+
+        html += `
+        <div style="${bestBg}border:${bestBorder};border-radius:12px;padding:1rem 1.25rem;
+                     ${isBest ? 'box-shadow:0 0 16px rgba(0,229,255,0.15);' : ''}">
+            <!-- タイトル行 -->
+            <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.6rem;flex-wrap:wrap;">
+                ${isBest ? '<span style="font-size:1.4rem;">🏆</span>' : ''}
+                <strong style="font-size:1rem;color:${isBest ? '#00e5ff' : 'var(--text-primary)'};">
+                    ${r.set_name}
+                </strong>
+                ${pipeBadge}
+                ${isBest ? '<span style="color:#76ff03;font-size:0.78rem;font-weight:600;">← 最良セット</span>' : ''}
+            </div>
+            <!-- RP状態（高次元のみ） -->
+            ${rpStatus ? `<div style="margin-bottom:0.6rem;">${rpStatus}</div>` : ''}
+            <!-- メトリクスと比較テーブル -->
+            <div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;">
+                <!-- スコア -->
+                <div>
+                    <div style="font-size:1.8rem;font-weight:700;color:${isBest ? '#00e5ff' : '#fff'};">
+                        ${r.best_score.toFixed(4)}</div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);">${r.scoring}</div>
+                    <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:4px;">
+                        🏅 ${r.best_model_key}</div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);">⏱ ${r.elapsed_seconds.toFixed(1)}s</div>
+                </div>
+                <!-- 上位モデル -->
+                <div style="flex:1;min-width:180px;">
+                    <table style="width:100%;font-size:0.8rem;border-collapse:collapse;">
+                        <thead><tr style="color:var(--text-muted);font-size:0.72rem;">
+                            <th style="text-align:left;padding:2px 8px;">モデル</th>
+                            <th style="text-align:left;padding:2px 8px;">スコア</th>
+                            <th style="text-align:left;padding:2px 8px;">σ</th>
+                        </tr></thead>
+                        <tbody>${tableRows}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+/* 初期セット追加（ページロード時に1つ表示） */
+document.addEventListener('DOMContentLoaded', () => {
+    const list = document.getElementById('feature-set-list');
+    if (list) addFeatureSet();
+});
+
 
 /* ─── 結果表示 ─── */
 async function loadResults(sessionId) {
@@ -437,78 +733,195 @@ async function loadResults(sessionId) {
             return;
         }
         const r = data.result;
-        let html = '';
 
-        // 最良モデルカード
-        html += `
-        <div style="background:linear-gradient(135deg,rgba(0,60,120,0.4),rgba(0,40,80,0.3));
-                    border:1px solid rgba(0,188,212,0.4);border-radius:12px;padding:1.5rem;margin-bottom:1.5rem;">
-            <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;">
-                <span style="font-size:2rem;">🏆</span>
-                <div>
-                    <h3 style="margin:0;color:#00e5ff;">${r.best_model_key}</h3>
-                    <p style="margin:0;color:var(--text-secondary);">${r.scoring}: ${r.best_score.toFixed(4)} | ${r.elapsed_seconds.toFixed(1)}秒</p>
-                </div>
-            </div>
-            <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
-                <div class="metric-card-mini"><div class="metric-value-sm">${r.task}</div><div class="metric-label-sm">タスク</div></div>
-                <div class="metric-card-mini"><div class="metric-value-sm">${r.n_features}</div><div class="metric-label-sm">特徴量数</div></div>
-                <div class="metric-card-mini"><div class="metric-value-sm">${Object.keys(r.model_scores).length}</div><div class="metric-label-sm">比較モデル数</div></div>
-            </div>
-        </div>`;
-
-        // モデル比較テーブル
-        html += '<h3 style="margin:1rem 0 0.5rem;">📋 モデル比較</h3>';
-        html += '<table class="data-table"><thead><tr><th>モデル</th><th>スコア</th><th>±σ</th><th>学習時間</th></tr></thead><tbody>';
-        const sorted = Object.entries(r.model_details).sort((a, b) => b[1].mean - a[1].mean);
-        for (const [key, det] of sorted) {
-            const isBest = key === r.best_model_key;
-            const rowStyle = isBest ? 'background:rgba(0,188,212,0.1);font-weight:600;' : '';
-            html += `<tr style="${rowStyle}">
-                <td>${isBest ? '🏆 ' : ''}${key}</td>
-                <td>${det.mean.toFixed(4)}</td>
-                <td>±${det.std.toFixed(4)}</td>
-                <td>${det.fit_time.toFixed(2)}s</td>
-            </tr>`;
-        }
-        html += '</tbody></table>';
-
-        // スコア棒グラフ用div
-        html += '<div id="score-chart" style="margin-top:1.5rem;"></div>';
-
-        // 警告
-        if (r.warnings && r.warnings.length > 0) {
-            html += '<h3 style="margin:1rem 0 0.5rem;">⚠️ 警告</h3><ul>';
-            for (const w of r.warnings) {
-                html += `<li style="color:var(--text-secondary);font-size:0.85rem;">${w}</li>`;
-            }
-            html += '</ul>';
+        // ── マルチ結果か通常結果かを判別 ──
+        if (r.multi_results && Array.isArray(r.multi_results)) {
+            _renderMultiResultsPage(r.multi_results, container);
+            return;
         }
 
-        container.innerHTML = html;
-
-        // Plotly スコア棒グラフ
-        if (typeof Plotly !== 'undefined') {
-            const names = sorted.map(([k]) => k);
-            const scores = sorted.map(([, v]) => v.mean);
-            const errors = sorted.map(([, v]) => v.std);
-            const colors = names.map(n => n === r.best_model_key ? '#00e5ff' : '#4c9be8');
-
-            Plotly.newPlot('score-chart', [{
-                type: 'bar', x: names, y: scores,
-                error_y: { type: 'data', array: errors, visible: true },
-                marker: { color: colors },
-            }], {
-                title: { text: 'モデル比較 (CVスコア)', font: { color: '#ccc' } },
-                yaxis: { title: r.scoring, color: '#ccc', gridcolor: 'rgba(255,255,255,0.05)' },
-                xaxis: { color: '#ccc' },
-                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-                font: { color: '#ccc' }, height: 300,
-                margin: { l: 60, r: 20, t: 40, b: 60 },
-            });
-        }
+        // ── 通常結果（単一セット） ──
+        _renderSingleResult(r, container);
     } catch (err) {
         container.innerHTML = `<div class="alert alert-error">結果の読み込みに失敗: ${err.message}</div>`;
+    }
+}
+
+/* ─── 通常結果（単一セット）描画 ─── */
+function _renderSingleResult(r, container) {
+    let html = '';
+
+    // 最良モデルカード
+    html += `
+    <div style="background:linear-gradient(135deg,rgba(0,60,120,0.4),rgba(0,40,80,0.3));
+                border:1px solid rgba(0,188,212,0.4);border-radius:12px;padding:1.5rem;margin-bottom:1.5rem;">
+        <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;">
+            <span style="font-size:2rem;">🏆</span>
+            <div>
+                <h3 style="margin:0;color:#00e5ff;">${r.best_model_key}</h3>
+                <p style="margin:0;color:var(--text-secondary);">${r.scoring}: ${r.best_score.toFixed(4)} | ${r.elapsed_seconds.toFixed(1)}秒</p>
+            </div>
+        </div>
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+            <div class="metric-card-mini"><div class="metric-value-sm">${r.task}</div><div class="metric-label-sm">タスク</div></div>
+            <div class="metric-card-mini"><div class="metric-value-sm">${r.n_features}</div><div class="metric-label-sm">特徴量数</div></div>
+            <div class="metric-card-mini"><div class="metric-value-sm">${Object.keys(r.model_scores).length}</div><div class="metric-label-sm">比較モデル数</div></div>
+        </div>
+    </div>`;
+
+    // モデル比較テーブル
+    html += '<h3 style="margin:1rem 0 0.5rem;">📋 モデル比較</h3>';
+    html += '<table class="data-table"><thead><tr><th>モデル</th><th>スコア</th><th>±σ</th><th>学習時間</th></tr></thead><tbody>';
+    const sorted = Object.entries(r.model_details).sort((a, b) => b[1].mean - a[1].mean);
+    for (const [key, det] of sorted) {
+        const isBest = key === r.best_model_key;
+        const rowStyle = isBest ? 'background:rgba(0,188,212,0.1);font-weight:600;' : '';
+        html += `<tr style="${rowStyle}">
+            <td>${isBest ? '🏆 ' : ''}${key}</td>
+            <td>${det.mean.toFixed(4)}</td>
+            <td>±${det.std.toFixed(4)}</td>
+            <td>${det.fit_time.toFixed(2)}s</td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+
+    // スコア棒グラフ用div
+    html += '<div id="score-chart" style="margin-top:1.5rem;"></div>';
+
+    // 警告
+    if (r.warnings && r.warnings.length > 0) {
+        html += '<h3 style="margin:1rem 0 0.5rem;">⚠️ 警告</h3><ul>';
+        for (const w of r.warnings) {
+            html += `<li style="color:var(--text-secondary);font-size:0.85rem;">${w}</li>`;
+        }
+        html += '</ul>';
+    }
+
+    container.innerHTML = html;
+
+    // Plotly スコア棒グラフ
+    if (typeof Plotly !== 'undefined') {
+        const names = sorted.map(([k]) => k);
+        const scores = sorted.map(([, v]) => v.mean);
+        const errors = sorted.map(([, v]) => v.std);
+        const colors = names.map(n => n === r.best_model_key ? '#00e5ff' : '#4c9be8');
+
+        Plotly.newPlot('score-chart', [{
+            type: 'bar', x: names, y: scores,
+            error_y: { type: 'data', array: errors, visible: true },
+            marker: { color: colors },
+        }], {
+            title: { text: 'モデル比較 (CVスコア)', font: { color: '#ccc' } },
+            yaxis: { title: r.scoring, color: '#ccc', gridcolor: 'rgba(255,255,255,0.05)' },
+            xaxis: { color: '#ccc' },
+            paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#ccc' }, height: 300,
+            margin: { l: 60, r: 20, t: 40, b: 60 },
+        });
+    }
+}
+
+/* ─── マルチ結果ページ描画（結果タブ用） ─── */
+function _renderMultiResultsPage(results, container) {
+    const bestSet = results.find(r => r.is_best_set) || results[0];
+    let html = '';
+
+    // 全体サマリー
+    html += `
+    <div style="background:linear-gradient(135deg,rgba(0,60,120,0.5),rgba(0,40,80,0.4));
+                border:1px solid rgba(0,188,212,0.4);border-radius:12px;padding:1.5rem;margin-bottom:1.5rem;">
+        <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;">
+            <span style="font-size:2rem;">🧩</span>
+            <div>
+                <h3 style="margin:0;color:#00e5ff;">マルチセット解析結果</h3>
+                <p style="margin:0;color:var(--text-secondary);">
+                    ${results.length}セット比較 — 最良: ${bestSet.set_name} (${bestSet.best_model_key})
+                </p>
+            </div>
+        </div>
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+            <div class="metric-card-mini">
+                <div class="metric-value-sm">${results.length}</div>
+                <div class="metric-label-sm">セット数</div>
+            </div>
+            <div class="metric-card-mini">
+                <div class="metric-value-sm">${bestSet.best_score.toFixed(4)}</div>
+                <div class="metric-label-sm">最良スコア</div>
+            </div>
+            <div class="metric-card-mini">
+                <div class="metric-value-sm">${results.filter(r => r.pipeline_type === 'highdim').length}</div>
+                <div class="metric-label-sm">JL-RPセット</div>
+            </div>
+        </div>
+    </div>`;
+
+    // セット比較テーブル
+    html += '<h3 style="margin:1rem 0 0.5rem;">📋 セット比較一覧</h3>';
+    html += `<table class="data-table">
+        <thead><tr>
+            <th>セット</th><th>パイプライン</th><th>JL-RP</th>
+            <th>最良モデル</th><th>スコア</th><th>±σ</th><th>時間</th>
+        </tr></thead><tbody>`;
+    for (const s of results) {
+        const isBest = s.is_best_set;
+        const rowStyle = isBest ? 'background:rgba(0,188,212,0.1);font-weight:600;' : '';
+        const pipeBadge = s.pipeline_type === 'highdim'
+            ? '<span style="color:#ffcc02;font-size:0.78rem;">🔬 特殊(JL-RP)</span>'
+            : '<span style="color:#00e5ff;font-size:0.78rem;">📊 通常</span>';
+        let rpCell = '—';
+        if (s.pipeline_type === 'highdim') {
+            rpCell = s.rp_applied
+                ? `<span style="color:#76ff03;font-size:0.78rem;">✅ ${s.n_features_in}→${s.n_features_out}</span>`
+                : '<span style="color:var(--text-muted);font-size:0.78rem;">⏭ 不要</span>';
+        }
+        const bestDet = s.model_details[s.best_model_key] || {};
+        html += `<tr style="${rowStyle}">
+            <td>${isBest ? '🏆 ' : ''}${s.set_name}</td>
+            <td>${pipeBadge}</td>
+            <td>${rpCell}</td>
+            <td>${s.best_model_key}</td>
+            <td>${s.best_score.toFixed(4)}</td>
+            <td>±${(bestDet.std || 0).toFixed(4)}</td>
+            <td>${s.elapsed_seconds.toFixed(1)}s</td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+
+    // セット別スコア棒グラフ
+    html += '<div id="multi-score-chart" style="margin-top:1.5rem;"></div>';
+
+    // 各セットの詳細カード
+    html += '<h3 style="margin:1.5rem 0 0.75rem;">📊 セット別詳細</h3>';
+    const previewContainer = document.createElement('div');
+    // _renderMultiResults は既に定義済み（解析実行ステップ内の関数を再利用）
+    if (typeof _renderMultiResults === 'function') {
+        const tmpDiv = document.createElement('div');
+        _renderMultiResults(results, tmpDiv);
+        html += tmpDiv.innerHTML;
+    }
+
+    container.innerHTML = html;
+
+    // Plotly: セット比較棒グラフ
+    if (typeof Plotly !== 'undefined') {
+        const names = results.map(r => r.set_name);
+        const scores = results.map(r => r.best_score);
+        const colors = results.map(r =>
+            r.is_best_set ? '#00e5ff' : (r.pipeline_type === 'highdim' ? '#ffcc02' : '#4c9be8')
+        );
+        Plotly.newPlot('multi-score-chart', [{
+            type: 'bar', x: names, y: scores,
+            marker: { color: colors },
+            text: results.map(r => r.best_model_key),
+            textposition: 'auto',
+        }], {
+            title: { text: 'セット別ベストスコア比較', font: { color: '#ccc' } },
+            yaxis: { title: results[0]?.scoring || 'score', color: '#ccc', gridcolor: 'rgba(255,255,255,0.05)' },
+            xaxis: { color: '#ccc' },
+            paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#ccc' }, height: 320,
+            margin: { l: 60, r: 20, t: 40, b: 80 },
+        });
     }
 }
 </script>

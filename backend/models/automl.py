@@ -442,6 +442,118 @@ class AutoMLEngine:
             smiles_correlations=_smiles_correlations,
         )
 
+    def run_multi_feature_sets(
+        self,
+        df: pd.DataFrame,
+        target_col: str,
+        feature_sets: list[dict],
+        smiles_col: str | None = None,
+        group_col: str | None = None,
+        cv_extra_params: dict[str, Any] | None = None,
+        progress_callback_outer: Callable[[int, int, str], None] | None = None,
+    ) -> list["AutoMLResult"]:
+        """
+        複数の特徴量セット × パイプライン を順に実行して結果リストを返す。
+
+        Args:
+            df: 入力DataFrame（全記述子列を含む）
+            target_col: 目的変数列名
+            feature_sets: 特徴量セット定義リスト。各要素:
+                {
+                    "id": str,
+                    "name": str,
+                    "descriptors": list[str],  # 使用する記述子列名
+                    "pipeline": "normal" | "highdim",
+                    "rp_eps": float,         # JL歪み許容誤差（highdimのみ）
+                }
+            smiles_col: SMILES列名
+            group_col: グループ列名
+            cv_extra_params: CVスプリッタ追加引数
+            progress_callback_outer: 外部進捗コールバック (set_idx, total_sets, msg)
+
+        Returns:
+            AutoMLResult のリスト（各feature_setに対応）
+            ※ AutoMLResult.warnings[0] に feature_set名を付与する。
+        """
+        from backend.data.preprocessor import PreprocessConfig
+
+        outer_cb = progress_callback_outer or (lambda s, t, m: None)
+        results: list[AutoMLResult] = []
+        n_sets = len(feature_sets)
+
+        for idx, fs in enumerate(feature_sets):
+            fs_name = fs.get("name", f"セット{idx+1}")
+            outer_cb(idx + 1, n_sets, f"[{idx+1}/{n_sets}] {fs_name} を解析中...")
+            logger.info(f"=== feature_set [{idx+1}/{n_sets}]: {fs_name} ===")
+
+            # 記述子フィルタリング: fs["descriptors"] に含まれる列だけを使用
+            desc_cols = fs.get("descriptors", [])
+            if desc_cols:
+                # 存在する列だけ使用（SMILES列・目的変数は別途処理）
+                keep = set(desc_cols)
+                available = set(df.columns) - {target_col}
+                if smiles_col:
+                    available -= {smiles_col}
+                if group_col:
+                    available -= {group_col}
+                valid_desc = [c for c in desc_cols if c in available]
+                # 有効な記述子 + 目的変数 + その他必要列でサブDF構築
+                base_cols = [target_col]
+                if smiles_col and smiles_col in df.columns:
+                    base_cols.append(smiles_col)
+                if group_col and group_col in df.columns:
+                    base_cols.append(group_col)
+                use_cols = base_cols + valid_desc
+                df_sub = df[[c for c in use_cols if c in df.columns]].copy()
+            else:
+                df_sub = df.copy()
+
+            # パイプライン設定
+            pipeline_type = fs.get("pipeline", "normal")
+            rp_eps = float(fs.get("rp_eps", 0.1))
+            preprocess_cfg = PreprocessConfig(
+                random_projection_enable=(pipeline_type == "highdim"),
+                random_projection_eps=rp_eps,
+                random_projection_method="auto",
+            )
+
+            # 内部進捗コールバック（外部コールバックにラップ）
+            def _inner_cb(step, total, msg, fn=fs_name, oi=idx, on=n_sets):
+                outer_cb(oi + 1, on, f"[{oi+1}/{on}] {fn}: {msg}")
+
+            # selected_descriptors を一時的にセット固有のものに変更
+            orig_desc = self.selected_descriptors
+            if desc_cols:
+                self.selected_descriptors = valid_desc if valid_desc else None
+
+            try:
+                result = self.run(
+                    df=df_sub,
+                    target_col=target_col,
+                    smiles_col=smiles_col,
+                    group_col=group_col,
+                    preprocess_config=preprocess_cfg,
+                    cv_extra_params=cv_extra_params,
+                )
+                # セット情報をwarningsに付与（後でUIが参照）
+                result.warnings.insert(0, f"__feature_set_name__:{fs_name}")
+                result.warnings.insert(1, f"__feature_set_pipeline__:{pipeline_type}")
+                results.append(result)
+                logger.info(
+                    f"  {fs_name} 完了: best={result.best_model_key} "
+                    f"score={result.best_score:.4f}"
+                )
+            except Exception as e:
+                logger.error(f"  {fs_name} 失敗: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
+                # 失敗セットはダミー結果として記録
+            finally:
+                self.selected_descriptors = orig_desc
+
+        outer_cb(n_sets, n_sets, f"全{n_sets}セット完了")
+        return results
+
     @staticmethod
     def _infer_task(y_series: pd.Series) -> str:
         """目的変数から回帰/分類を自動判定する。"""

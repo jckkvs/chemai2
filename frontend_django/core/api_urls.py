@@ -8,6 +8,7 @@ urlpatterns = [
     path("session/<uuid:session_id>/sample/", views.load_sample, name="api_load_sample"),
     path("session/<uuid:session_id>/descriptors/", views.calculate_descriptors, name="api_calculate_descriptors"),
     path("session/<uuid:session_id>/run/", views.run_analysis, name="api_run_analysis"),
+    path("session/<uuid:session_id>/run_multi/", views.run_multi_analysis, name="api_run_multi_analysis"),
     path("session/<uuid:session_id>/results/", views.get_results, name="api_get_results"),
     path("session/<uuid:session_id>/status/", views.check_status, name="api_check_status"),
     # パラメータ自動UI用API

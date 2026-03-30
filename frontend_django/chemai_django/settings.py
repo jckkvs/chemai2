@@ -91,9 +91,8 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024
 
-# Session settings (file-based for simplicity)
-SESSION_ENGINE = "django.contrib.sessions.backends.file"
-SESSION_FILE_PATH = BASE_DIR / "sessions"
+# Session settings (db-based for cross-platform compatibility)
+SESSION_ENGINE = "django.contrib.sessions.backends.db"
 
 try:
     REST_FRAMEWORK = {

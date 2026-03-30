@@ -142,6 +142,13 @@ class PreprocessConfig:
     exclude_datetime: bool = True
     exclude_constant: bool = True
 
+    # ── Johnson-Lindenstrauss ランダム射影 ──────────────────────────────────
+    # True: n_features > jl_min_dim(n_samples, eps) の場合のみ自動適用
+    # False: 常にスキップ（デフォルト: 無効 = ユーザーが明示的に有効化）
+    random_projection_enable: bool = False
+    random_projection_eps: float = 0.1   # JL歪み許容誤差 (0 < eps < 1)
+    random_projection_method: str = "auto"  # "auto" | "sparse" | "gaussian"
+
 
 # ============================================================
 # メインクラス
@@ -465,7 +472,11 @@ def build_full_pipeline(
     config: PreprocessConfig | None = None,
 ) -> Pipeline:
     """
-    前処理 + モデルの sklearn Pipeline を構築して返す。
+    前処理 + (JL-RP) + モデルの sklearn Pipeline を構築して返す。
+
+    特徴量数がJL補題の要求次元を超える場合、自動的に
+    JLRandomProjection ステップが挿入される。
+    config.random_projection_enable=False（デフォルト）の場合はスキップ。
 
     Args:
         detection_result: TypeDetector の判定結果
@@ -474,8 +485,29 @@ def build_full_pipeline(
         config: PreprocessConfig（省略時はデフォルト）
 
     Returns:
-        Pipeline([("preprocess", ColumnTransformer), ("model", model)])
+        Pipeline([("preprocess", ColumnTransformer)
+                  (, "jl_rp", JLRandomProjection)  # 条件成立時のみ
+                  ("model", model)])
     """
-    preprocessor = Preprocessor(config)
+    cfg = config or PreprocessConfig()
+    preprocessor = Preprocessor(cfg)
     ct = preprocessor.build(detection_result, target_col=target_col)
-    return Pipeline([("preprocess", ct), ("model", model)])
+
+    steps: list[tuple] = [("preprocess", ct)]
+
+    # JL Random Projection ステップ
+    if cfg.random_projection_enable:
+        from backend.data.random_projection import JLRandomProjection
+        jl_rp = JLRandomProjection(
+            eps=cfg.random_projection_eps,
+            method=cfg.random_projection_method,
+        )
+        steps.append(("jl_rp", jl_rp))
+        logger.info(
+            f"JLRandomProjection ステップを追加 "
+            f"(eps={cfg.random_projection_eps}, method={cfg.random_projection_method}). "
+            f"fit()時に自動判定: n_features > jl_min_dim のみ実際に適用."
+        )
+
+    steps.append(("model", model))
+    return Pipeline(steps)

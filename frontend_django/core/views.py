@@ -327,6 +327,166 @@ def run_analysis(request, session_id):
         }, status=500)
 
 
+@csrf_exempt
+@require_POST
+def run_multi_analysis(request, session_id):
+    """
+    複数の特徴量セット × パイプライン（通常 / 高次元JL-RP）でAutoMLを実行。
+
+    POST body (JSON):
+    {
+        "cv_folds": 5,
+        "feature_sets": [
+            {
+                "id": "set1",
+                "name": "RDKit基本記述子",
+                "descriptors": ["MW", "LogP", ...],  // 空=全列
+                "pipeline": "normal",                  // "normal" | "highdim"
+                "rp_eps": 0.1                          // highdimのみ
+            },
+            ...
+        ]
+    }
+    Returns:
+    {
+        "success": True,
+        "results": [
+            {
+                "set_id": "set1",
+                "set_name": "RDKit基本記述子",
+                "pipeline_type": "normal",
+                "rp_applied": false,
+                "n_features_in": 200,
+                "n_features_out": 200,
+                ...AutoMLResult fields...
+            }
+        ]
+    }
+    """
+    session = get_object_or_404(AnalysisSession, id=session_id)
+
+    if not session.target_col:
+        return JsonResponse({"error": "目的変数が設定されていません"}, status=400)
+
+    try:
+        data = json.loads(request.body) if request.body else {}
+        cv_folds = int(data.get("cv_folds", 5))
+        feature_sets = data.get("feature_sets", [])
+
+        if not feature_sets:
+            return JsonResponse({"error": "feature_sets が空です"}, status=400)
+
+        # データ読み込み
+        df = pd.read_csv(session.uploaded_file.path)
+
+        # 記述子データがあれば結合
+        if session.precalc_data_path:
+            try:
+                desc_df = pd.read_parquet(session.precalc_data_path)
+                df = pd.concat([df, desc_df], axis=1)
+            except Exception:
+                pass
+
+        session.status = "running"
+        session.save()
+
+        from backend.models.automl import AutoMLEngine
+
+        engine = AutoMLEngine(
+            task=session.task_type,
+            cv_folds=cv_folds,
+        )
+
+        multi_results = engine.run_multi_feature_sets(
+            df=df,
+            target_col=session.target_col,
+            smiles_col=session.smiles_col or None,
+            feature_sets=feature_sets,
+        )
+
+        # シリアライズ
+        serialized = []
+        for i, (fs_def, result) in enumerate(zip(feature_sets, multi_results)):
+            # warningsから __feature_set_pipeline__ を抽出
+            pipeline_type = fs_def.get("pipeline", "normal")
+            for w in result.warnings:
+                if w.startswith("__feature_set_pipeline__:"):
+                    pipeline_type = w.split(":", 1)[1]
+                    break
+
+            # JL-RP が実際に適用されたか確認
+            rp_applied = False
+            n_features_in = 0
+            n_features_out = 0
+            if result.processed_X is not None:
+                n_features_out = len(result.processed_X.columns)
+            if result.X_train is not None:
+                n_features_in = result.X_train.shape[1]
+            # best_pipelineにjl_rpステップがあり、projection_active_=Trueなら適用済み
+            try:
+                pipe = result.best_pipeline
+                # smiles_varsラッパー考慮
+                inner = pipe
+                if hasattr(pipe, "named_steps") and "main_pipe" in pipe.named_steps:
+                    inner = pipe.named_steps["main_pipe"]
+                if hasattr(inner, "named_steps") and "jl_rp" in inner.named_steps:
+                    jl_rp_step = inner.named_steps["jl_rp"]
+                    if hasattr(jl_rp_step, "projection_active_"):
+                        rp_applied = jl_rp_step.projection_active_
+                        n_features_in = getattr(jl_rp_step, "n_features_in_", n_features_in)
+                        n_features_out = getattr(jl_rp_step, "n_components_", n_features_out)
+            except Exception:
+                pass
+
+            user_warnings = [
+                w for w in result.warnings
+                if not w.startswith("__feature_set_")
+            ]
+
+            serialized.append({
+                "set_id": fs_def.get("id", f"set{i+1}"),
+                "set_name": fs_def.get("name", f"セット{i+1}"),
+                "pipeline_type": pipeline_type,
+                "rp_applied": rp_applied,
+                "n_features_in": n_features_in,
+                "n_features_out": n_features_out,
+                "task": result.task,
+                "best_model_key": result.best_model_key,
+                "best_score": float(result.best_score),
+                "scoring": result.scoring,
+                "model_scores": {k: float(v) for k, v in result.model_scores.items()},
+                "model_details": {
+                    k: {
+                        "mean": float(v.get("mean", 0)),
+                        "std": float(v.get("std", 0)),
+                        "fit_time": float(v.get("fit_time", 0)),
+                        "fold_scores": [float(s) for s in v.get("fold_scores", [])],
+                    }
+                    for k, v in result.model_details.items()
+                },
+                "elapsed_seconds": float(result.elapsed_seconds),
+                "warnings": user_warnings,
+            })
+
+        # 最良セットを識別（スコアが最高）
+        if serialized:
+            best_set_idx = max(range(len(serialized)), key=lambda i: serialized[i]["best_score"])
+            for i, s in enumerate(serialized):
+                s["is_best_set"] = (i == best_set_idx)
+
+        session.status = "completed"
+        session.result_data = {"multi_results": serialized}
+        session.save()
+
+        return JsonResponse({"success": True, "results": serialized})
+
+    except Exception as e:
+        session.status = "error"
+        session.error_message = str(e)
+        session.save()
+        return JsonResponse({"error": str(e), "trace": traceback.format_exc()}, status=500)
+
+
 def get_results(request, session_id):
     """セッションの解析結果をJSON返却"""
     session = get_object_or_404(AnalysisSession, id=session_id)
