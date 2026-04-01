@@ -405,6 +405,23 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         except Exception as hist_ex:
             logger.warning("解析履歴の保存に失敗: %s", hist_ex)
 
+        # ── SQLite バージョン管理への自動保存 ──
+        try:
+            from backend.session.version_manager import VersionManager
+            if best_result:
+                vm = VersionManager()
+                saved_hash = vm.save_from_automl_result(best_result, state)
+                logger.info("実験を保存しました: hash=%s", saved_hash[:8])
+                # 実験比較ダッシュボードの再描画
+                refresh_comp = state.get("_refresh_experiment_comparison")
+                if refresh_comp:
+                    try:
+                        refresh_comp()
+                    except Exception:
+                        pass
+        except Exception as vm_ex:
+            logger.warning("VersionManager保存に失敗: %s", vm_ex)
+
         # ── タスク3-1: 事前設定済みの自動処理を実行 ──
         if best_result:
             await _run_post_analysis_tasks(state, status_container)
