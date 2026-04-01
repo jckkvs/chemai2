@@ -23,6 +23,10 @@ django-celery-results>=2.5
 pyarrow>=12.0
 openpyxl>=3.1
 pyyaml>=6.0
+huggingface-hub>=0.20.0
+reportlab>=4.0
+python-docx>=1.1
+nbformat>=5.9
 
 # ========== 推奨オプション ==========
 lightgbm>=4.0

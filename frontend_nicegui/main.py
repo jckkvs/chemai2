@@ -673,6 +673,9 @@ def main_page():
         results_tab = ui.tab("results", label="📊 結果確認", icon="analytics")
         inverse_tab = ui.tab("inverse", label="🔮 逆解析", icon="find_replace")
         doe_tab = ui.tab("doe", label="🧪 実験計画", icon="science")
+        model_tab = ui.tab("models", label="🤗 モデル管理", icon="download")
+        export_tab = ui.tab("export", label="📤 レポート", icon="file_download")
+        comparison_tab = ui.tab("comparison", label="🔬 実験ダッシュ", icon="dashboard")
 
     with ui.tab_panels(main_tabs, value=data_tab).classes("full-width"):
 
@@ -745,6 +748,20 @@ def main_page():
             _build_doe()
             state["_refresh_doe"] = _build_doe
 
+        # ── モデル管理タブ ──
+        with ui.tab_panel(model_tab):
+            from frontend_nicegui.pages.model_manager import render_model_manager
+            render_model_manager()
+
+        # ── レポートエクスポートタブ ──
+        with ui.tab_panel(export_tab):
+            from frontend_nicegui.pages.export_panel import render_export_panel
+            render_export_panel(state)
+
+        # ── 実験ダッシュボードタブ ──
+        with ui.tab_panel(comparison_tab):
+            from frontend_nicegui.pages.experiment_comparison import render_experiment_comparison
+            render_experiment_comparison(state)
     # ── 記述子セット常時表示フローティングバー（タスク2-6） ──
     from frontend_nicegui.components.descriptor_status_bar import render_descriptor_status_bar
     render_descriptor_status_bar(state)
