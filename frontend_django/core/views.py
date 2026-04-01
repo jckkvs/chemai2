@@ -157,8 +157,10 @@ def load_sample(request, session_id):
         session.target_col = "target_class"
         session.task_type = "classification"
 
-    # CSVとして保存
-    csv_path = Path(f"media/uploads/sample_{session.id}.csv")
+    # CSVとして保存（MEDIA_ROOTベースの絶対パス）
+    from django.conf import settings as django_settings
+    media_root = Path(django_settings.MEDIA_ROOT)
+    csv_path = media_root / "uploads" / f"sample_{session.id}.csv"
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(csv_path, index=False)
     session.uploaded_file = f"uploads/sample_{session.id}.csv"
@@ -590,3 +592,336 @@ def get_adapter_params_schema(request, adapter_name: str):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
+
+# ═══════════════════════════════════════════════════════════
+# 実験計画法（DoE）
+# ═══════════════════════════════════════════════════════════
+
+def doe_page(request):
+    """実験計画法ページ"""
+    return render(request, "core/doe.html", {"active_page": "doe"})
+
+
+@csrf_exempt
+@require_POST
+def doe_upload_existing(request):
+    """既存実験データCSVアップロード"""
+    try:
+        f = request.FILES.get("file")
+        if not f:
+            return JsonResponse({"error": "ファイルが選択されていません"}, status=400)
+        import io as _io
+        if f.name.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(_io.BytesIO(f.read()))
+        else:
+            content = f.read().decode("utf-8-sig", errors="replace")
+            df = pd.read_csv(_io.StringIO(content))
+        import uuid
+        session_key = str(uuid.uuid4())
+        request.session[f"doe_existing_{session_key}"] = df.to_json(orient="split")
+        column_info = []
+        for col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                column_info.append({"name": col, "dtype": "numeric",
+                                    "min": round(float(df[col].min()), 6),
+                                    "max": round(float(df[col].max()), 6)})
+            else:
+                cats = df[col].dropna().unique().tolist()
+                column_info.append({"name": col, "dtype": "category",
+                                    "categories": [str(c) for c in cats[:50]]})
+        return JsonResponse({"session_key": session_key, "n_rows": len(df), "n_cols": len(df.columns),
+                             "columns": list(df.columns), "column_info": column_info,
+                             "preview": df.head(5).to_dict(orient="records")})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def doe_run(request):
+    """DoE最適化実行API"""
+    try:
+        body = json.loads(request.body)
+        from backend.doe.factor import Factor
+        from backend.doe.design import DoEOptimizer
+        factors = []
+        for f in body.get("factors", []):
+            if f["type"] == "continuous":
+                factors.append(Factor.continuous(f["name"], float(f.get("low", 0)),
+                                                 float(f.get("high", 1)), int(f.get("n_levels", 5))))
+            else:
+                factors.append(Factor.categorical(f["name"], f.get("categories", [])))
+        if not factors:
+            return JsonResponse({"error": "因子が設定されていません"}, status=400)
+        criterion = body.get("criterion", "D")
+        if criterion == "orthogonal":
+            from backend.doe.orthogonal import apply_orthogonal_array
+            oa_type = body.get("oa_type", "L9(3⁴)")
+            design_df, warning = apply_orthogonal_array(oa_type, factors)
+            if design_df.empty:
+                return JsonResponse({"error": warning or "直交表生成に失敗"}, status=400)
+            return JsonResponse({"criterion_name": f"直交表 ({oa_type})", "criterion_value": 0,
+                                 "d_efficiency": 0, "n_existing": 0, "n_new": len(design_df),
+                                 "columns": list(design_df.columns),
+                                 "rows": design_df.to_dict(orient="records"),
+                                 "is_new": [True] * len(design_df), "warning": warning})
+        existing_df = None
+        if body.get("mode") == "augment":
+            sk = body.get("existing_session_key")
+            if sk:
+                raw = request.session.get(f"doe_existing_{sk}")
+                if raw:
+                    existing_df = pd.read_json(raw, orient="split")
+        optimizer = DoEOptimizer(factors=factors, n_new=body.get("n_new", 10), criterion=criterion,
+                                 max_candidates=body.get("max_candidates", 5000),
+                                 n_starts=body.get("n_starts", 5), existing_df=existing_df)
+        result = optimizer.optimize()
+        return JsonResponse({"criterion_name": result.criterion_name, "criterion_value": result.criterion_value,
+                             "d_efficiency": result.d_efficiency,
+                             "n_existing": result.info.get("n_existing", 0),
+                             "n_new": result.info.get("n_new", body.get("n_new", 10)),
+                             "columns": list(result.design_df.columns),
+                             "rows": result.design_df.to_dict(orient="records"), "is_new": result.is_new})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+# ═══════════════════════════════════════════════════════════
+# 逆解析
+# ═══════════════════════════════════════════════════════════
+
+@csrf_exempt
+@require_POST
+def session_doe_factors(request, session_id):
+    """セッションデータから因子を自動検出"""
+    try:
+        session = get_object_or_404(AnalysisSession, id=session_id)
+        if not session.data_json:
+            return JsonResponse({"error": "データが読み込まれていません"}, status=400)
+        df = pd.read_json(session.data_json, orient="split")
+        target_col = session.target_col
+        factors = []
+        for col in df.columns:
+            if col == target_col:
+                continue
+            if col == getattr(session, 'smiles_col', None):
+                continue
+            if pd.api.types.is_numeric_dtype(df[col]):
+                factors.append({
+                    "name": col, "type": "continuous",
+                    "low": round(float(df[col].min()), 6),
+                    "high": round(float(df[col].max()), 6),
+                    "n_levels": 5,
+                })
+            else:
+                cats = df[col].dropna().unique().tolist()
+                factors.append({
+                    "name": col, "type": "categorical",
+                    "categories": [str(c) for c in cats[:50]],
+                })
+        return JsonResponse({"factors": factors})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def session_doe_run(request, session_id):
+    """セッション内DoE実行（既存データ=セッションのデータ）"""
+    try:
+        session = get_object_or_404(AnalysisSession, id=session_id)
+        body = json.loads(request.body)
+        from backend.doe.factor import Factor
+        from backend.doe.design import DoEOptimizer
+
+        factors = []
+        for f in body.get("factors", []):
+            if f["type"] == "continuous":
+                factors.append(Factor.continuous(f["name"], float(f.get("low", 0)),
+                                                 float(f.get("high", 1)), int(f.get("n_levels", 5))))
+            else:
+                factors.append(Factor.categorical(f["name"], f.get("categories", [])))
+        if not factors:
+            return JsonResponse({"error": "因子が設定されていません"}, status=400)
+
+        criterion = body.get("criterion", "D")
+
+        # 直交表
+        if criterion == "orthogonal":
+            from backend.doe.orthogonal import apply_orthogonal_array
+            oa_type = body.get("oa_type", "L9(3⁴)")
+            design_df, warning = apply_orthogonal_array(oa_type, factors)
+            if design_df.empty:
+                return JsonResponse({"error": warning or "直交表生成に失敗"}, status=400)
+            return JsonResponse({
+                "criterion_name": f"直交表 ({oa_type})", "criterion_value": 0,
+                "d_efficiency": 0, "n_existing": 0, "n_new": len(design_df),
+                "columns": list(design_df.columns),
+                "rows": design_df.to_dict(orient="records"),
+                "is_new": [True] * len(design_df),
+                "warning": warning,
+            })
+
+        # 既存データ（augmentモード時はセッションのデータを使用）
+        existing_df = None
+        if body.get("mode") == "augment" and session.data_json:
+            df = pd.read_json(session.data_json, orient="split")
+            target_col = session.target_col
+            factor_names = [f.name for f in factors]
+            available_cols = [c for c in factor_names if c in df.columns]
+            if available_cols:
+                existing_df = df[available_cols]
+
+        optimizer = DoEOptimizer(
+            factors=factors, n_new=body.get("n_new", 10), criterion=criterion,
+            max_candidates=body.get("max_candidates", 5000),
+            n_starts=body.get("n_starts", 5), existing_df=existing_df)
+        result = optimizer.optimize()
+        return JsonResponse({
+            "criterion_name": result.criterion_name,
+            "criterion_value": result.criterion_value,
+            "d_efficiency": result.d_efficiency,
+            "n_existing": result.info.get("n_existing", 0),
+            "n_new": result.info.get("n_new", body.get("n_new", 10)),
+            "columns": list(result.design_df.columns),
+            "rows": result.design_df.to_dict(orient="records"),
+            "is_new": result.is_new,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+# ═══════════════════════════════════════════════════════════
+# 逆解析
+# ═══════════════════════════════════════════════════════════
+
+@csrf_exempt
+@require_POST
+def run_inverse(request, session_id):
+    """逆解析API"""
+    try:
+        session = get_object_or_404(AnalysisSession, id=session_id)
+        body = json.loads(request.body)
+        if not session.result_data:
+            return JsonResponse({"error": "順解析の結果がありません"}, status=400)
+        rd = session.result_data
+        if "multi_results" in rd:
+            rd = max(rd["multi_results"], key=lambda r: r.get("best_score", 0))
+        import pickle, base64
+        ppkl = rd.get("pipeline_pickle")
+        if not ppkl:
+            return JsonResponse({"error": "学習済みパイプラインが保存されていません"}, status=400)
+        pipeline = pickle.loads(base64.b64decode(ppkl))
+        feature_names = rd.get("feature_names", [])
+        from backend.optim.inverse_optimizer import InverseConfig, run_inverse_optimization
+        config = InverseConfig(method=body.get("method", "random"), target_mode=body.get("target_mode", "maximize"),
+                               target_min=body.get("target_min"), target_max=body.get("target_max"),
+                               constraints=body.get("constraints", {}), method_params=body.get("method_params", {}))
+        result = run_inverse_optimization(predict_fn=lambda X_df: pipeline.predict(X_df),
+                                          feature_names=feature_names, config=config)
+        return JsonResponse({"candidates": result.candidates.to_dict(orient="records"),
+                             "n_evaluated": result.n_evaluated, "best_predicted": result.best_predicted,
+                             "method": result.method, "elapsed_seconds": round(result.elapsed_seconds, 2)})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+# ═══════════════════════════════════════════════════════════
+# ベイズ最適化候補提案
+# ═══════════════════════════════════════════════════════════
+
+@csrf_exempt
+@require_POST
+def run_bayesian_suggest(request, session_id):
+    """ベイズ最適化 候補提案API"""
+    try:
+        session = get_object_or_404(AnalysisSession, id=session_id)
+        body = json.loads(request.body)
+        if not session.data_json:
+            return JsonResponse({"error": "データが読み込まれていません"}, status=400)
+        df = pd.read_json(session.data_json, orient="split")
+        target_col = session.target_col
+        feature_cols = body.get("feature_cols", [])
+        if not feature_cols:
+            feature_cols = [c for c in df.columns if c != target_col and pd.api.types.is_numeric_dtype(df[c])]
+        X = df[feature_cols].values
+        y = df[target_col].values
+        from backend.optim.bayesian_optimizer import BayesianOptimizer, BOConfig
+        from backend.optim.search_space import SearchSpace
+        bo_config = BOConfig(objective=body.get("objective", "minimize"), acquisition=body.get("acquisition", "ei"),
+                             xi=body.get("xi", 0.01), kappa=body.get("kappa", 2.0),
+                             target_lo=body.get("target_lo"), target_hi=body.get("target_hi"),
+                             kernel_type=body.get("kernel_type", "default"),
+                             batch_strategy=body.get("batch_strategy", "kriging_believer"),
+                             n_candidates=body.get("n_candidates", 5))
+        # 探索空間を既存データから自動推定し候補を生成
+        space = SearchSpace.from_dataframe(df[feature_cols], margin=0.1)
+        search_df = space.generate_candidates(method="auto", n_max=body.get("n_random", 5000))
+        bo = BayesianOptimizer(config=bo_config)
+        bo.fit(X, y)
+        suggestions = bo.suggest(search_df, n=bo_config.n_candidates)
+        pca_data = _compute_pca_viz(X, suggestions[feature_cols].values if hasattr(suggestions, 'columns') else suggestions, feature_cols)
+        return JsonResponse({"suggestions": suggestions.to_dict(orient="records") if hasattr(suggestions, 'to_dict') else [],
+                             "gp_info": bo.get_gp_info(), "pca": pca_data, "n_train": len(X)})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+def _compute_pca_viz(X_train, X_suggest, feature_names):
+    """PCA 2D + Biplot + 累積寄与率"""
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+    X_all = np.vstack([X_train, X_suggest])
+    X_scaled = StandardScaler().fit_transform(X_all)
+    n_comp = min(3, X_scaled.shape[1])
+    pca = PCA(n_components=n_comp)
+    Z = pca.fit_transform(X_scaled)
+    n_tr = len(X_train)
+    loadings = pca.components_.T
+    biplot = [{"name": fn, "pc1": round(float(loadings[i, 0]), 4), "pc2": round(float(loadings[i, 1]), 4) if n_comp > 1 else 0}
+              for i, fn in enumerate(feature_names[:20])]
+    return {"train_2d": [{"x": round(float(z[0]), 4), "y": round(float(z[1]), 4) if n_comp > 1 else 0} for z in Z[:n_tr]],
+            "suggest_2d": [{"x": round(float(z[0]), 4), "y": round(float(z[1]), 4) if n_comp > 1 else 0} for z in Z[n_tr:]],
+            "cumulative_variance": [round(float(v), 4) for v in np.cumsum(pca.explained_variance_ratio_)],
+            "biplot": biplot}
+
+
+# ═══════════════════════════════════════════════════════════
+# リーケージ検出
+# ═══════════════════════════════════════════════════════════
+
+@csrf_exempt
+@require_POST
+def check_leakage(request, session_id):
+    """リーケージ事前チェックAPI"""
+    try:
+        session = get_object_or_404(AnalysisSession, id=session_id)
+        if not session.data_json:
+            return JsonResponse({"error": "データが読み込まれていません"}, status=400)
+        df = pd.read_json(session.data_json, orient="split")
+        target_col = session.target_col
+        body = json.loads(request.body) if request.body else {}
+        from backend.data.leakage_detector import detect_leakage, check_feature_leakage
+        feat_report = check_feature_leakage(df, target_col)
+        X_num = df.drop(columns=[target_col], errors="ignore").select_dtypes(include=[np.number])
+        y = df[target_col] if target_col in df.columns else None
+        sample_resp = None
+        if len(X_num.columns) > 0 and len(X_num) >= 5:
+            sr = detect_leakage(X_num, y, method=body.get("method", "auto"))
+            sample_resp = {"risk_level": sr.risk_level, "risk_score": round(sr.risk_score, 3),
+                           "n_suspicious_pairs": sr.n_suspicious_pairs,
+                           "recommended_cv": sr.recommended_cv, "cv_reason": sr.cv_reason,
+                           "method_used": sr.method_used, "n_groups": sr.n_groups,
+                           "group_labels": sr.group_labels.tolist() if sr.group_labels is not None else None}
+        return JsonResponse({"feature_check": {"has_risk": feat_report.has_risk, "summary": feat_report.summary,
+                                               "warnings": [{"feature": w.feature, "risk": w.risk,
+                                                             "reason": w.reason, "score": w.score}
+                                                            for w in feat_report.warnings]},
+                             "sample_check": sample_resp})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({"error": str(e)}, status=500)

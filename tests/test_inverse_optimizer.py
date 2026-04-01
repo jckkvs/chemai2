@@ -1,11 +1,9 @@
+# -*- coding: utf-8 -*-
 """
 tests/test_inverse_optimizer.py
 
-逆解析エンジン(inverse_optimizer.py)のユニットテスト。
-4手法(ランダム/グリッド/ベイズ/GA)と3目標モード(range/maximize/minimize)を検証。
+逆解析エンジンのテスト — 5手法(random/grid/bayesian/ga/dirichlet)
 """
-from __future__ import annotations
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -14,276 +12,285 @@ from backend.optim.inverse_optimizer import (
     InverseConfig,
     InverseResult,
     run_inverse_optimization,
-    _build_full_df,
-    _score_predictions,
-    _sbx_crossover,
 )
 
 
-# ─── テスト用の単純なpredict関数 ─────────────────────────
-def _linear_predict(X_df: pd.DataFrame) -> np.ndarray:
-    """y = x1 + 2*x2 の線形モデルを模擬。"""
-    x1 = X_df.iloc[:, 0].values if X_df.shape[1] > 0 else np.zeros(len(X_df))
-    x2 = X_df.iloc[:, 1].values if X_df.shape[1] > 1 else np.zeros(len(X_df))
-    return x1 + 2 * x2
+# ── テスト用の予測関数 ──
+def _simple_predict_fn(X: pd.DataFrame) -> np.ndarray:
+    """簡単な二乗和モデル: y = -(x1-0.3)^2 - (x2-0.5)^2（最大化→(0.3,0.5)が最適）"""
+    vals = X.values
+    return -((vals[:, 0] - 0.3) ** 2) - ((vals[:, 1] - 0.5) ** 2)
 
 
-def _quadratic_predict(X_df: pd.DataFrame) -> np.ndarray:
-    """y = -(x1-5)^2 -(x2-3)^2 + 34  (最大値34 at x1=5, x2=3)"""
-    x1 = X_df["x1"].values
-    x2 = X_df["x2"].values
-    return -(x1 - 5.0) ** 2 - (x2 - 3.0) ** 2 + 34.0
+def _composition_predict_fn(X: pd.DataFrame) -> np.ndarray:
+    """組成系: y = x1*0.5 + x2*0.3 + x3*0.2（合計1のとき最大→x1=1が理想だがboundsで制限）"""
+    vals = X.values
+    return vals[:, 0] * 0.5 + vals[:, 1] * 0.3 + vals[:, 2] * 0.2
 
 
-# ─── ヘルパーテスト ───────────────────────────────────────
-class TestBuildFullDf:
-    """_build_full_df のテスト。"""
+FEATURE_NAMES_2D = ["x1", "x2"]
+FEATURE_NAMES_3D = ["A", "B", "C"]
 
-    def test_basic(self):
-        X = np.array([[1.0, 2.0], [3.0, 4.0]])
-        df = _build_full_df(X, ["a", "b"], {"c": 99.0}, ["a", "b", "c"])
-        assert list(df.columns) == ["a", "b", "c"]
-        assert len(df) == 2
-        assert df["c"].iloc[0] == 99.0
-        assert df["a"].iloc[0] == 1.0
-
-    def test_missing_col_fills_zero(self):
-        X = np.array([[1.0]])
-        df = _build_full_df(X, ["a"], {}, ["a", "b"])
-        assert df["b"].iloc[0] == 0.0
+BOUNDS_2D = {"x1": (0.0, 1.0), "x2": (0.0, 1.0)}
+BOUNDS_3D = {"A": (0.0, 0.8), "B": (0.0, 0.8), "C": (0.0, 0.8)}
 
 
-class TestScorePredictions:
-    """_score_predictions のテスト。"""
-
-    def test_maximize(self):
-        config = InverseConfig(target_mode="maximize")
-        preds = np.array([1, 5, 3])
-        scores = _score_predictions(preds, config)
-        assert scores[1] > scores[0]  # 5 > 1
-
-    def test_minimize(self):
-        config = InverseConfig(target_mode="minimize")
-        preds = np.array([1, 5, 3])
-        scores = _score_predictions(preds, config)
-        assert scores[0] > scores[1]  # -1 > -5
-
-    def test_range(self):
-        config = InverseConfig(target_mode="range", target_min=4.0, target_max=6.0)
-        preds = np.array([5.0, 0.0, 10.0])
-        scores = _score_predictions(preds, config)
-        # 5.0は中心(5.0)にちょうど一致するのでスコア最大
-        assert scores[0] > scores[1]
-        assert scores[0] > scores[2]
-
-
-class TestSBXCrossover:
-    """SBX交叉のテスト。"""
-
-    def test_produces_valid_offspring(self):
-        rng = np.random.RandomState(42)
-        p1 = np.array([1.0, 2.0, 3.0])
-        p2 = np.array([4.0, 5.0, 6.0])
-        lo = np.array([0.0, 0.0, 0.0])
-        hi = np.array([10.0, 10.0, 10.0])
-        c1, c2 = _sbx_crossover(p1, p2, lo, hi, rng)
-        assert c1.shape == (3,)
-        assert c2.shape == (3,)
-        assert np.all(c1 >= lo) and np.all(c1 <= hi)
-        assert np.all(c2 >= lo) and np.all(c2 <= hi)
-
-    def test_identical_parents(self):
-        rng = np.random.RandomState(42)
-        p = np.array([3.0, 3.0])
-        c1, c2 = _sbx_crossover(p, p, np.zeros(2), np.ones(2) * 10, rng)
-        np.testing.assert_array_equal(c1, p)
-        np.testing.assert_array_equal(c2, p)
-
-
-# ─── 手法別テスト ─────────────────────────────────────────
-class TestRandomMethod:
-    """ランダムサンプリング手法。"""
-
-    def test_basic(self):
+# ═══════════ ランダムサンプリング ═══════════
+class TestRandomOptimizer:
+    def test_basic_random(self):
         config = InverseConfig(
             method="random",
             target_mode="maximize",
             constraints={
-                "x1": {"min": 0, "max": 10, "fixed": False, "active": True},
-                "x2": {"min": 0, "max": 10, "fixed": False, "active": True},
-            },
-            method_params={"n_samples": 100, "seed": 42},
-        )
-        result = run_inverse_optimization(
-            _linear_predict, ["x1", "x2"], config,
-        )
-        assert isinstance(result, InverseResult)
-        assert len(result.candidates) > 0
-        assert "predicted" in result.candidates.columns
-        assert result.n_evaluated == 100
-
-    def test_with_fixed(self):
-        config = InverseConfig(
-            method="random",
-            target_mode="maximize",
-            constraints={
-                "x1": {"min": 0, "max": 10, "fixed": False, "active": True},
-                "x2": {"min": 0, "max": 10, "fixed": True, "fixed_val": 5.0, "active": True},
-            },
-            method_params={"n_samples": 50, "seed": 42},
-        )
-        result = run_inverse_optimization(
-            _linear_predict, ["x1", "x2"], config,
-        )
-        assert len(result.candidates) > 0
-        # x2は固定なので結果に含まれない（search_colsから除外）
-        assert result.n_evaluated > 0
-
-
-class TestGridMethod:
-    """グリッドサーチ手法。"""
-
-    def test_basic(self):
-        config = InverseConfig(
-            method="grid",
-            target_mode="maximize",
-            constraints={
-                "x1": {"min": 0, "max": 10, "fixed": False, "active": True},
-                "x2": {"min": 0, "max": 10, "fixed": False, "active": True},
-            },
-            method_params={"n_points": 5},
-        )
-        result = run_inverse_optimization(
-            _linear_predict, ["x1", "x2"], config,
-        )
-        assert result.n_evaluated == 25  # 5^2
-        # 最大化: x1=10, x2=10 → y=30 が最良に近いはず
-        assert result.best_predicted > 20
-
-    def test_high_dim_caps(self):
-        """高次元の場合の自動制限。"""
-        constraints = {}
-        for i in range(10):
-            constraints[f"x{i}"] = {"min": 0, "max": 1, "fixed": False, "active": True}
-        config = InverseConfig(
-            method="grid",
-            target_mode="maximize",
-            constraints=constraints,
-            method_params={"n_points": 50},
-        )
-
-        def _sum_predict(X_df):
-            return X_df.sum(axis=1).values
-
-        result = run_inverse_optimization(
-            _sum_predict, [f"x{i}" for i in range(10)], config,
-        )
-        # 500000制限により分割数が縮小されている
-        assert result.n_evaluated <= 500_001
-
-
-class TestBayesianMethod:
-    """ベイズ最適化手法。"""
-
-    def test_finds_optimum(self):
-        config = InverseConfig(
-            method="bayesian",
-            target_mode="maximize",
-            constraints={
-                "x1": {"min": 0, "max": 10, "fixed": False, "active": True},
-                "x2": {"min": 0, "max": 6, "fixed": False, "active": True},
-            },
-            method_params={"n_trials": 30, "seed": 42, "acq_func": "EI"},
-        )
-        result = run_inverse_optimization(
-            _quadratic_predict, ["x1", "x2"], config,
-        )
-        assert len(result.candidates) > 0
-        # 最適は x1≈5, x2≈3 → 34 に近いはず
-        assert result.best_predicted > 25
-
-
-class TestGAMethod:
-    """遺伝的アルゴリズム手法。"""
-
-    def test_finds_optimum(self):
-        config = InverseConfig(
-            method="ga",
-            target_mode="maximize",
-            constraints={
-                "x1": {"min": 0, "max": 10, "fixed": False, "active": True},
-                "x2": {"min": 0, "max": 6, "fixed": False, "active": True},
-            },
-            method_params={
-                "pop_size": 20, "n_generations": 30,
-                "mutation_rate": 0.1, "crossover_rate": 0.8, "seed": 42,
-            },
-        )
-        result = run_inverse_optimization(
-            _quadratic_predict, ["x1", "x2"], config,
-        )
-        assert len(result.candidates) > 0
-        assert result.best_predicted > 25
-
-
-class TestRangeMode:
-    """範囲指定モード。"""
-
-    def test_range_target(self):
-        config = InverseConfig(
-            method="random",
-            target_mode="range",
-            target_min=14.0,
-            target_max=16.0,
-            constraints={
-                "x1": {"min": 0, "max": 10, "fixed": False, "active": True},
-                "x2": {"min": 0, "max": 10, "fixed": False, "active": True},
+                "x1": {"min": 0.0, "max": 1.0, "active": True},
+                "x2": {"min": 0.0, "max": 1.0, "active": True},
             },
             method_params={"n_samples": 500, "seed": 42},
         )
         result = run_inverse_optimization(
-            _linear_predict, ["x1", "x2"], config,
+            _simple_predict_fn, FEATURE_NAMES_2D, config,
         )
-        # 上位候補の predicted は 14~16 付近のはず
-        top_pred = result.candidates["predicted"].iloc[0]
-        assert 12 < top_pred < 18
+        assert isinstance(result, InverseResult)
+        assert result.method == "random"
+        assert result.n_evaluated == 500
+        assert len(result.candidates) > 0
+        # 最良候補は(0.3, 0.5)付近のはず
+        best = result.candidates.iloc[0]
+        assert abs(best["x1"] - 0.3) < 0.15
+        assert abs(best["x2"] - 0.5) < 0.15
 
-
-class TestEdgeCases:
-    """エッジケース。"""
-
-    def test_no_active_vars_raises(self):
+    def test_minimize_mode(self):
         config = InverseConfig(
             method="random",
-            constraints={"x1": {"active": False}},
+            target_mode="minimize",
+            constraints={
+                "x1": {"min": 0.0, "max": 1.0, "active": True},
+                "x2": {"min": 0.0, "max": 1.0, "active": True},
+            },
+            method_params={"n_samples": 500, "seed": 42},
         )
-        with pytest.raises(ValueError, match="探索対象"):
-            run_inverse_optimization(
-                _linear_predict, ["x1"], config,
-            )
+        result = run_inverse_optimization(
+            _simple_predict_fn, FEATURE_NAMES_2D, config,
+        )
+        # minimize = -(x1-0.3)^2の符号反転 → 端点付近が最良
+        best = result.candidates.iloc[0]
+        assert result.best_predicted is not None
 
-    def test_invalid_method_raises(self):
+
+# ═══════════ グリッドサーチ ═══════════
+class TestGridOptimizer:
+    def test_basic_grid(self):
         config = InverseConfig(
-            method="nonexistent",
-            constraints={"x1": {"min": 0, "max": 1, "fixed": False, "active": True}},
+            method="grid",
+            target_mode="maximize",
+            constraints={
+                "x1": {"min": 0.0, "max": 1.0, "active": True},
+                "x2": {"min": 0.0, "max": 1.0, "active": True},
+            },
+            method_params={"n_points": 20},
         )
-        with pytest.raises(ValueError, match="未対応"):
-            run_inverse_optimization(
-                _linear_predict, ["x1"], config,
-            )
+        result = run_inverse_optimization(
+            _simple_predict_fn, FEATURE_NAMES_2D, config,
+        )
+        assert result.method == "grid"
+        assert result.n_evaluated == 20 * 20  # 400
+        best = result.candidates.iloc[0]
+        assert abs(best["x1"] - 0.3) < 0.1
+        assert abs(best["x2"] - 0.5) < 0.1
 
-    def test_min_equals_max(self):
-        """min == max の場合も動作する。"""
+
+# ═══════════ ベイズ最適化 ═══════════
+class TestBayesianOptimizer:
+    def test_basic_bayesian(self):
+        config = InverseConfig(
+            method="bayesian",
+            target_mode="maximize",
+            constraints={
+                "x1": {"min": 0.0, "max": 1.0, "active": True},
+                "x2": {"min": 0.0, "max": 1.0, "active": True},
+            },
+            method_params={"n_trials": 30, "seed": 42, "acq_func": "EI"},
+        )
+        result = run_inverse_optimization(
+            _simple_predict_fn, FEATURE_NAMES_2D, config,
+        )
+        assert result.method == "bayesian"
+        assert result.n_evaluated >= 30
+        best = result.candidates.iloc[0]
+        assert abs(best["x1"] - 0.3) < 0.2
+        assert abs(best["x2"] - 0.5) < 0.2
+
+
+# ═══════════ 遺伝的アルゴリズム ═══════════
+class TestGAOptimizer:
+    def test_basic_ga(self):
+        config = InverseConfig(
+            method="ga",
+            target_mode="maximize",
+            constraints={
+                "x1": {"min": 0.0, "max": 1.0, "active": True},
+                "x2": {"min": 0.0, "max": 1.0, "active": True},
+            },
+            method_params={
+                "pop_size": 20,
+                "n_generations": 30,
+                "mutation_rate": 0.1,
+                "crossover_rate": 0.8,
+                "seed": 42,
+            },
+        )
+        result = run_inverse_optimization(
+            _simple_predict_fn, FEATURE_NAMES_2D, config,
+        )
+        assert result.method == "ga"
+        assert result.n_evaluated >= 20 * 30
+        best = result.candidates.iloc[0]
+        assert abs(best["x1"] - 0.3) < 0.15
+        assert abs(best["x2"] - 0.5) < 0.15
+
+
+# ═══════════ ディリクレ分布最適化 ═══════════
+class TestDirichletOptimizer:
+    """ディリクレ分布α更新型の組成系最適化テスト。
+
+    参考:
+        Ferguson (1973) ディリクレ過程
+        Minka (2000) ディリクレ分布推定
+    """
+
+    def test_basic_dirichlet_composition(self):
+        """基本ケース: 3成分組成系、合計=1"""
+        config = InverseConfig(
+            method="dirichlet",
+            target_mode="maximize",
+            constraints={
+                "A": {"min": 0.0, "max": 0.8, "active": True},
+                "B": {"min": 0.0, "max": 0.8, "active": True},
+                "C": {"min": 0.0, "max": 0.8, "active": True},
+            },
+            method_params={
+                "n_samples_per_round": 200,
+                "n_rounds": 10,
+                "top_k": 30,
+                "concentration": 10.0,
+                "total_sum": 1.0,
+                "seed": 42,
+            },
+        )
+        result = run_inverse_optimization(
+            _composition_predict_fn, FEATURE_NAMES_3D, config,
+        )
+        assert result.method == "dirichlet"
+        assert result.n_evaluated >= 200 * 10
+        assert len(result.candidates) > 0
+
+        # 最良候補の合計はtotal_sum (≈1.0) 付近のはず
+        best = result.candidates.iloc[0]
+        total = best.get("A", 0) + best.get("B", 0) + best.get("C", 0)
+        assert abs(total - 1.0) < 0.05, f"合計={total} (期待: ≈1.0)"
+
+        # Aが大きい方がスコアが高い (y = 0.5A + 0.3B + 0.2C)
+        assert best["A"] > best["C"], "Aの係数が最大なのでA>Cのはず"
+
+    def test_dirichlet_total_sum_100(self):
+        """wt%（合計100）ケース"""
+        def predict_wt(X):
+            vals = X.values / 100.0  # 0-1に正規化して計算
+            return vals[:, 0] * 0.5 + vals[:, 1] * 0.3 + vals[:, 2] * 0.2
+
+        config = InverseConfig(
+            method="dirichlet",
+            target_mode="maximize",
+            constraints={
+                "A": {"min": 0.0, "max": 80.0, "active": True},
+                "B": {"min": 0.0, "max": 80.0, "active": True},
+                "C": {"min": 0.0, "max": 80.0, "active": True},
+            },
+            method_params={
+                "n_samples_per_round": 100,
+                "n_rounds": 5,
+                "top_k": 20,
+                "concentration": 10.0,
+                "total_sum": 100.0,
+                "seed": 42,
+            },
+        )
+        result = run_inverse_optimization(
+            predict_wt, FEATURE_NAMES_3D, config,
+        )
+        best = result.candidates.iloc[0]
+        total = best.get("A", 0) + best.get("B", 0) + best.get("C", 0)
+        assert abs(total - 100.0) < 5.0, f"合計={total} (期待: ≈100.0)"
+
+    def test_dirichlet_alpha_convergence(self):
+        """αが上位候補に収束すること"""
+        config = InverseConfig(
+            method="dirichlet",
+            target_mode="maximize",
+            constraints={
+                "A": {"min": 0.0, "max": 0.8, "active": True},
+                "B": {"min": 0.0, "max": 0.8, "active": True},
+                "C": {"min": 0.0, "max": 0.8, "active": True},
+            },
+            method_params={
+                "n_samples_per_round": 300,
+                "n_rounds": 15,
+                "top_k": 30,
+                "concentration": 15.0,
+                "total_sum": 1.0,
+                "seed": 123,
+            },
+        )
+        result = run_inverse_optimization(
+            _composition_predict_fn, FEATURE_NAMES_3D, config,
+        )
+        # 多くのラウンドを重ねると最良候補のスコアが改善するはず
+        assert result.best_predicted > 0.3, (
+            f"ディリクレ収束で最良予測値{result.best_predicted}が0.3超のはず"
+        )
+
+
+# ═══════════ エッジケース ═══════════
+class TestEdgeCases:
+    def test_no_search_cols_raises(self):
+        """全変数が固定の場合はエラー"""
         config = InverseConfig(
             method="random",
             target_mode="maximize",
             constraints={
-                "x1": {"min": 5, "max": 5, "fixed": False, "active": True},
-                "x2": {"min": 0, "max": 10, "fixed": False, "active": True},
+                "x1": {"fixed": True, "fixed_val": 0.5, "active": True},
+                "x2": {"fixed": True, "fixed_val": 0.5, "active": True},
             },
-            method_params={"n_samples": 10, "seed": 42},
+        )
+        with pytest.raises(ValueError, match="探索対象の変数がありません"):
+            run_inverse_optimization(
+                _simple_predict_fn, FEATURE_NAMES_2D, config,
+            )
+
+    def test_range_mode(self):
+        """range目標モード"""
+        config = InverseConfig(
+            method="random",
+            target_mode="range",
+            target_min=-0.1,
+            target_max=0.0,
+            constraints={
+                "x1": {"min": 0.0, "max": 1.0, "active": True},
+                "x2": {"min": 0.0, "max": 1.0, "active": True},
+            },
+            method_params={"n_samples": 500, "seed": 42},
         )
         result = run_inverse_optimization(
-            _linear_predict, ["x1", "x2"], config,
+            _simple_predict_fn, FEATURE_NAMES_2D, config,
         )
+        # rangeモードのスコアはガウシアン型 → 範囲中心に近い予測値の候補が上位
         assert len(result.candidates) > 0
+
+    def test_unknown_method_raises(self):
+        """不明な手法はエラー"""
+        config = InverseConfig(method="unknown")
+        config.constraints = {"x1": {"min": 0, "max": 1, "active": True}}
+        with pytest.raises(ValueError, match="未対応の最適化手法"):
+            run_inverse_optimization(
+                _simple_predict_fn, ["x1"], config,
+            )

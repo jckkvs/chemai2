@@ -34,36 +34,7 @@ def render_results_tab(state: dict[str, Any]) -> None:
     if not success_results and single_ar:
         success_results = {"デフォルト": single_ar}
 
-    # ── セット比較テーブル（2セット以上の場合） ──
-    if len(success_results) >= 2:
-        with ui.card().classes("glass-card q-pa-md full-width q-mb-md").props('data-testid="set-comparison-card"'):
-            ui.label("📊 記述子セット比較").classes("text-h6 q-mb-sm").props('role="heading" aria-level="2"')
-            comp_rows = []
-            for sn, sr in success_results.items():
-                proc_X = getattr(sr, "processed_X", None)
-                n_f = proc_X.shape[1] if proc_X is not None and hasattr(proc_X, "shape") else "?"
-                is_best = (sn == state.get("best_set_name", ""))
-                comp_rows.append({
-                    "set_name": ("🏆 " + sn) if is_best else sn,
-                    "best_model": sr.best_model_key,
-                    "score": f"{sr.best_score:.4f}",
-                    "n_models": len(sr.model_scores),
-                    "n_features": str(n_f),
-                    "elapsed": f"{sr.elapsed_seconds:.1f}s",
-                })
-            comp_cols = [
-                {"name": "set_name", "label": "セット", "field": "set_name"},
-                {"name": "best_model", "label": "最良モデル", "field": "best_model"},
-                {"name": "score", "label": "スコア", "field": "score", "sortable": True},
-                {"name": "n_models", "label": "モデル数", "field": "n_models"},
-                {"name": "n_features", "label": "特徴量", "field": "n_features"},
-                {"name": "elapsed", "label": "時間", "field": "elapsed"},
-            ]
-            ui.table(
-                columns=comp_cols, rows=comp_rows, row_key="set_name",
-            ).classes("full-width").props('dense flat bordered data-testid="set-comparison-table"')
-
-    # ── セット切替ドロップダウン ──
+    # ── セット切替タブ（2セット以上の場合） ──
     set_names = list(success_results.keys())
     if not set_names:
         return
@@ -73,20 +44,43 @@ def render_results_tab(state: dict[str, Any]) -> None:
         current_view = set_names[0]
 
     if len(set_names) >= 2:
-        with ui.row().classes("items-center q-gutter-sm q-mb-sm").props('role="navigation" aria-label="表示セット切り替え"'):
-            ui.icon("layers", color="cyan").props('aria-hidden="true"')
-            ui.label("表示セット:").classes("text-body2").props('id="set-select-label"')
-            ui.select(
-                set_names, value=current_view,
-                on_change=lambda e: state.update({"_viewing_set": e.value}),
-            ).props('outlined dense options-dense aria-labelledby="set-select-label" data-testid="set-selector"').style("min-width: 200px;")
-            ui.label(
-                "※ セットを切り替えるとページ下部の詳細結果が変わります"
-            ).classes("text-caption text-grey-6")
+        # セット選択タブ
+        with ui.card().classes("glass-card q-pa-md full-width q-mb-md"):
+            with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+                ui.icon("layers", color="cyan")
+                ui.label("記述子セット別 結果").classes("text-h6")
+                ui.badge(f"{len(set_names)}セット", color="teal").props("dense")
 
-    ar = success_results.get(current_view, single_ar)
+            set_tab_keys = []
+            with ui.tabs().classes("full-width").props(
+                "dense no-caps active-color=cyan indicator-color=cyan scrollable"
+            ) as set_result_tabs:
+                for sn in set_names:
+                    sr = success_results[sn]
+                    is_best = (sn == state.get("best_set_name", ""))
+                    label = f"🏆 {sn} ({sr.best_score:.4f})" if is_best else f"{sn} ({sr.best_score:.4f})"
+                    key = f"res_set_{sn}"
+                    set_tab_keys.append(key)
+                    ui.tab(key, label=label)
 
-    # ── 結果サマリーカード（ファーストビュー） ──
+            best_tab_key = f"res_set_{current_view}"
+            with ui.tab_panels(set_result_tabs, value=best_tab_key).classes("full-width bg-transparent"):
+                for sn in set_names:
+                    key = f"res_set_{sn}"
+                    with ui.tab_panel(key):
+                        _render_single_result(success_results[sn], state)
+    else:
+        ar = success_results.get(current_view, single_ar)
+        _render_single_result(ar, state)
+        return
+
+    # ── 複数セットの場合はここでreturn済み（タブ内に_render_single_resultが呼ばれている） ──
+    return
+
+
+def _render_single_result(ar, state: dict) -> None:
+    """単一セットの結果詳細を描画する。"""
+    scores = ar.model_scores if hasattr(ar, "model_scores") else {}
     with ui.card().classes("glass-card q-pa-md full-width q-mb-md animate-slide-up best-model-glow").props('data-testid="best-model-summary-card"'):
         # 行1: 最良モデル + スコア
         with ui.row().classes("items-center q-gutter-md"):

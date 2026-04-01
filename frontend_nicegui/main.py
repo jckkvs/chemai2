@@ -868,9 +868,11 @@ def main_page():
                 return
 
             n_mols = len(smiles_list)
+            # timeout=0は永久表示→dismiss()が効かないケースがあるため
+            # 十分長いtimeout (10分) を設定し、完了前に消えないようにする
             _calc_notif = ui.notify(
                 f"⚗️ SMILES特徴量を計算中（{n_mols}件）",
-                type="info", timeout=0,  # 手動でdismissするまで表示
+                type="info", timeout=600000,  # 10分（計算完了時にdismiss試行）
             )
 
             # ── エンジンごとにチャンク実行 (Connection Lost 防止) ──
@@ -913,7 +915,15 @@ def main_page():
             try:
                 _calc_notif.dismiss()
             except Exception:
-                pass
+                try:
+                    _calc_notif.close()
+                except Exception:
+                    # NiceGUIのバージョンによりdismiss/closeが使えない場合
+                    # JavaScriptで全通知をクリア
+                    try:
+                        ui.run_javascript("document.querySelectorAll('.q-notification').forEach(n => n.remove())")
+                    except Exception:
+                        pass
             ui.notify(
                 f"✅ {n_desc}個の記述子を計算しました",
                 type="positive", timeout=5000,

@@ -328,6 +328,563 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => loadResults('{{ session.id }}'));
 </script>
+
+<!-- ─── 高度な解析ツール（タブ切替） ─── -->
+<div style="margin-top:2rem;">
+<h2 style="margin-bottom:1rem;">🔬 高度な解析ツール</h2>
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+    <button class="btn btn-sm btn-secondary" onclick="showAdvTab('inverse')" id="adv-tab-inverse">🔄 逆解析</button>
+    <button class="btn btn-sm btn-secondary" onclick="showAdvTab('bayesian')" id="adv-tab-bayesian">🧠 ベイズ最適化</button>
+    <button class="btn btn-sm btn-secondary" onclick="showAdvTab('doe')" id="adv-tab-doe">📐 実験計画法</button>
+    <button class="btn btn-sm btn-secondary" onclick="showAdvTab('leakage')" id="adv-tab-leakage">🛡️ リーケージ検出</button>
+</div>
+
+<!-- ─── 逆解析パネル ─── -->
+<div id="adv-panel-inverse" class="card" style="display:none;">
+    <div class="card-header">
+        <span style="font-size:1.3rem">🔄</span>
+        <h3 class="card-title">逆解析 — 目標値からの入力探索</h3>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:1rem;">
+        <div>
+            <label class="form-label">目標モード</label>
+            <select id="inv-target-mode" class="form-control" onchange="toggleInvRange()">
+                <option value="maximize">最大化</option>
+                <option value="minimize">最小化</option>
+                <option value="range">範囲指定</option>
+            </select>
+        </div>
+        <div id="inv-range-min-wrap" style="display:none;">
+            <label class="form-label">目標下限</label>
+            <input type="number" id="inv-target-min" class="form-control" step="any">
+        </div>
+        <div id="inv-range-max-wrap" style="display:none;">
+            <label class="form-label">目標上限</label>
+            <input type="number" id="inv-target-max" class="form-control" step="any">
+        </div>
+        <div>
+            <label class="form-label">最適化手法</label>
+            <select id="inv-method" class="form-control">
+                <option value="random">ランダムサンプリング</option>
+                <option value="grid">グリッドサーチ</option>
+                <option value="bayesian">ベイズ最適化</option>
+                <option value="ga">遺伝的アルゴリズム</option>
+            </select>
+        </div>
+    </div>
+    <details style="margin-bottom:1rem;">
+        <summary style="cursor:pointer;color:var(--text-secondary);font-size:0.87rem;">⚙️ 変数制約設定（クリックで展開）</summary>
+        <div id="inv-constraints-table" style="margin-top:0.8rem;overflow-x:auto;">
+            <p style="color:var(--text-muted);font-size:0.82rem;">順解析の結果から自動設定されます</p>
+        </div>
+    </details>
+    <button class="btn btn-primary" onclick="runInverse('{{ session.id }}')" id="btn-run-inv">🔄 逆解析を実行</button>
+    <div id="inv-loading" style="display:none;margin-top:1rem;">
+        <div class="spinner" style="width:32px;height:32px;border:3px solid rgba(0,188,212,0.2);
+                    border-top-color:#00bcd4;border-radius:50%;animation:spin 0.8s linear infinite;display:inline-block;vertical-align:middle;"></div>
+        <span style="color:var(--text-secondary);margin-left:0.5rem;">計算中...</span>
+    </div>
+    <div id="inv-results" style="margin-top:1rem;"></div>
+</div>
+
+<!-- ─── ベイズ最適化パネル ─── -->
+<div id="adv-panel-bayesian" class="card" style="display:none;">
+    <div class="card-header">
+        <span style="font-size:1.3rem">🧠</span>
+        <h3 class="card-title">ベイズ最適化 — 次の実験候補提案</h3>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1rem;">
+        <div>
+            <label class="form-label">目的</label>
+            <select id="bo-objective" class="form-control">
+                <option value="minimize">最小化</option>
+                <option value="maximize">最大化</option>
+            </select>
+        </div>
+        <div>
+            <label class="form-label">獲得関数</label>
+            <select id="bo-acquisition" class="form-control">
+                <option value="ei" selected>EI（Expected Improvement）</option>
+                <option value="pi">PI（Probability of Improvement）</option>
+                <option value="ucb">UCB（Upper Confidence Bound）</option>
+            </select>
+        </div>
+        <div>
+            <label class="form-label">カーネル</label>
+            <select id="bo-kernel" class="form-control">
+                <option value="default" selected>DotProduct + Matern + White</option>
+                <option value="matern">Matern + White</option>
+                <option value="dotproduct">DotProduct + White</option>
+            </select>
+        </div>
+        <div>
+            <label class="form-label">バッチ戦略</label>
+            <select id="bo-batch" class="form-control">
+                <option value="kriging_believer" selected>Kriging Believer</option>
+                <option value="doe_then_bo">DoE → BO</option>
+                <option value="bo_then_doe">BO → DoE</option>
+                <option value="single">単純 Top-N</option>
+            </select>
+        </div>
+        <div>
+            <label class="form-label">候補数</label>
+            <input type="number" id="bo-n-candidates" class="form-control" value="5" min="1" max="50">
+        </div>
+    </div>
+    <button class="btn btn-primary" onclick="runBO('{{ session.id }}')" id="btn-run-bo">🧠 候補を提案</button>
+    <div id="bo-loading" style="display:none;margin-top:1rem;">
+        <div class="spinner" style="width:32px;height:32px;border:3px solid rgba(0,188,212,0.2);
+                    border-top-color:#00bcd4;border-radius:50%;animation:spin 0.8s linear infinite;display:inline-block;vertical-align:middle;"></div>
+        <span style="color:var(--text-secondary);margin-left:0.5rem;">GP学習＋候補探索中...</span>
+    </div>
+    <div id="bo-results" style="margin-top:1rem;"></div>
+    <div id="bo-pca" style="margin-top:1rem;"></div>
+</div>
+
+<!-- ─── リーケージ検出パネル ─── -->
+<div id="adv-panel-leakage" class="card" style="display:none;">
+    <div class="card-header">
+        <span style="font-size:1.3rem">🛡️</span>
+        <h3 class="card-title">リーケージ検出 — データ品質チェック</h3>
+    </div>
+    <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">
+        サンプル間類似度（ハット行列 / RBF / RF Proximity）を評価し、リーケージリスクとCV推奨を報告します。
+    </p>
+    <button class="btn btn-primary" onclick="runLeakageCheck('{{ session.id }}')" id="btn-run-leak">🛡️ チェック実行</button>
+    <div id="leak-loading" style="display:none;margin-top:1rem;">
+        <div class="spinner" style="width:32px;height:32px;border:3px solid rgba(0,188,212,0.2);
+                    border-top-color:#00bcd4;border-radius:50%;animation:spin 0.8s linear infinite;display:inline-block;vertical-align:middle;"></div>
+        <span style="color:var(--text-secondary);margin-left:0.5rem;">類似度計算中...</span>
+    </div>
+    <div id="leak-results" style="margin-top:1rem;"></div>
+</div>
+
+<!-- ─── 実験計画法（DoE）パネル ─── -->
+<div id="adv-panel-doe" class="card" style="display:none;">
+    <div class="card-header">
+        <span style="font-size:1.3rem">📐</span>
+        <h3 class="card-title">実験計画法 — 追加実験の最適設計</h3>
+    </div>
+    <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">
+        現在のデータを固定し、D/E/I最適基準で追加実験を設計します。ゼロからの新規計画も可能です。
+    </p>
+
+    <!-- モード切替 -->
+    <div style="display:flex;gap:0.8rem;margin-bottom:1rem;">
+        <button class="btn btn-sm btn-primary" onclick="setDoeSessionMode('augment')" id="doe-s-mode-augment">📂 既存データを拡張</button>
+        <button class="btn btn-sm btn-secondary" onclick="setDoeSessionMode('scratch')" id="doe-s-mode-scratch">🆕 ゼロから計画</button>
+    </div>
+
+    <!-- 因子設定 -->
+    <div style="border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:1rem;margin-bottom:1rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem;">
+            <h4 style="margin:0;">⚙️ 因子設定</h4>
+            <div>
+                <button class="btn btn-sm btn-secondary" onclick="autoDetectFactors('{{ session.id }}')">🔄 データから自動検出</button>
+                <button class="btn btn-sm btn-secondary" onclick="addSessionFactor('continuous')" style="margin-left:0.3rem;">＋ 連続</button>
+                <button class="btn btn-sm btn-secondary" onclick="addSessionFactor('categorical')" style="margin-left:0.3rem;">＋ カテゴリ</button>
+            </div>
+        </div>
+        <div id="doe-s-factors"></div>
+    </div>
+
+    <!-- 計画設定 -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1rem;">
+        <div>
+            <label class="form-label">最適化基準</label>
+            <select id="doe-s-criterion" class="form-control" onchange="toggleOAOptions()">
+                <option value="D" selected>D最適（情報行列の行列式 最大化）</option>
+                <option value="E">E最適（最小固有値 最大化）</option>
+                <option value="I">I最適（予測分散 最小化）</option>
+                <option value="orthogonal">直交表</option>
+            </select>
+        </div>
+        <div id="doe-s-n-new-wrap">
+            <label class="form-label">追加する実験数</label>
+            <input type="number" id="doe-s-n-new" class="form-control" value="10" min="1" max="500">
+        </div>
+        <div id="doe-s-n-starts-wrap">
+            <label class="form-label">マルチスタート数</label>
+            <input type="number" id="doe-s-n-starts" class="form-control" value="5" min="1" max="50">
+        </div>
+        <div>
+            <label class="form-label">最大候補数</label>
+            <input type="number" id="doe-s-max-cand" class="form-control" value="5000" min="100" max="100000">
+        </div>
+    </div>
+    <div id="doe-s-oa-options" style="display:none;margin-bottom:1rem;">
+        <label class="form-label">直交表の種類</label>
+        <select id="doe-s-oa-type" class="form-control" style="max-width:300px;">
+            <option value="L4(2³)">L4 (2水準3因子)</option>
+            <option value="L8(2⁷)">L8 (2水準7因子)</option>
+            <option value="L9(3⁴)">L9 (3水準4因子)</option>
+            <option value="L12(2¹¹)">L12 (2水準11因子)</option>
+            <option value="L16(2¹⁵)">L16 (2水準15因子)</option>
+            <option value="L18(2¹×3⁷)">L18 (混合水準8因子)</option>
+            <option value="L27(3¹³)">L27 (3水準13因子)</option>
+        </select>
+    </div>
+
+    <button class="btn btn-primary" onclick="runSessionDoE('{{ session.id }}')" id="btn-run-doe-s">🧪 計画を生成</button>
+    <div id="doe-s-loading" style="display:none;margin-top:1rem;">
+        <div class="spinner" style="width:32px;height:32px;border:3px solid rgba(0,188,212,0.2);
+                    border-top-color:#00bcd4;border-radius:50%;animation:spin 0.8s linear infinite;display:inline-block;vertical-align:middle;"></div>
+        <span style="color:var(--text-secondary);margin-left:0.5rem;">最適化計算中...</span>
+    </div>
+    <div id="doe-s-results" style="margin-top:1rem;"></div>
+</div>
+</div><!-- /高度な解析ツール -->
+
+<script>
+/* ─── タブ切替 ─── */
+function showAdvTab(tab) {
+    ['inverse','bayesian','doe','leakage'].forEach(t => {
+        document.getElementById('adv-panel-' + t).style.display = t === tab ? 'block' : 'none';
+        document.getElementById('adv-tab-' + t).className = t === tab ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary';
+    });
+}
+function toggleInvRange() {
+    const mode = document.getElementById('inv-target-mode').value;
+    document.getElementById('inv-range-min-wrap').style.display = mode === 'range' ? '' : 'none';
+    document.getElementById('inv-range-max-wrap').style.display = mode === 'range' ? '' : 'none';
+}
+
+/* ─── 逆解析 ─── */
+async function runInverse(sid) {
+    const btn = document.getElementById('btn-run-inv');
+    const loading = document.getElementById('inv-loading');
+    btn.disabled = true; loading.style.display = 'block';
+    document.getElementById('inv-results').innerHTML = '';
+    try {
+        const resp = await fetch(`/api/session/${sid}/inverse/`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                method: document.getElementById('inv-method').value,
+                target_mode: document.getElementById('inv-target-mode').value,
+                target_min: parseFloat(document.getElementById('inv-target-min').value) || null,
+                target_max: parseFloat(document.getElementById('inv-target-max').value) || null,
+                constraints: {},
+                method_params: {n_samples: 2000, n_trials: 100, pop_size: 50, n_generations: 100},
+            })
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        renderInverseResults(data);
+    } catch (e) {
+        document.getElementById('inv-results').innerHTML = `<div class="alert alert-error">❌ ${e.message}</div>`;
+    } finally {
+        btn.disabled = false; loading.style.display = 'none';
+    }
+}
+function renderInverseResults(data) {
+    const c = document.getElementById('inv-results');
+    let html = `<div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+        <div class="metric-card-mini"><div class="metric-value-sm">${data.method}</div><div class="metric-label-sm">手法</div></div>
+        <div class="metric-card-mini"><div class="metric-value-sm">${data.n_evaluated.toLocaleString()}</div><div class="metric-label-sm">評価数</div></div>
+        <div class="metric-card-mini"><div class="metric-value-sm">${data.best_predicted.toFixed(4)}</div><div class="metric-label-sm">最良予測値</div></div>
+        <div class="metric-card-mini"><div class="metric-value-sm">${data.elapsed_seconds}s</div><div class="metric-label-sm">実行時間</div></div>
+    </div>`;
+    if (data.candidates && data.candidates.length > 0) {
+        const cols = Object.keys(data.candidates[0]);
+        html += '<div style="overflow-x:auto;"><table class="data-table" style="font-size:0.8rem;"><thead><tr>';
+        for (const col of cols) html += `<th>${col}</th>`;
+        html += '</tr></thead><tbody>';
+        for (const row of data.candidates.slice(0, 20)) {
+            html += '<tr>';
+            for (const col of cols) html += `<td>${typeof row[col] === 'number' ? row[col].toFixed(4) : row[col]}</td>`;
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+    }
+    c.innerHTML = html;
+}
+
+/* ─── ベイズ最適化 ─── */
+async function runBO(sid) {
+    const btn = document.getElementById('btn-run-bo');
+    const loading = document.getElementById('bo-loading');
+    btn.disabled = true; loading.style.display = 'block';
+    document.getElementById('bo-results').innerHTML = '';
+    document.getElementById('bo-pca').innerHTML = '';
+    try {
+        const resp = await fetch(`/api/session/${sid}/bayesian_suggest/`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                objective: document.getElementById('bo-objective').value,
+                acquisition: document.getElementById('bo-acquisition').value,
+                kernel_type: document.getElementById('bo-kernel').value,
+                batch_strategy: document.getElementById('bo-batch').value,
+                n_candidates: parseInt(document.getElementById('bo-n-candidates').value) || 5,
+            })
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        renderBOResults(data);
+    } catch (e) {
+        document.getElementById('bo-results').innerHTML = `<div class="alert alert-error">❌ ${e.message}</div>`;
+    } finally {
+        btn.disabled = false; loading.style.display = 'none';
+    }
+}
+function renderBOResults(data) {
+    const c = document.getElementById('bo-results');
+    let html = `<div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+        <div class="metric-card-mini"><div class="metric-value-sm">${data.n_train}</div><div class="metric-label-sm">学習データ数</div></div>`;
+    if (data.gp_info && data.gp_info.kernel) {
+        html += `<div class="metric-card-mini"><div class="metric-value-sm" style="font-size:0.65rem;">${data.gp_info.kernel}</div><div class="metric-label-sm">カーネル</div></div>`;
+    }
+    html += '</div>';
+    if (data.suggestions && data.suggestions.length > 0) {
+        const cols = Object.keys(data.suggestions[0]);
+        html += '<h4 style="margin:1rem 0 0.5rem;">📋 提案候補</h4>';
+        html += '<div style="overflow-x:auto;"><table class="data-table" style="font-size:0.8rem;"><thead><tr>';
+        for (const col of cols) html += `<th>${col}</th>`;
+        html += '</tr></thead><tbody>';
+        for (const row of data.suggestions) {
+            html += '<tr>';
+            for (const col of cols) html += `<td>${typeof row[col] === 'number' ? row[col].toFixed(4) : row[col]}</td>`;
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+    }
+    c.innerHTML = html;
+    // PCA可視化
+    if (data.pca) renderPCA(data.pca);
+}
+function renderPCA(pca) {
+    const container = document.getElementById('bo-pca');
+    const trainX = pca.train_2d.map(p => p.x);
+    const trainY = pca.train_2d.map(p => p.y);
+    const sugX = pca.suggest_2d.map(p => p.x);
+    const sugY = pca.suggest_2d.map(p => p.y);
+    container.innerHTML = '<div id="pca-plot" style="height:400px;"></div>';
+    if (typeof Plotly !== 'undefined') {
+        Plotly.newPlot('pca-plot', [
+            {x: trainX, y: trainY, mode: 'markers', name: '既存データ', marker: {color: '#3b82f6', size: 8}},
+            {x: sugX, y: sugY, mode: 'markers', name: '提案候補', marker: {color: '#f97316', size: 12, symbol: 'star'}},
+        ], {title: 'PCA 2D — 既存 vs 提案候補', paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+            font: {color: '#94a3b8'}, xaxis: {title: 'PC1', gridcolor: 'rgba(255,255,255,0.05)'},
+            yaxis: {title: 'PC2', gridcolor: 'rgba(255,255,255,0.05)'}}, {responsive: true});
+    }
+}
+
+/* ─── リーケージ検出 ─── */
+async function runLeakageCheck(sid) {
+    const btn = document.getElementById('btn-run-leak');
+    const loading = document.getElementById('leak-loading');
+    btn.disabled = true; loading.style.display = 'block';
+    document.getElementById('leak-results').innerHTML = '';
+    try {
+        const resp = await fetch(`/api/session/${sid}/leakage/`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        renderLeakageResults(data);
+    } catch (e) {
+        document.getElementById('leak-results').innerHTML = `<div class="alert alert-error">❌ ${e.message}</div>`;
+    } finally {
+        btn.disabled = false; loading.style.display = 'none';
+    }
+}
+function renderLeakageResults(data) {
+    const c = document.getElementById('leak-results');
+    let html = '';
+    // 特徴量レベル
+    const fc = data.feature_check;
+    html += `<div class="alert ${fc.has_risk ? 'alert-warning' : 'alert-success'}" style="margin-bottom:1rem;">${fc.summary}</div>`;
+    if (fc.warnings && fc.warnings.length > 0) {
+        html += '<table class="data-table" style="font-size:0.82rem;margin-bottom:1rem;"><thead><tr><th>特徴量</th><th>リスク</th><th>理由</th><th>スコア</th></tr></thead><tbody>';
+        for (const w of fc.warnings) {
+            const bc = w.risk === 'high' ? 'color:#ff5252;font-weight:600;' : 'color:#ffab40;';
+            html += `<tr><td>${w.feature}</td><td style="${bc}">${w.risk.toUpperCase()}</td><td>${w.reason}</td><td>${w.score.toFixed(3)}</td></tr>`;
+        }
+        html += '</tbody></table>';
+    }
+    // サンプルレベル
+    const sc = data.sample_check;
+    if (sc) {
+        const riskColor = sc.risk_level === 'high' ? '#ff5252' : sc.risk_level === 'medium' ? '#ffab40' : '#4ade80';
+        html += `<div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+            <div class="metric-card-mini"><div class="metric-value-sm" style="color:${riskColor}">${sc.risk_level.toUpperCase()}</div><div class="metric-label-sm">リスクレベル</div></div>
+            <div class="metric-card-mini"><div class="metric-value-sm">${sc.risk_score}</div><div class="metric-label-sm">リスクスコア</div></div>
+            <div class="metric-card-mini"><div class="metric-value-sm">${sc.n_suspicious_pairs}</div><div class="metric-label-sm">疑わしいペア数</div></div>
+            <div class="metric-card-mini"><div class="metric-value-sm">${sc.recommended_cv}</div><div class="metric-label-sm">推奨CV</div></div>
+            <div class="metric-card-mini"><div class="metric-value-sm">${sc.method_used}</div><div class="metric-label-sm">使用手法</div></div>
+        </div>`;
+        html += `<p style="color:var(--text-secondary);font-size:0.85rem;">📋 ${sc.cv_reason}</p>`;
+        if (sc.n_groups > 0) {
+            html += `<p style="color:var(--text-muted);font-size:0.82rem;">グループ数: ${sc.n_groups}</p>`;
+        }
+    }
+    c.innerHTML = html;
+}
+
+/* ─── DoE（実験計画法）─── */
+let doeSessionMode = 'augment';
+let doeFactorCounter = 0;
+let lastSessionDoeResult = null;
+
+function setDoeSessionMode(mode) {
+    doeSessionMode = mode;
+    document.getElementById('doe-s-mode-augment').className = mode === 'augment' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary';
+    document.getElementById('doe-s-mode-scratch').className = mode === 'scratch' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary';
+}
+
+function toggleOAOptions() {
+    const isOA = document.getElementById('doe-s-criterion').value === 'orthogonal';
+    document.getElementById('doe-s-oa-options').style.display = isOA ? 'block' : 'none';
+    document.getElementById('doe-s-n-new-wrap').style.display = isOA ? 'none' : '';
+    document.getElementById('doe-s-n-starts-wrap').style.display = isOA ? 'none' : '';
+}
+
+function addSessionFactor(type, name = '', low = 0, high = 1, nLevels = 5, categories = '') {
+    doeFactorCounter++;
+    const id = `doe-sf-${doeFactorCounter}`;
+    const badgeClass = type === 'continuous' ? 'continuous' : 'categorical';
+    const badgeText = type === 'continuous' ? '連続値' : 'カテゴリ';
+    let fieldsHtml;
+    if (type === 'continuous') {
+        fieldsHtml = `
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:0.5rem;">
+                <div><label style="font-size:0.72rem;color:var(--text-muted);">下限</label>
+                    <input type="number" class="form-control" data-field="low" value="${low}" step="any"></div>
+                <div><label style="font-size:0.72rem;color:var(--text-muted);">上限</label>
+                    <input type="number" class="form-control" data-field="high" value="${high}" step="any"></div>
+                <div><label style="font-size:0.72rem;color:var(--text-muted);">水準数</label>
+                    <input type="number" class="form-control" data-field="n_levels" value="${nLevels}" min="2" max="100"></div>
+            </div>`;
+    } else {
+        fieldsHtml = `
+            <div><label style="font-size:0.72rem;color:var(--text-muted);">カテゴリ値（カンマ区切り）</label>
+                <input type="text" class="form-control" data-field="categories" value="${categories}" placeholder="例: A, B, C"></div>`;
+    }
+    const html = `
+        <div class="factor-card" id="${id}" data-type="${type}" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:0.8rem;margin-bottom:0.5rem;position:relative;">
+            <button onclick="document.getElementById('${id}').remove()" style="position:absolute;top:6px;right:6px;background:rgba(255,82,82,0.2);color:#ff5252;border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;font-size:0.7rem;">✕</button>
+            <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;">
+                <span style="font-size:0.7rem;padding:2px 7px;border-radius:6px;font-weight:600;${type === 'continuous' ? 'background:rgba(0,188,212,0.2);color:#00e5ff;' : 'background:rgba(255,152,0,0.2);color:#ffab40;'}">${badgeText}</span>
+                <input type="text" class="form-control" data-field="name" value="${name}" placeholder="因子名" style="max-width:180px;font-weight:600;font-size:0.85rem;">
+            </div>
+            ${fieldsHtml}
+        </div>`;
+    document.getElementById('doe-s-factors').insertAdjacentHTML('beforeend', html);
+}
+
+async function autoDetectFactors(sid) {
+    try {
+        const resp = await fetch(`/api/session/${sid}/doe_factors/`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        document.getElementById('doe-s-factors').innerHTML = '';
+        doeFactorCounter = 0;
+        for (const f of data.factors) {
+            if (f.type === 'continuous') {
+                addSessionFactor('continuous', f.name, f.low, f.high, f.n_levels || 5);
+            } else {
+                addSessionFactor('categorical', f.name, 0, 1, 5, f.categories.join(', '));
+            }
+        }
+    } catch (e) {
+        alert('因子検出エラー: ' + e.message);
+    }
+}
+
+function collectSessionFactors() {
+    const cards = document.querySelectorAll('#doe-s-factors .factor-card');
+    const factors = [];
+    for (const card of cards) {
+        const type = card.dataset.type;
+        const name = (card.querySelector('[data-field="name"]')?.value || '').trim();
+        if (!name) continue;
+        if (type === 'continuous') {
+            factors.push({ name, type: 'continuous',
+                low: parseFloat(card.querySelector('[data-field="low"]')?.value) || 0,
+                high: parseFloat(card.querySelector('[data-field="high"]')?.value) || 1,
+                n_levels: parseInt(card.querySelector('[data-field="n_levels"]')?.value) || 5 });
+        } else {
+            const cats = (card.querySelector('[data-field="categories"]')?.value || '')
+                .split(',').map(s => s.trim()).filter(Boolean);
+            factors.push({ name, type: 'categorical', categories: cats });
+        }
+    }
+    return factors;
+}
+
+async function runSessionDoE(sid) {
+    const factors = collectSessionFactors();
+    if (factors.length === 0) { alert('因子を1つ以上設定してください。「データから自動検出」を押してみてください。'); return; }
+    const criterion = document.getElementById('doe-s-criterion').value;
+    const payload = {
+        factors, criterion, mode: doeSessionMode, session_id: sid,
+        n_new: parseInt(document.getElementById('doe-s-n-new').value) || 10,
+        n_starts: parseInt(document.getElementById('doe-s-n-starts').value) || 5,
+        max_candidates: parseInt(document.getElementById('doe-s-max-cand').value) || 5000,
+    };
+    if (criterion === 'orthogonal') payload.oa_type = document.getElementById('doe-s-oa-type').value;
+
+    const btn = document.getElementById('btn-run-doe-s');
+    const loading = document.getElementById('doe-s-loading');
+    btn.disabled = true; loading.style.display = 'block';
+    document.getElementById('doe-s-results').innerHTML = '';
+    try {
+        const resp = await fetch(`/api/session/${sid}/doe/`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        lastSessionDoeResult = data;
+        renderSessionDoeResults(data);
+    } catch (e) {
+        document.getElementById('doe-s-results').innerHTML = `<div class="alert alert-error">❌ ${e.message}</div>`;
+    } finally {
+        btn.disabled = false; loading.style.display = 'none';
+    }
+}
+
+function renderSessionDoeResults(data) {
+    const c = document.getElementById('doe-s-results');
+    let html = `<div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+        <div class="metric-card-mini"><div class="metric-value-sm">${data.criterion_name || '—'}</div><div class="metric-label-sm">基準</div></div>
+        <div class="metric-card-mini"><div class="metric-value-sm">${typeof data.criterion_value === 'number' ? data.criterion_value.toFixed(4) : '—'}</div><div class="metric-label-sm">基準値</div></div>
+        <div class="metric-card-mini"><div class="metric-value-sm">${typeof data.d_efficiency === 'number' ? (data.d_efficiency * 100).toFixed(1) + '%' : '—'}</div><div class="metric-label-sm">D効率</div></div>
+        <div class="metric-card-mini"><div class="metric-value-sm">${data.n_existing || 0}</div><div class="metric-label-sm">既存点</div></div>
+        <div class="metric-card-mini"><div class="metric-value-sm">${data.n_new || 0}</div><div class="metric-label-sm">新規点</div></div>
+    </div>`;
+    if (data.rows && data.rows.length > 0) {
+        const cols = data.columns || Object.keys(data.rows[0]);
+        html += '<div style="overflow-x:auto;"><table class="data-table" style="font-size:0.8rem;"><thead><tr><th>#</th><th>区分</th>';
+        for (const c2 of cols) html += `<th>${c2}</th>`;
+        html += '</tr></thead><tbody>';
+        for (let i = 0; i < data.rows.length; i++) {
+            const row = data.rows[i];
+            const isNew = data.is_new ? data.is_new[i] : true;
+            const cls = isNew ? 'background:rgba(0,188,212,0.05);' : '';
+            const label = isNew ? '<span style="color:#00e5ff;font-size:0.72rem;font-weight:600;">🆕 新規</span>'
+                                : '<span style="color:var(--text-muted);font-size:0.72rem;">📌 既存</span>';
+            html += `<tr style="${cls}"><td>${i + 1}</td><td>${label}</td>`;
+            for (const c2 of cols) html += `<td>${typeof row[c2] === 'number' ? row[c2].toFixed(4) : (row[c2] ?? '—')}</td>`;
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+        html += `<button class="btn btn-secondary" onclick="downloadSessionDoeCSV()" style="margin-top:0.8rem;">📥 CSV ダウンロード</button>`;
+    }
+    c.innerHTML = html;
+}
+
+function downloadSessionDoeCSV() {
+    if (!lastSessionDoeResult) return;
+    const cols = lastSessionDoeResult.columns || Object.keys(lastSessionDoeResult.rows[0]);
+    let csv = cols.join(',') + '\n';
+    for (const row of lastSessionDoeResult.rows) csv += cols.map(c => row[c] ?? '').join(',') + '\n';
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `doe_plan_${lastSessionDoeResult.criterion_name || 'design'}.csv`;
+    a.click();
+}
+</script>
+
 {% elif session.status == 'running' %}
 <div class="alert alert-info">⏳ 解析を実行中です。しばらくお待ちください...</div>
 <script>

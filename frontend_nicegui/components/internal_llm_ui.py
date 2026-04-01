@@ -2,7 +2,7 @@
 frontend_nicegui/components/internal_llm_ui.py
 
 HuggingFace / ローカルLLM 設定・ダウンロード・推論UIコンポーネント。
-「内部AI（API連携）」タブのコンテンツとして descriptor_plugins_ui.py から呼ばれる。
+「内部AI（ローカルモデル）」タブのコンテンツとして descriptor_plugins_ui.py から呼ばれる。
 """
 from __future__ import annotations
 

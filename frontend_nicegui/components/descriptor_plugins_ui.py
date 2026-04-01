@@ -2923,13 +2923,13 @@ def _render_custom_plugins(state: dict) -> None:
         icon="auto_awesome",
     ).classes("full-width text-grey-6").props("dense"):
         ui.label(
-            "⚠️ この機能は実験的です。外部AI（ChatGPT/Copilot等）または内部API連携を使って"
+            "⚠️ この機能は実験的です。外部の生成AIまたはローカルモデルを使って"
             "カスタム記述子のコードを自動生成できます。"
         ).classes("text-grey-6 text-caption q-mb-xs q-mt-xs")
 
         with ui.tabs().props("dense active-color=grey-7 indicator-color=grey-7 align=left") as _ai_tabs:
-            _tab_ext = ui.tab("external", label="🌐 外部AI（ChatGPT/Copilot）", icon="language")
-            _tab_int = ui.tab("internal", label="🤖 内部AI（API連携）", icon="smart_toy")
+            _tab_ext = ui.tab("external", label="🌐 外部 生成AI", icon="language")
+            _tab_int = ui.tab("internal", label="🤖 内部AI（ローカルモデル）", icon="smart_toy")
 
         with ui.tab_panels(_ai_tabs, value=_tab_ext).classes("full-width q-pt-sm"):
 
@@ -2943,7 +2943,7 @@ def _render_custom_plugins(state: dict) -> None:
                 }
 
                 ui.label(
-                    "ChatGPT / Copilot / Claude などの外部AIに貼り付けるプロンプトを生成します。"
+                    "ChatGPT / Copilot / Claude / Gemini など、任意の生成AIに貼り付けるプロンプトを生成します。"
                     "生成されたコードをアプリに貼り付けるだけで記述子が使えるようになります。"
                 ).classes("text-grey text-caption q-mb-sm")
 
@@ -2955,16 +2955,23 @@ def _render_custom_plugins(state: dict) -> None:
 
                     ui.input(
                         "使用ライブラリ（任意）",
-                        placeholder="例: rdkit, padelpy, descriptastorus, molfeat",
+                        placeholder="例: rdkit, padelpy, descriptastorus, molfeat（空欄＝独自実装）",
                         on_change=lambda e: _ext_state.update({"library": e.value}),
                     ).props("dense outlined").classes("full-width q-mb-xs").tooltip(
-                        "空欄にするとAIが適切なライブラリを選択します"
+                        "空欄にした場合、外部ライブラリに依存しない独自の特徴量計算コードが生成されます。\n"
+                        "特定のライブラリを指定すると、そのAPIを使ったコードが生成されます。"
                     )
+
+                    # 目的変数名でデフォルトテキストを設定
+                    _target_name = state.get("target_col", "")
+                    _default_what = f"{_target_name} を予測するのに適した特徴量" if _target_name else ""
+                    _ext_state["what"] = _default_what
 
                     ui.textarea(
                         "計算したい記述子・物性",
+                        value=_default_what,
                         placeholder=(
-                            "例: SMILESから分子の水溶性（logS）を予測する記述子\n"
+                            "例: 屈折率を表すのにいい特徴量\n"
                             "例: TDA（位相的データ解析）を使った分子の持続的ホモロジー記述子\n"
                             "例: HOMO-LUMOギャップのエネルギー（eV単位）"
                         ),
@@ -2974,7 +2981,7 @@ def _render_custom_plugins(state: dict) -> None:
                     with ui.row().classes("items-center q-gutter-sm q-mb-xs"):
                         ui.label("出力形式:").classes("text-caption text-grey")
                         ui.toggle(
-                            {"single": "1つの値", "multi": "複数の値（DataFrame）"},
+                            {"single": "1つの値", "multi": "複数の値（1特徴量1関数）"},
                             value="single",
                             on_change=lambda e: _ext_state.update({"output_type": e.value}),
                         ).props("dense")

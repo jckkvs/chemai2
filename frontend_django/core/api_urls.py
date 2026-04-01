@@ -14,5 +14,15 @@ urlpatterns = [
     # パラメータ自動UI用API
     path("params/model/<str:model_key>/", views.get_model_params_schema, name="api_model_params"),
     path("params/adapter/<str:adapter_name>/", views.get_adapter_params_schema, name="api_adapter_params"),
+    # DoE API
+    path("doe/upload_existing/", views.doe_upload_existing, name="api_doe_upload"),
+    path("doe/run/", views.doe_run, name="api_doe_run"),
+    # 逆解析・ベイズ最適化・リーケージ・セッション内DoE
+    path("session/<uuid:session_id>/inverse/", views.run_inverse, name="api_run_inverse"),
+    path("session/<uuid:session_id>/bayesian_suggest/", views.run_bayesian_suggest, name="api_bayesian_suggest"),
+    path("session/<uuid:session_id>/leakage/", views.check_leakage, name="api_check_leakage"),
+    path("session/<uuid:session_id>/doe_factors/", views.session_doe_factors, name="api_session_doe_factors"),
+    path("session/<uuid:session_id>/doe/", views.session_doe_run, name="api_session_doe_run"),
 ]
+
 

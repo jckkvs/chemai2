@@ -41,7 +41,7 @@ class InverseConfig:
         method_params: 手法固有パラメータ
     """
 
-    method: Literal["random", "grid", "bayesian", "ga"] = "random"
+    method: Literal["random", "grid", "bayesian", "ga", "dirichlet"] = "random"
     target_mode: Literal["range", "maximize", "minimize"] = "range"
     target_min: float | None = None
     target_max: float | None = None
@@ -130,6 +130,10 @@ def run_inverse_optimization(
         )
     elif config.method == "ga":
         candidates, n_eval = _optimize_ga(
+            objective, search_cols, bounds, config.method_params, cb,
+        )
+    elif config.method == "dirichlet":
+        candidates, n_eval = _optimize_dirichlet(
             objective, search_cols, bounds, config.method_params, cb,
         )
     else:
@@ -522,4 +526,158 @@ def _sbx_crossover(
         c1[i] = np.clip(c1[i], lo[i], hi[i])
         c2[i] = np.clip(c2[i], lo[i], hi[i])
     return c1, c2
-"""Complexity: 8, Description: 4手法(ランダム/グリッド/ベイズ/GA)の逆解析エンジン。GP+EI/PI/UCBの本格的ベイズ最適化とSBX交叉付きGA、range/maximize/minimizeの3目標モードをサポート。"""
+
+
+# ═══════════════════════════════════════════════════════════
+# 手法5: ディリクレ分布最適化（組成系 — 合計=1 制約）
+# ═══════════════════════════════════════════════════════════
+def _optimize_dirichlet(
+    objective: Callable,
+    search_cols: list[str],
+    bounds: dict[str, tuple[float, float]],
+    params: dict,
+    cb: Callable,
+) -> tuple[np.ndarray, int]:
+    """ディリクレ分布による組成系最適化。
+
+    組成(合計=1)制約のあるデータに特化した手法。
+    各イテレーションで上位候補の組成比からαパラメータを更新し、
+    サンプリング分布を有望領域に収束させる。
+
+    アルゴリズム:
+        1. 初期α = 均一 (全要素 1.0) でディリクレサンプリング
+        2. 候補を評価し、上位 top_k 件を選出
+        3. 上位候補の平均組成比 × concentration でαを更新
+        4. 更新αでディリクレサンプリング → 2 へ
+        5. n_rounds 回繰り返し
+
+    参考:
+        - Ferguson (1973) "A Bayesian Analysis of Some Nonparametric Problems"
+          原文: "The Dirichlet process is a measure on the space of
+                 probability distributions"
+          訳: ディリクレ過程は確率分布の空間上の測度である
+        - Minka (2000) "Estimating a Dirichlet distribution"
+          原文: "Given a set of observed count vectors, the distribution
+                 of proportions is modeled by a Dirichlet"
+          訳: 観測されたカウントベクトルの集合から、
+              比率の分布をディリクレ分布でモデル化する
+
+    method_params:
+        n_samples_per_round: 各ラウンドのサンプル数 (default: 500)
+        n_rounds: α更新回数 (default: 20)
+        top_k: α更新に使う上位候補数 (default: 50)
+        concentration: α集中度 (default: 10.0; 大きいほど収束が速い)
+        alpha_init: 初期α値 (default: None → 均一)
+        seed: 乱数シード (default: 42)
+        total_sum: 合計値 (default: 1.0; 例えばwt%なら100.0)
+        respect_bounds: boundsを尊重してリジェクション (default: True)
+    """
+    n_per_round = params.get("n_samples_per_round", 500)
+    n_rounds = params.get("n_rounds", 20)
+    top_k = params.get("top_k", 50)
+    concentration = params.get("concentration", 10.0)
+    seed = params.get("seed", 42)
+    total_sum = params.get("total_sum", 1.0)
+    respect_bounds = params.get("respect_bounds", True)
+    n_dim = len(search_cols)
+
+    rng = np.random.RandomState(seed)
+
+    # 初期α: 均一、またはユーザー指定
+    alpha_init = params.get("alpha_init", None)
+    if alpha_init is not None:
+        alpha = np.asarray(alpha_init, dtype=np.float64)
+        if len(alpha) != n_dim:
+            raise ValueError(
+                f"alpha_init の長さ({len(alpha)})が探索変数数({n_dim})と不一致"
+            )
+    else:
+        alpha = np.ones(n_dim, dtype=np.float64)
+
+    # bounds配列
+    lo_arr = np.array([bounds[col][0] for col in search_cols])
+    hi_arr = np.array([bounds[col][1] for col in search_cols])
+
+    all_candidates: list[np.ndarray] = []
+    n_eval = 0
+
+    cb(1, n_rounds + 1, f"ディリクレ最適化: α初期化 (dim={n_dim})")
+
+    for rnd in range(n_rounds):
+        cb(rnd + 1, n_rounds + 1,
+           f"ラウンド {rnd+1}/{n_rounds} (α_max={alpha.max():.2f})")
+
+        # ── ディリクレサンプリング ──
+        # リジェクションサンプリング付き（bounds制約）
+        valid_samples: list[np.ndarray] = []
+        max_attempts = n_per_round * 10  # 最大試行数
+        attempts = 0
+
+        while len(valid_samples) < n_per_round and attempts < max_attempts:
+            batch_size = min(n_per_round * 3, max_attempts - attempts)
+            raw = rng.dirichlet(alpha, size=batch_size)
+            raw *= total_sum  # 合計をtotal_sumに調整
+
+            if respect_bounds:
+                # bounds制約でフィルタ
+                mask = np.ones(batch_size, dtype=bool)
+                for j in range(n_dim):
+                    mask &= (raw[:, j] >= lo_arr[j]) & (raw[:, j] <= hi_arr[j])
+                valid = raw[mask]
+            else:
+                valid = raw
+
+            for row in valid:
+                if len(valid_samples) >= n_per_round:
+                    break
+                valid_samples.append(row)
+            attempts += batch_size
+
+        # bounds内に収まるサンプルが不足した場合、クリッピングで補充
+        if len(valid_samples) < n_per_round:
+            deficit = n_per_round - len(valid_samples)
+            logger.warning(
+                f"[Dirichlet] bounds内サンプル不足 ({len(valid_samples)}/{n_per_round})、"
+                f"{deficit}件をクリッピングで補充"
+            )
+            raw_extra = rng.dirichlet(alpha, size=deficit) * total_sum
+            for row in raw_extra:
+                clipped = np.clip(row, lo_arr, hi_arr)
+                # クリッピング後も合計をtotal_sumに正規化
+                s = clipped.sum()
+                if s > 0:
+                    clipped = clipped / s * total_sum
+                valid_samples.append(clipped)
+
+        X_round = np.array(valid_samples)
+
+        # ── 評価 ──
+        scores_round = objective(X_round)
+        n_eval += len(X_round)
+        all_candidates.append(X_round)
+
+        # ── α更新: 上位候補の平均組成比を反映 ──
+        actual_top_k = min(top_k, len(X_round))
+        top_indices = np.argsort(scores_round)[::-1][:actual_top_k]
+        top_samples = X_round[top_indices]
+
+        # 上位候補の正規化組成比を計算
+        top_normalized = top_samples / (top_samples.sum(axis=1, keepdims=True) + 1e-15)
+        mean_composition = top_normalized.mean(axis=0)
+
+        # αを更新: 平均組成比 × concentration
+        # 下限0.1を設定して完全に0にならないようにする（探索空間の縮小を防ぐ）
+        alpha = np.maximum(mean_composition * concentration, 0.1)
+
+        logger.debug(
+            f"[Dirichlet] Round {rnd+1}: "
+            f"best_score={scores_round.max():.6f}, "
+            f"α_range=[{alpha.min():.3f}, {alpha.max():.3f}]"
+        )
+
+    cb(n_rounds + 1, n_rounds + 1, "完了")
+
+    # 全ラウンドの候補を結合
+    X_all = np.vstack(all_candidates)
+    return X_all, n_eval
+"""Complexity: 9, Description: 5手法(ランダム/グリッド/ベイズ/GA/ディリクレ)の逆解析エンジン。GP+EI/PI/UCBの本格的ベイズ最適化、SBX交叉付きGA、ディリクレ分布α更新型組成最適化、range/maximize/minimizeの3目標モードをサポート。"""

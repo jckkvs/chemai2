@@ -368,51 +368,40 @@ def _get_cv_display_name(cv_key: str) -> str:
 
 
 def render_cv_config(state: dict) -> None:
-    """交差検証設定UIをレンダリングする。
+    """交差検証設定UIをインラインでレンダリングする。
 
-    メイン画面にはサマリーカード＋ダイアログ起動ボタンを表示。
-    詳細設定はダイアログ内に配置。
+    ダイアログではなく、expansion（折りたたみ）内に直接配置。
+    サマリーは常時表示。
     """
-    from frontend_nicegui.components.dialog_manager import (
-        create_settings_dialog,
-        render_settings_summary,
-    )
-
     cv_key = state.get("cv_key", "auto")
     cv_name = _get_cv_display_name(cv_key)
     folds = state.get("cv_folds", state.get("_cv_extra_params", {}).get("n_splits", 5))
     timeout = state.get("timeout", 300)
 
-    # サマリー行
-    summary = [f"方法: {cv_name}"]
-    if cv_key not in ("auto", "loo", "logo", "leave_one_out"):
-        summary.append(f"分割数: {folds}")
-    summary.append(f"タイムアウト: {timeout}秒")
+    with ui.card().classes("full-width q-pa-md q-mb-sm").style(
+        "border: 1px solid rgba(123,47,247,0.3); border-radius: 10px;"
+        "background: rgba(30,10,50,0.25);"
+    ):
+        # ── サマリーヘッダー（常時表示） ──
+        with ui.row().classes("items-center q-gutter-sm q-mb-xs"):
+            ui.icon("loop", color="purple").classes("text-h6")
+            ui.label("交差検証（CV）").classes("text-subtitle1 text-bold")
+            ui.badge(cv_name, color="cyan" if cv_key == "auto" else "teal").props("dense")
 
-    extra_params = state.get("_cv_extra_params", {})
-    if extra_params.get("shuffle") is True:
-        summary.append("シャッフル: ON")
-    elif extra_params.get("shuffle") is False:
-        summary.append("シャッフル: OFF")
+        with ui.row().classes("q-gutter-md text-caption text-grey q-mb-sm"):
+            ui.label(f"方法: {cv_name}")
+            if cv_key not in ("auto", "loo", "logo", "leave_one_out"):
+                ui.label(f"分割数: {folds}")
+            ui.label(f"タイムアウト: {timeout}秒")
+            extra_params = state.get("_cv_extra_params", {})
+            if extra_params.get("shuffle") is True:
+                ui.label("シャッフル: ON")
+            elif extra_params.get("shuffle") is False:
+                ui.label("シャッフル: OFF")
 
-    def _open_dialog():
-        dlg = create_settings_dialog(
-            title="🔄 交差検証（CV）設定",
-            icon="loop",
-            width="85vw",
-            max_width="900px",
-            content_builder=lambda: _render_cv_dialog_content(state),
-            state=state,
-            snapshot_keys=["cv_key", "cv_folds", "_cv_extra_params", "timeout"],
-        )
-        dlg.open()
+        # ── 展開で詳細設定（インライン） ──
+        with ui.expansion(
+            "⚙️ CV設定を展開", icon="settings",
+        ).classes("full-width").props("dense"):
+            _render_cv_dialog_content(state)
 
-    render_settings_summary(
-        icon="loop",
-        title="交差検証（CV）",
-        summary_lines=summary,
-        button_label="⚙️ CV設定を変更",
-        on_click=_open_dialog,
-        badge_text=cv_name,
-        badge_color="cyan" if cv_key == "auto" else "teal",
-    )

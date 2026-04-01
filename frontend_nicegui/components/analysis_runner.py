@@ -329,8 +329,15 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                 set_timer.deactivate()
                 break
             except Exception as set_ex:
-                logger.warning(f"セット「{set_name}」の解析エラー: {set_ex}")
+                import traceback as _tb
+                _tb_text = _tb.format_exc()
+                logger.warning(f"セット「{set_name}」の解析エラー: {set_ex}\n{_tb_text}")
                 all_results[set_name] = None
+                # UIにもエラー概要を表示
+                try:
+                    progress_label.text = f"⚠️ セット「{set_name}」でエラー: {str(set_ex)[:200]}"
+                except Exception:
+                    pass
             finally:
                 set_timer.deactivate()
 

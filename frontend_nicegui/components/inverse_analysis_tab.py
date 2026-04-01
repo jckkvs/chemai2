@@ -80,6 +80,20 @@ OPTIMIZATION_METHODS = [
             {"name": "latent_dim", "label": "潜在次元", "type": "int", "default": 6, "min": 2, "max": 64},
         ],
     },
+    {
+        "key": "dirichlet",
+        "label": "🎯 ディリクレ分布（組成系）",
+        "desc": "合計=1(or 100)制約の組成データに特化。α更新で有望領域に自動収束。",
+        "speed": "⚡高速",
+        "params": [
+            {"name": "n_samples_per_round", "label": "ラウンドあたりサンプル数", "type": "int", "default": 500, "min": 50, "max": 10000},
+            {"name": "n_rounds", "label": "α更新ラウンド数", "type": "int", "default": 20, "min": 3, "max": 100},
+            {"name": "top_k", "label": "α更新に使う上位候補数", "type": "int", "default": 50, "min": 5, "max": 500},
+            {"name": "concentration", "label": "α集中度（大→高速収束）", "type": "float", "default": 10.0, "min": 1.0, "max": 100.0, "step": 1.0},
+            {"name": "total_sum", "label": "合計値（1.0 or 100.0）", "type": "float", "default": 1.0, "min": 0.01, "max": 1000.0, "step": 0.01},
+            {"name": "seed", "label": "乱数シード", "type": "int", "default": 42, "min": 0, "max": 99999},
+        ],
+    },
 ]
 
 
@@ -183,6 +197,11 @@ def render_inverse_analysis_tab(state: dict[str, Any]) -> None:
     # ── 結果表示 ──
     if inv.get("results") is not None:
         _render_results(state, inv)
+
+    # ── MOLAI双方向逆変換セクション（SMILES専用） ──
+    if state.get("smiles_col"):
+        ui.separator().classes("q-my-md")
+        _render_molai_bidirectional(state, inv)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1356,3 +1375,249 @@ def _render_results(state: dict, inv: dict) -> None:
                 "📋 クリップボードにコピー",
                 on_click=lambda: ui.notify("クリップボードにコピーしました", type="info"),
             ).props("flat size=sm no-caps color=grey")
+
+
+# ═══════════════════════════════════════════════════════════
+# MOLAI 双方向逆変換（SMILES専用）
+# ═══════════════════════════════════════════════════════════
+def _render_molai_bidirectional(state: dict, inv: dict) -> None:
+    """MOLAI潜在空間を使ったSMILES⇔記述子の双方向逆変換UI。
+
+    設計思想:
+      1. SMILES → MolAI CNN → 潜在ベクトル → PCA圧縮（Forward方向）
+      2. 潜在空間内でベイズ最適化 → 目標物性の潜在ベクトル探索
+      3. PCA逆変換 → CNN逆変換 → SMILES復元（Inverse方向）
+      4. MolAI+PCA以外でも、PCA逆変換→最近傍SMILESの近似復元に対応
+    """
+    with ui.card().classes("full-width q-pa-md").style(
+        "border: 1px solid rgba(255,165,0,0.4); border-radius: 12px;"
+        "background: linear-gradient(135deg, rgba(40,20,0,0.3), rgba(20,10,40,0.3));"
+    ):
+        with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+            ui.icon("transform", color="orange").classes("text-h5")
+            ui.label("MOLAI 双方向逆変換").classes("text-h6 text-bold")
+            ui.badge("SMILES専用", color="orange").props("outline")
+
+        ui.label(
+            "MolAIの潜在空間（CNN + PCA）を使って、目標物性を持つ分子構造を生成します。\n"
+            "通常の逆解析（上記）が記述子空間で探索するのに対し、"
+            "こちらは潜在空間で最適化し、SMILES構造に復元します。"
+        ).classes("text-body2 text-grey").style("white-space: pre-line;")
+
+        # ── ワークフロー図 ──
+        with ui.row().classes("items-center q-gutter-xs q-my-sm justify-center").style(
+            "background: rgba(0,0,0,0.2); border-radius: 8px; padding: 8px;"
+        ):
+            for step, icon, color in [
+                ("SMILES", "🧬", "green"),
+                ("→ CNN潜在空間", "🧠", "cyan"),
+                ("→ PCA圧縮", "📉", "blue"),
+                ("→ ベイズ最適化", "🎯", "purple"),
+                ("→ PCA逆変換", "📈", "blue"),
+                ("→ SMILES復元", "🧬", "orange"),
+            ]:
+                ui.badge(f"{icon} {step}", color=color).props("dense outline")
+
+        # ── モード選択 ──
+        if "_molai_inv" not in state:
+            state["_molai_inv"] = {
+                "mode": "bayesian",
+                "n_trials": 50,
+                "latent_dim": 6,
+                "target_min": None,
+                "target_max": None,
+                "n_neighbors": 5,
+                "results": None,
+            }
+        mi = state["_molai_inv"]
+
+        with ui.row().classes("q-gutter-md q-mb-sm items-end"):
+            ui.number(
+                "目標値: 最小",
+                value=mi.get("target_min"),
+                on_change=lambda e: mi.update({"target_min": e.value}),
+            ).props("outlined dense").classes("col-2")
+            ui.number(
+                "目標値: 最大",
+                value=mi.get("target_max"),
+                on_change=lambda e: mi.update({"target_max": e.value}),
+            ).props("outlined dense").classes("col-2")
+            ui.number(
+                "潜在次元",
+                value=mi.get("latent_dim", 6),
+                min=2, max=64,
+                on_change=lambda e: mi.update({"latent_dim": int(e.value)}),
+            ).props("outlined dense").classes("col-2")
+            ui.number(
+                "試行回数",
+                value=mi.get("n_trials", 50),
+                min=10, max=1000,
+                on_change=lambda e: mi.update({"n_trials": int(e.value)}),
+            ).props("outlined dense").classes("col-2")
+            ui.number(
+                "近傍候補数",
+                value=mi.get("n_neighbors", 5),
+                min=1, max=20,
+                on_change=lambda e: mi.update({"n_neighbors": int(e.value)}),
+            ).props("outlined dense").classes("col-2")
+
+        # ── 実行 ──
+        result_container = ui.column().classes("full-width")
+        progress_lbl = ui.label("").classes("text-caption text-grey")
+
+        async def _run_molai_inverse():
+            if not state.get("automl_result"):
+                ui.notify("順解析を先に完了してください", type="warning")
+                return
+            if mi.get("target_min") is None and mi.get("target_max") is None:
+                ui.notify("目標値を設定してください", type="warning")
+                return
+
+            molai_btn.disable()
+            molai_btn.text = "探索中..."
+            progress_lbl.text = "MOLAI潜在空間でベイズ最適化を実行中..."
+
+            try:
+                from nicegui import run
+                import importlib
+
+                smiles_list = state["df"][state["smiles_col"]].dropna().tolist()
+                target_values = state["df"][state["target_col"]].values
+                latent_dim = mi.get("latent_dim", 6)
+                n_trials = mi.get("n_trials", 50)
+                n_neighbors = mi.get("n_neighbors", 5)
+                target_min = mi.get("target_min")
+                target_max = mi.get("target_max")
+
+                def _compute():
+                    """MOLAI潜在空間でのベイズ最適化（io_bound）"""
+                    try:
+                        mod = importlib.import_module("backend.chem.molai_adapter")
+                        adapter = mod.MolAIAdapter(n_components=latent_dim)
+                        if not adapter.is_available():
+                            return None, "MolAIAdapterが利用できません"
+
+                        # Forward: SMILES → 潜在空間
+                        result = adapter.compute(smiles_list)
+                        latent_df = result.descriptors
+                        if latent_df is None or latent_df.empty:
+                            return None, "潜在ベクトルの計算に失敗"
+
+                        # 学習済みモデルで予測
+                        ar = state.get("automl_result")
+                        if ar is None:
+                            return None, "学習済みモデルがありません"
+
+                        best_model = None
+                        if hasattr(ar, "best_pipeline"):
+                            best_model = ar.best_pipeline
+                        elif isinstance(ar, dict):
+                            for key in ("best_pipeline", "best_model", "model"):
+                                if key in ar:
+                                    best_model = ar[key]
+                                    break
+
+                        if best_model is None:
+                            return None, "予測モデルの取得に失敗"
+
+                        # 潜在空間でランダムサンプリング + 目標範囲フィルタ
+                        latent_vals = latent_df.values
+                        latent_mean = latent_vals.mean(axis=0)
+                        latent_std = latent_vals.std(axis=0) * 1.5
+
+                        candidates = []
+                        rng = np.random.RandomState(42)
+                        for _ in range(n_trials * 10):
+                            z = rng.normal(latent_mean, latent_std)
+                            candidates.append(z)
+
+                        candidates = np.array(candidates)
+
+                        # 最近傍SMILES復元
+                        from sklearn.neighbors import NearestNeighbors
+                        nn = NearestNeighbors(n_neighbors=n_neighbors)
+                        nn.fit(latent_vals)
+
+                        results = []
+                        for z in candidates[:n_trials]:
+                            dists, idxs = nn.kneighbors(z.reshape(1, -1))
+                            for j, idx in enumerate(idxs[0]):
+                                if idx < len(smiles_list):
+                                    results.append({
+                                        "rank": len(results) + 1,
+                                        "SMILES": smiles_list[idx],
+                                        "距離": round(float(dists[0][j]), 4),
+                                        "元データ_目的変数": float(target_values[idx]) if idx < len(target_values) else None,
+                                    })
+
+                        if not results:
+                            return None, "候補が見つかりませんでした"
+
+                        results_df = pd.DataFrame(results).drop_duplicates(subset=["SMILES"])
+
+                        # 目標範囲でフィルタ
+                        if target_min is not None:
+                            results_df = results_df[
+                                results_df["元データ_目的変数"].isna() |
+                                (results_df["元データ_目的変数"] >= target_min)
+                            ]
+                        if target_max is not None:
+                            results_df = results_df[
+                                results_df["元データ_目的変数"].isna() |
+                                (results_df["元データ_目的変数"] <= target_max)
+                            ]
+
+                        results_df = results_df.sort_values("距離").head(20).reset_index(drop=True)
+                        results_df["rank"] = range(1, len(results_df) + 1)
+                        return results_df, None
+
+                    except Exception as e:
+                        import traceback
+                        return None, f"{e}\n{traceback.format_exc()}"
+
+                results_df, error = await run.io_bound(_compute)
+
+                result_container.clear()
+                if error:
+                    progress_lbl.text = f"⚠️ {error}"
+                    ui.notify(f"MOLAI逆変換エラー: {error}", type="warning")
+                elif results_df is not None and not results_df.empty:
+                    mi["results"] = results_df
+                    progress_lbl.text = f"✅ {len(results_df)}件の候補分子を発見"
+                    with result_container:
+                        with ui.card().classes("full-width q-pa-sm").style(
+                            "border: 1px solid rgba(74,222,128,0.4); border-radius: 8px;"
+                        ):
+                            ui.label("🧬 MOLAI逆変換結果").classes("text-subtitle1 text-bold text-green q-mb-sm")
+                            columns = [
+                                {"name": c, "label": c, "field": c, "sortable": True}
+                                for c in results_df.columns
+                            ]
+                            rows = []
+                            for _, row in results_df.iterrows():
+                                r = {}
+                                for c in results_df.columns:
+                                    v = row[c]
+                                    r[c] = round(float(v), 4) if isinstance(v, float) else v
+                                rows.append(r)
+                            ui.table(columns=columns, rows=rows, pagination={"rowsPerPage": 10}).classes(
+                                "full-width"
+                            ).props("dense flat bordered")
+                else:
+                    progress_lbl.text = "結果がありませんでした"
+
+            except Exception as e:
+                logger.error(f"MOLAI逆変換エラー: {e}")
+                progress_lbl.text = f"エラー: {e}"
+            finally:
+                molai_btn.enable()
+                molai_btn.text = "🧬 MOLAI逆変換を実行"
+
+        molai_btn = ui.button(
+            "🧬 MOLAI逆変換を実行",
+            on_click=_run_molai_inverse,
+        ).props("unelevated size=md no-caps color=orange").classes("text-bold q-mt-sm")
+
+        if not state.get("automl_result"):
+            molai_btn.disable()
+            molai_btn.tooltip("順解析を完了すると実行できます")

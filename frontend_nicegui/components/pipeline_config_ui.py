@@ -545,16 +545,11 @@ def _render_combo_summary(state: dict) -> None:
 # ═══════════════════════════════════════════════════════════
 
 def render_pipeline_config(state: dict) -> None:
-    """パイプライン全設定UIをレンダリングする。
+    """パイプライン全設定UIをインラインでレンダリングする。
 
-    メイン画面にはサマリーカード＋ダイアログ起動ボタンを表示。
-    7ステップの詳細設定はダイアログ内に配置。
+    ダイアログではなく、expansion（折りたたみ）内に直接配置。
+    サマリーは常時表示され、展開すると7ステップの設定が見える。
     """
-    from frontend_nicegui.components.dialog_manager import (
-        create_settings_dialog,
-        render_settings_summary,
-    )
-
     # 組み合わせ数計算
     n_imp = max(1, len(state.get("_pg_num_imputers", ["mean"])))
     n_scl = max(1, len(state.get("_pg_num_scalers", ["standard"])))
@@ -577,83 +572,109 @@ def render_pipeline_config(state: dict) -> None:
         status_text = "🔴 多すぎ"
         status_color = "red"
 
-    # サマリー行
-    summary = [
-        f"🔢 評価パイプライン数: {n_total:,} 通り ({status_text})",
-        f"数値: imp×{n_imp} scl×{n_scl} / カテゴリ: enc×{n_le} / 特徴: eng×{n_eng} sel×{n_sel}",
-        f"推定器: {n_est}個選択",
-    ]
-    excl = state.get("exclude_cols", [])
-    if excl:
-        summary.append(f"除外列: {len(excl)}個")
+    with ui.card().classes("full-width q-pa-md q-mb-sm").style(
+        "border: 1px solid rgba(0,188,212,0.3); border-radius: 10px;"
+        "background: rgba(0,20,40,0.25);"
+    ):
+        # ── サマリーヘッダー（常時表示） ──
+        with ui.row().classes("items-center q-gutter-sm q-mb-xs"):
+            ui.icon("tune", color="cyan").classes("text-h6")
+            ui.label("Pipeline 全設定").classes("text-subtitle1 text-bold")
+            ui.badge(f"{n_total:,}通り", color=status_color).props("dense")
 
-    def _build_dialog_content():
-        ui.label(
-            "ステップをタブで切替え → 各ステップでアルゴリズムを選択。"
-            "複数選択した場合は全組み合わせを自動評価。"
-        ).classes("text-caption text-grey q-mb-sm")
+        with ui.row().classes("q-gutter-md text-caption text-grey q-mb-sm"):
+            ui.label(f"数値: imp×{n_imp} scl×{n_scl}")
+            ui.label(f"カテゴリ: enc×{n_le}")
+            ui.label(f"特徴: eng×{n_eng} sel×{n_sel}")
+            ui.label(f"推定器: {n_est}個")
+            excl = state.get("exclude_cols", [])
+            if excl:
+                ui.label(f"除外列: {len(excl)}個")
 
-        # 7ステップタブ
-        with ui.tabs().classes("full-width").props(
-            "dense no-caps active-color=cyan indicator-color=cyan"
-        ) as pg_tabs:
-            ui.tab("pg_excl", label="🚫 除外")
-            ui.tab("pg_num", label="🔢 数値")
-            ui.tab("pg_cat", label="🏷️ カテゴリ")
-            ui.tab("pg_bin", label="⚡ バイナリ")
-            ui.tab("pg_eng", label="🔧 特徴生成")
-            ui.tab("pg_sel", label="🎯 特徴選択")
-            ui.tab("pg_est", label="🤖 推定器")
+        # ── 展開で詳細設定（インライン） ──
+        with ui.expansion(
+            "⚙️ 設定を展開", icon="settings",
+        ).classes("full-width").props("dense"):
+            ui.label(
+                "ステップをタブで切替え → 各ステップでアルゴリズムを選択。"
+                "複数選択した場合は全組み合わせを自動評価。"
+            ).classes("text-caption text-grey q-mb-sm")
 
-        with ui.tab_panels(pg_tabs, value="pg_excl").classes("full-width"):
-            with ui.tab_panel("pg_excl"):
-                _tab_excluder(state)
-            with ui.tab_panel("pg_num"):
-                _tab_numeric(state)
-            with ui.tab_panel("pg_cat"):
-                _tab_categorical(state)
-            with ui.tab_panel("pg_bin"):
-                _tab_binary(state)
-            with ui.tab_panel("pg_eng"):
-                _tab_engineer(state)
-            with ui.tab_panel("pg_sel"):
-                _tab_selector(state)
-            with ui.tab_panel("pg_est"):
-                _tab_estimator(state)
+            with ui.tabs().classes("full-width").props(
+                "dense no-caps active-color=cyan indicator-color=cyan"
+            ) as pg_tabs:
+                ui.tab("pg_excl", label="🚫 除外")
+                ui.tab("pg_num", label="🔢 数値")
+                ui.tab("pg_cat", label="🏷️ カテゴリ")
+                ui.tab("pg_bin", label="⚡ バイナリ")
+                ui.tab("pg_eng", label="🔧 特徴生成")
+                ui.tab("pg_sel", label="🎯 特徴選択")
+                ui.tab("pg_est", label="🤖 推定器")
 
-        # 組み合わせ数サマリー
+            with ui.tab_panels(pg_tabs, value="pg_excl").classes("full-width"):
+                with ui.tab_panel("pg_excl"):
+                    _tab_excluder(state)
+                with ui.tab_panel("pg_num"):
+                    _tab_numeric(state)
+                with ui.tab_panel("pg_cat"):
+                    _tab_categorical(state)
+                with ui.tab_panel("pg_bin"):
+                    _tab_binary(state)
+                with ui.tab_panel("pg_eng"):
+                    _tab_engineer(state)
+                with ui.tab_panel("pg_sel"):
+                    _tab_selector(state)
+                with ui.tab_panel("pg_est"):
+                    _tab_estimator(state)
+
+            ui.separator().classes("q-my-sm")
+            _render_combo_summary(state)
+
+        # ── 逆解析連携オプション（パイプライン設定内） ──
         ui.separator().classes("q-my-sm")
-        _render_combo_summary(state)
+        _render_inverse_link(state)
 
-    def _open_dialog():
-        snapshot_keys = [
-            "exclude_cols",
-            "_pg_num_imputers", "_pg_num_scalers",
-            "_pg_cat_imputers", "_pg_low_encoders", "_pg_high_encoders",
-            "_pg_bin_imputers", "_pg_bin_encoders",
-            "_pg_engineer", "_pg_poly_degree", "_pg_poly_ia",
-            "_pg_selectors", "_pg_lasso_alpha", "_pg_lasso_mi",
-            "_pg_kbest_k", "_pg_kbest_sf",
-            "_pg_boruta_n", "_pg_boruta_mi",
-            "selected_models",
-        ]
-        dlg = create_settings_dialog(
-            title="⚙️ Pipeline 全設定（STEP 0〜6）",
-            icon="tune",
-            width="90vw",
-            max_width="1100px",
-            content_builder=_build_dialog_content,
-            state=state,
-            snapshot_keys=snapshot_keys,
-        )
-        dlg.open()
 
-    render_settings_summary(
-        icon="tune",
-        title="Pipeline 全設定",
-        summary_lines=summary,
-        button_label="⚙️ パイプライン設定を変更",
-        on_click=_open_dialog,
-        badge_text=f"{n_total:,}通り",
-        badge_color=status_color,
-    )
+def _render_inverse_link(state: dict) -> None:
+    """順解析実行時に逆解析も自動実行するオプション。"""
+    with ui.card().classes("full-width q-pa-sm").style(
+        "border: 1px solid rgba(156,39,176,0.3); border-radius: 8px;"
+        "background: rgba(30,0,40,0.25);"
+    ):
+        with ui.row().classes("items-center q-gutter-sm"):
+            ui.icon("find_replace", color="purple").classes("text-h6")
+            ui.label("逆解析との連携").classes("text-subtitle2 text-bold")
+
+        with ui.row().classes("items-center q-gutter-md q-mt-xs"):
+            auto_inv = ui.switch(
+                "順解析完了後に逆解析も自動実行",
+                value=state.get("auto_run_inverse", False),
+            ).props("color=purple")
+
+            def _on_auto_inv(e):
+                state["auto_run_inverse"] = e.value
+                if e.value:
+                    ui.notify("✅ 順解析完了後に逆解析タブの設定で自動実行します", type="info")
+
+            auto_inv.on_value_change(_on_auto_inv)
+
+        ui.label(
+            "有効にすると順解析完了後、逆解析タブで設定済みの条件で自動実行します。"
+            "先に「🔮 逆解析」タブで目標値と制約を設定してください。"
+        ).classes("text-caption text-grey q-mt-xs")
+
+        # 逆解析の設定状態サマリー
+        inv = state.get("_inv", {})
+        has_target = inv.get("target_min") is not None or inv.get("target_max") is not None
+        n_constraints = len([c for c in inv.get("constraints", {}).values() if c.get("active")])
+        method = inv.get("method", "random")
+
+        method_labels = {
+            "random": "🎲 ランダム", "grid": "📐 グリッド", "bayesian": "🧠 ベイズ",
+            "ga": "🧬 GA", "molai": "🧪 MOLAI", "dirichlet": "🎯 ディリクレ",
+        }
+
+        with ui.row().classes("q-gutter-sm text-caption text-grey q-mt-xs"):
+            ui.label(f"目標: {'✅ 設定済み' if has_target else '❌ 未設定'}")
+            ui.label(f"制約: {n_constraints}変数")
+            ui.label(f"手法: {method_labels.get(method, method)}")
