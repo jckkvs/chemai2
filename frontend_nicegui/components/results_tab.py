@@ -157,6 +157,49 @@ def _render_single_result(ar, state: dict) -> None:
                 'outline color=cyan size=sm no-caps icon=download data-testid="export-csv-btn" aria-label="結果CSVをダウンロード"'
             ).tooltip("モデル比較表 + OOF予測値をCSVダウンロード")
 
+            # ── タスク3-2: 逆解析CTAボタン ──
+            def _go_inverse():
+                """逆解析タブに遷移し、最良モデルを自動設定する。"""
+                # 逆解析設定にモデル情報を事前セット
+                if "_inv" not in state:
+                    state["_inv"] = {
+                        "target_mode": "range",
+                        "target_min": None,
+                        "target_max": None,
+                        "constraints": {},
+                        "method": "random",
+                        "method_params": {},
+                        "results": None,
+                    }
+                best_key = ar.best_model_key if hasattr(ar, "best_model_key") else None
+                if best_key:
+                    state["_inv"]["selected_model"] = best_key
+                # タブ遷移
+                switch_fn = state.get("_switch_to_inverse")
+                if switch_fn:
+                    switch_fn()
+                    # 逆解析タブを再描画して最新モデル情報を反映
+                    refresh_inv = state.get("_refresh_inverse")
+                    if refresh_inv:
+                        try:
+                            refresh_inv()
+                        except Exception:
+                            pass
+                    ui.notify(
+                        f"🔮 {best_key} で逆解析を設定できます",
+                        type="info", timeout=3000,
+                    )
+                else:
+                    ui.notify("🔮 逆解析タブに移動してください", type="info")
+
+            ui.button("🔮 このモデルで逆解析", on_click=_go_inverse).props(
+                'unelevated color=purple size=sm no-caps icon=find_replace '
+                'data-testid="inverse-cta-btn" aria-label="逆解析を開始"'
+            ).tooltip(
+                f"{ar.best_model_key} の学習済みモデルを使って、"
+                "目標物性を持つ最適な説明変数値を探索します"
+            ).classes("text-bold")
+
     # ── 警告 ──
     if ar.warnings:
         with ui.expansion(f"⚠️ 警告 ({len(ar.warnings)}件)", icon="warning").classes("full-width q-mb-md animate-shake"):
@@ -166,6 +209,7 @@ def _render_single_result(ar, state: dict) -> None:
     # ── 結果サブタブ ──
     with ui.tabs().classes("full-width").props('dense active-color=cyan indicator-color=cyan data-testid="results-tabs"') as res_tabs:
         tab_eval = ui.tab("eval", label="📈 モデル評価", icon="leaderboard").props('data-testid="tab-eval"')
+        tab_tuning = ui.tab("tuning", label="🎯 チューニング", icon="tune").props('data-testid="tab-tuning"')
         tab_data = ui.tab("data", label="📊 前処理後データ", icon="table_chart").props('data-testid="tab-data"')
         tab_interp = ui.tab("interp", label="🔬 モデル解釈性", icon="psychology").props('data-testid="tab-interp"')
         tab_batch = ui.tab("batch", label="🔮 バッチ予測", icon="batch_prediction").props('data-testid="tab-batch"')
@@ -178,6 +222,13 @@ def _render_single_result(ar, state: dict) -> None:
         # ════════════════════════════════════════════════════
         with ui.tab_panel(tab_eval):
             _render_model_evaluation(ar)
+
+        # ════════════════════════════════════════════════════
+        # サブタブ: チューニング
+        # ════════════════════════════════════════════════════
+        with ui.tab_panel(tab_tuning):
+            from frontend_nicegui.components.tuning_tab import render_tuning_tab
+            render_tuning_tab(state)
 
         # ════════════════════════════════════════════════════
         # サブタブ: 前処理後データ

@@ -596,7 +596,18 @@ def _extract_docstring_params(cls: type) -> dict[str, str]:
     """
     クラスのdocstringからパラメータ説明を抽出する。
 
-    numpydoc / Google style / reStructuredText を簡易パースする。
+    numpydoc / Google style / reStructuredText を解析する。
+
+    numpydocの構造:
+        Parameters
+        ----------
+        param_name : type_info, default=value
+            Description line 1.
+            Description line 2.
+
+    Returns:
+        {param_name: "Description line 1. Description line 2."}
+        （型情報は含まない）
     """
     doc = cls.__doc__ or ""
     init_doc = getattr(cls.__init__, "__doc__", "") or ""
@@ -604,32 +615,68 @@ def _extract_docstring_params(cls: type) -> dict[str, str]:
 
     descriptions: dict[str, str] = {}
     lines = full_doc.split("\n")
-    current_param = None
-    current_desc = []
+    current_param: str | None = None
+    current_desc: list[str] = []
 
-    for line in lines:
+    in_parameters_section = False
+    prev_line_was_dashes = False
+
+    for i, line in enumerate(lines):
         stripped = line.strip()
+        raw_indent = len(line) - len(line.lstrip()) if line.strip() else 0
 
-        # numpydoc style: "param_name : type"
-        # Google style: "param_name (type): description"
-        # reStructuredText: ":param param_name:"
-        if ":" in stripped and not stripped.startswith(":"):
+        # "Parameters" セクションの検出
+        if stripped in ("Parameters", "Attributes", "Keyword Arguments"):
+            in_parameters_section = True
+            continue
+
+        # "----------" セパレータの検出
+        if stripped and all(c == "-" for c in stripped) and len(stripped) >= 3:
+            prev_line_was_dashes = True
+            continue
+        else:
+            prev_line_was_dashes = False
+
+        # 他のセクション（Returns, Notes等）に入ったら終了
+        if (
+            stripped in ("Returns", "Yields", "Raises", "Notes", "References",
+                         "See Also", "Examples", "Warnings", "Methods")
+            and i + 1 < len(lines)
+            and lines[i + 1].strip().startswith("---")
+        ):
+            if current_param and current_desc:
+                descriptions[current_param] = " ".join(current_desc).strip()
+            current_param = None
+            current_desc = []
+            in_parameters_section = False
+            continue
+
+        # numpydoc style: "param_name : type_info"
+        # 条件: コロンの前が短い英数字+下線の文字列、インデントが4スペース
+        if ":" in stripped and not stripped.startswith(":") and not stripped.startswith(".."):
             parts = stripped.split(":", 1)
             candidate = parts[0].strip().split("(")[0].strip()
-            # パラメータ名として妥当か（英数字+下線、短い）
+
+            # パラメータ名として妥当か
             if (
                 candidate
                 and candidate.replace("_", "").isalnum()
                 and len(candidate) < 40
                 and not candidate[0].isupper()
+                and not candidate.startswith("{")
+                and raw_indent <= 8
             ):
+                # 前のパラメータを保存
                 if current_param and current_desc:
                     descriptions[current_param] = " ".join(current_desc).strip()
+
                 current_param = candidate
-                desc_part = parts[1].strip() if len(parts) > 1 else ""
-                current_desc = [desc_part] if desc_part else []
+                # numpydoc: コロンの後ろは型情報なので説明文に含めない
+                # 説明文は次行（インデントが深い行）から始まる
+                current_desc = []
                 continue
 
+        # reStructuredText: ":param param_name:"
         if stripped.startswith(":param "):
             param_part = stripped[7:]
             if ":" in param_part:
@@ -642,9 +689,25 @@ def _extract_docstring_params(cls: type) -> dict[str, str]:
                 current_desc = [pdesc] if pdesc else []
                 continue
 
-        # 続きの行
-        if current_param and stripped and not stripped.startswith("-"):
-            current_desc.append(stripped)
+        # 続きの説明行（インデントが深い行）
+        if current_param and stripped:
+            # セクション区切り行でない限り追加
+            if not (all(c == "-" for c in stripped) and len(stripped) >= 3):
+                # .. note:: 等のディレクティブは含めても良い
+                # versionchanged, versionadded, deprecated は含めない
+                if stripped.startswith(".. versionchanged") or \
+                   stripped.startswith(".. versionadded") or \
+                   stripped.startswith(".. deprecated"):
+                    continue
+                current_desc.append(stripped)
+
+        # 空行でパラメータの説明が途切れる場合（空行2連続は段落区切り）
+        if not stripped and current_param and current_desc:
+            # 次行がインデント付きなら同じパラメータの続き
+            if i + 1 < len(lines) and lines[i + 1].strip():
+                next_indent = len(lines[i + 1]) - len(lines[i + 1].lstrip())
+                if next_indent >= 8:
+                    continue  # 同じパラメータの続き
 
     if current_param and current_desc:
         descriptions[current_param] = " ".join(current_desc).strip()

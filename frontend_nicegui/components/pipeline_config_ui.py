@@ -34,6 +34,120 @@ def _glass_card():
 
 
 # ═══════════════════════════════════════════════════════════
+# モデル分類
+# ═══════════════════════════════════════════════════════════
+
+_MODEL_CATEGORIES = [
+    ("📐 線形系", "linear_scale"),
+    ("🌲 決定木/アンサンブル", "park"),
+    ("🔮 カーネル系", "blur_on"),
+    ("🧩 その他", "extension"),
+]
+
+
+def _classify_model(m: dict) -> str:
+    """モデル辞書からカテゴリ名を判定する。
+
+    分類優先順位:
+    1. カーネル系を先に判定（SVR linear等はkernelを使うため）
+    2. 決定木系（LinearTree/LinearForestを含む）
+    3. 線形系（TheilSen等含む）
+    4. その他（KNN, MLP, RANSAC等）
+    """
+    k = (m.get("key", "") + m.get("name", "")).lower()
+
+    # カーネル系: SVR, SVC, GPR, KernelRidge（SVR linearも含む）
+    if any(x in k for x in ["svr", "svc", "gpr", "gaussian", "kernel_ridge", "kernelridge"]):
+        return "🔮 カーネル系"
+
+    # 決定木/アンサンブル: tree, forest, boost, gbm, bagging 等
+    # LinearTree, LinearForest も木系に含む
+    if any(x in k for x in [
+        "tree", "forest", "boost", "gbm", "gradient", "rgf",
+        "figs", "rule", "hist", "catboost", "lineartree", "linearforest",
+        "linear_tree", "linear_forest", "bagging",
+    ]):
+        return "🌲 決定木/アンサンブル"
+
+    # 線形系: Ridge, Lasso, ElasticNet, TheilSen, ARD, Huber, PLS, Bayesian 等
+    if any(x in k for x in [
+        "ridge", "lasso", "elastic", "logistic", "ard", "huber",
+        "pls", "bayesian", "theilsen", "theil", "linear",
+    ]):
+        return "📐 線形系"
+
+    # その他: KNN, MLP, RANSAC 等
+    return "🧩 その他"
+
+
+# モデルメタデータ: 短縮名 / 計算量 / ライブラリ
+# key → (short_name, complexity, library)
+_MODEL_META: dict[str, tuple[str, str, str]] = {
+    # ─── 線形系 ───
+    "linear":       ("OLS",          "O(nd²)",        "sklearn"),
+    "ridge":        ("Ridge",        "O(nd²)",        "sklearn"),
+    "ridge_cv":     ("RidgeCV",      "O(nd²·k)",      "sklearn"),
+    "lasso":        ("Lasso",        "O(nd)",         "sklearn"),
+    "lasso_cv":     ("LassoCV",      "O(nd·k)",       "sklearn"),
+    "elasticnet":   ("EN",           "O(nd)",         "sklearn"),
+    "elasticnet_cv":("EN-CV",        "O(nd·k)",       "sklearn"),
+    "bayesian_ridge":("BayesRidge",  "O(nd²)",        "sklearn"),
+    "ard":          ("ARD",          "O(nd²)",        "sklearn"),
+    "huber":        ("Huber",        "O(nd)",         "sklearn"),
+    "theilsen":     ("TheilSen",     "O(n²d)",        "sklearn"),
+    "pls":          ("PLS",          "O(ndk)",        "sklearn"),
+    "logistic":     ("Logistic",     "O(nd)",         "sklearn"),
+    # ─── 決定木/アンサンブル ───
+    "dt":           ("DT",           "O(nd·log n)",   "sklearn"),
+    "rf":           ("RF",           "O(T·nd·log n)", "sklearn"),
+    "et":           ("ExtraTrees",   "O(T·nd)",       "sklearn"),
+    "gbm":          ("GBM",          "O(T·nd·log n)", "sklearn"),
+    "hgbm":         ("HistGBM",      "O(T·n·log n)",  "sklearn"),
+    "xgb":          ("XGBoost",      "O(T·nd·log n)", "xgboost"),
+    "lgbm":         ("LightGBM",     "O(T·n·log n)",  "lightgbm"),
+    "catboost":     ("CatBoost",     "O(T·nd)",       "catboost"),
+    "xgbrf":        ("XGB-RF",       "O(T·nd·log n)", "xgboost"),
+    "adaboost":     ("AdaBoost",     "O(T·nd)",       "sklearn"),
+    "bagging":      ("Bagging",      "O(T·nd·log n)", "sklearn"),
+    "lineartree":   ("LinearTree",   "O(nd²·log n)",  "scratch"),
+    "linearforest": ("LinForest",    "O(T·nd²)",      "scratch"),
+    "linearboost":  ("LinBoost",     "O(T·nd²)",      "scratch"),
+    "ridgetree":    ("RidgeTree",    "O(nd²·log n)",  "scratch"),
+    "rgf":          ("RGF",          "O(n·d·T)",      "scratch"),
+    "figs":         ("FIGS",         "O(nd·R)",       "imodels"),
+    "hstree":       ("HS-Tree",      "O(nd·log n)",   "imodels"),
+    "rulefit":      ("RuleFit",      "O(nd·R)",       "imodels"),
+    "greedytree":   ("GreedyTree",   "O(nd·log n)",   "imodels"),
+    # ─── カーネル系 ───
+    "svr_rbf":      ("SVR-RBF",      "O(n²d~n³)",     "sklearn"),
+    "svr_linear":   ("SVR-Lin",      "O(n²d)",        "sklearn"),
+    "gp":           ("GPR",          "O(n³)",         "sklearn"),
+    "svc_rbf":      ("SVC-RBF",      "O(n²d~n³)",     "sklearn"),
+    "linearsvc":    ("LinearSVC",    "O(nd)",         "sklearn"),
+    # ─── その他 ───
+    "knn":          ("KNN",          "O(nd)予測時",    "sklearn"),
+    "knn_c":        ("KNN",          "O(nd)予測時",    "sklearn"),
+    "mlp":          ("MLP",          "O(n·d·h·e)",    "sklearn"),
+    "mlp_c":        ("MLP",          "O(n·d·h·e)",    "sklearn"),
+    "ransac":       ("RANSAC",       "O(k·n·d)",      "sklearn"),
+}
+
+
+def _get_model_meta(key: str) -> tuple[str, str, str]:
+    """モデルキーからメタデータを取得。未登録の場合はデフォルト値。"""
+    return _MODEL_META.get(key, (key, "不明", "?"))
+
+
+def _categorize_models(available: list[dict]) -> dict[str, list]:
+    """モデルリストをカテゴリ辞書に分類する。factory.pyの登録順を維持。"""
+    categories: dict[str, list] = {name: [] for name, _ in _MODEL_CATEGORIES}
+    for m in available:
+        cat = _classify_model(m)
+        categories[cat].append(m)
+    return categories
+
+
+# ═══════════════════════════════════════════════════════════
 # Tab 0: Excluder
 # ═══════════════════════════════════════════════════════════
 
@@ -436,7 +550,7 @@ def _tab_estimator(state: dict) -> None:
     task = state.get("task_type", "regression")
     is_reg = task == "regression"
     _section("🤖", f"Estimator（{'回帰' if is_reg else '分類'}）",
-             "使用するモデルを選択。factory.py から自動検出。")
+             "使用するモデルを選択。⚙️ で各モデルのパラメータ・Grid/Optuna探索範囲を設定。")
 
     try:
         from backend.models.factory import list_models, get_default_automl_models
@@ -446,20 +560,12 @@ def _tab_estimator(state: dict) -> None:
         ui.label(f"⚠️ モデル一覧取得エラー: {ex}").classes("text-caption text-red")
         return
 
-    # カテゴリ分類
-    categories: dict[str, list] = {
-        "📐 線形系": [],
-        "🌲 決定木/アンサンブル": [],
-        "⚙️ カーネル/その他": [],
-    }
-    for m in available:
-        k = (m["key"] + m["name"]).lower()
-        if any(x in k for x in ["linear", "ridge", "lasso", "elastic", "logistic", "ard", "huber", "pls", "bayesian"]):
-            categories["📐 線形系"].append(m)
-        elif any(x in k for x in ["tree", "forest", "boost", "gbm", "gradient", "rgf", "figs", "rule", "hist", "catboost"]):
-            categories["🌲 決定木/アンサンブル"].append(m)
-        else:
-            categories["⚙️ カーネル/その他"].append(m)
+    # model_configs 初期化
+    if "model_configs" not in state:
+        state["model_configs"] = {}
+
+    # カテゴリ分類（共通関数使用）
+    categories = _categorize_models(available)
 
     selected_models = state.get("selected_models", [])
     if not selected_models:
@@ -488,6 +594,8 @@ def _tab_estimator(state: dict) -> None:
         ).classes("full-width q-mb-xs").props("dense"):
             for m in models:
                 mkey = m["key"]
+                mname = m["name"]
+                mcls = m.get("class")
                 is_checked = mkey in selected_models
 
                 def _toggle(e, key=mkey):
@@ -501,11 +609,36 @@ def _tab_estimator(state: dict) -> None:
 
                 with ui.row().classes("items-center q-gutter-xs"):
                     ui.checkbox(
-                        m["name"], value=is_checked,
+                        mname, value=is_checked,
                         on_change=_toggle,
                     )
                     if mkey in defaults:
                         ui.badge("推奨", color="teal").props("dense").style("font-size: 0.78rem;")
+
+                    # ⚙️ パラメータ設定ボタン（estimatorクラスがある場合のみ）
+                    if mcls is not None:
+                        def _open_config(key=mkey, name=mname, cls=mcls):
+                            from frontend_nicegui.components.estimator_config_dialog import (
+                                EstimatorConfigDialog,
+                            )
+                            existing = state["model_configs"].get(key)
+                            dialog = EstimatorConfigDialog(
+                                model_key=key,
+                                model_cls=cls,
+                                model_name=name,
+                                initial_config=existing,
+                                on_save=lambda cfg, k=key: state["model_configs"].update({k: cfg}),
+                            )
+                            dialog.open()
+
+                        btn = ui.button(
+                            icon="tune", on_click=_open_config,
+                        ).props("flat dense round size=xs color=cyan")
+                        btn.tooltip(f"{mname}: デフォルト値 / GridSearch / Optuna 探索範囲を設定")
+
+                    # 設定済みバッジ
+                    if mkey in state.get("model_configs", {}):
+                        ui.badge("⚙設定済", color="amber").props("outline dense").style("font-size:0.68rem;")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -547,9 +680,204 @@ def _render_combo_summary(state: dict) -> None:
 def render_pipeline_config(state: dict) -> None:
     """パイプライン全設定UIをインラインでレンダリングする。
 
-    ダイアログではなく、expansion（折りたたみ）内に直接配置。
-    サマリーは常時表示され、展開すると7ステップの設定が見える。
+    【UI設計方針】
+    - 推定器選択 = 最上段・常時表示・大面積・1クリック選択
+    - 前処理設定 = 折りたたみ内・コンパクト・目立たない
     """
+    task = state.get("task_type", "regression")
+    is_reg = task == "regression"
+
+    try:
+        from backend.models.factory import list_models, get_default_automl_models
+        available = list_models(task=task, available_only=True)
+        defaults = get_default_automl_models(task=task)
+    except Exception as ex:
+        ui.label(f"⚠️ モデル一覧取得エラー: {ex}").classes("text-caption text-red")
+        return
+
+    if "model_configs" not in state:
+        state["model_configs"] = {}
+
+    # カテゴリ分類（共通関数使用）
+    categories = _categorize_models(available)
+    cat_icons = {name: icon for name, icon in _MODEL_CATEGORIES}
+
+    selected_models = state.get("selected_models", [])
+    if not selected_models:
+        selected_models = list(defaults)
+        state["selected_models"] = selected_models
+
+    # ═══════════════════════════════════════════════════════
+    # 🤖 推定器セレクター（トップレベル・最大面積・常時表示）
+    # ═══════════════════════════════════════════════════════
+    with ui.card().classes("full-width q-pa-md q-mb-sm").style(
+        "border: 2px solid rgba(0,188,212,0.4); border-radius: 12px;"
+        "background: linear-gradient(135deg, rgba(0,30,60,0.4), rgba(0,20,50,0.3));"
+    ):
+        # ヘッダー行
+        with ui.row().classes("items-center justify-between full-width q-mb-sm"):
+            with ui.row().classes("items-center q-gutter-sm"):
+                ui.icon("smart_toy", color="cyan", size="md")
+                ui.label(f"🤖 推定器セレクター（{'回帰' if is_reg else '分類'}）").classes(
+                    "text-h6 text-bold"
+                )
+            with ui.row().classes("q-gutter-xs"):
+                n_sel = len(selected_models)
+                n_all = len(available)
+                ui.badge(f"{n_sel}/{n_all} 選択中", color="cyan").props("dense")
+
+        # 一括操作ボタン
+        with ui.row().classes("q-gutter-xs q-mb-md"):
+            def _select_all():
+                all_keys = [m["key"] for m in available]
+                state["selected_models"] = all_keys
+                ui.navigate.reload()
+            def _select_defaults():
+                state["selected_models"] = list(defaults)
+                ui.navigate.reload()
+            def _select_none():
+                state["selected_models"] = []
+                ui.navigate.reload()
+
+            ui.button("✅ 全選択", on_click=_select_all).props(
+                "outline color=cyan size=sm no-caps"
+            ).style("border-radius: 20px;")
+            ui.button("⭐ 推奨のみ", on_click=_select_defaults).props(
+                "outline color=teal size=sm no-caps"
+            ).style("border-radius: 20px;")
+            ui.button("🚫 全解除", on_click=_select_none).props(
+                "outline color=grey size=sm no-caps"
+            ).style("border-radius: 20px;")
+
+        # カテゴリごとのチップグリッド（展開不要・即クリック）
+        for cat_name, models in categories.items():
+            if not models:
+                continue
+            n_cat_sel = sum(1 for m in models if m["key"] in selected_models)
+            icon = cat_icons.get(cat_name, "")
+
+            with ui.row().classes("items-center q-gutter-xs q-mb-xs"):
+                ui.icon(icon, color="cyan-4", size="xs")
+                ui.label(cat_name).classes("text-body2 text-bold text-cyan-3")
+                ui.badge(f"{n_cat_sel}/{len(models)}").props("dense").style(
+                    "font-size:0.7rem;"
+                )
+
+            with ui.row().classes("q-gutter-xs q-mb-sm flex-wrap"):
+                for m in models:
+                    mkey = m["key"]
+                    mname = m["name"]  # フルネーム（tooltip用）
+                    mcls = m.get("class")
+                    is_on = mkey in selected_models
+                    is_default = mkey in defaults
+                    has_config = mkey in state.get("model_configs", {})
+                    short, complexity, lib = _get_model_meta(mkey)
+
+                    # チップスタイル決定
+                    if is_on:
+                        chip_style = (
+                            "background: rgba(0,188,212,0.25); border: 1.5px solid rgba(0,188,212,0.6);"
+                            "color: #e0f7fa; border-radius: 20px; cursor: pointer;"
+                        )
+                    else:
+                        chip_style = (
+                            "background: rgba(60,60,80,0.3); border: 1px solid rgba(100,100,120,0.3);"
+                            "color: #888; border-radius: 20px; cursor: pointer;"
+                        )
+
+                    def _toggle_model(key=mkey):
+                        sm = list(state.get("selected_models", []))
+                        if key in sm:
+                            sm.remove(key)
+                        else:
+                            sm.append(key)
+                        state["selected_models"] = sm
+                        ui.navigate.reload()
+
+                    # 短縮ラベル（スペース節約）
+                    chip_label = f"{'✓' if is_on else ''}{short}"
+                    if is_default:
+                        chip_label += "⭐"
+                    if has_config:
+                        chip_label += "⚙"
+
+                    # リッチツールチップ: 正式名 / 計算量 / ライブラリ
+                    tip = f"{mname}\n計算量: {complexity}\nlib: {lib}"
+                    if is_on:
+                        tip += "\n（クリックで除外）"
+                    else:
+                        tip += "\n（クリックで追加）"
+
+                    btn = ui.button(
+                        chip_label,
+                        on_click=_toggle_model,
+                    ).props("flat dense no-caps size=sm").style(
+                        chip_style + "padding: 1px 8px; font-size: 0.78rem; min-height: 26px;"
+                    )
+                    btn.tooltip(tip)
+
+        # 選択済みモデルの詳細パネル（⚙️設定ボタン付き）
+        sel_models = [m for m in available if m["key"] in selected_models]
+        if sel_models:
+            ui.separator().classes("q-my-sm")
+            ui.label("🔧 選択済みモデルの設定").classes("text-body2 text-bold text-grey-4 q-mb-xs")
+            with ui.element("div").classes("full-width").style(
+                "display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px;"
+            ):
+                for m in sel_models:
+                    mkey = m["key"]
+                    mname = m["name"]
+                    mcls = m.get("class")
+                    has_config = mkey in state.get("model_configs", {})
+
+                    with ui.card().classes("q-pa-xs").style(
+                        "border: 1px solid rgba(0,188,212,0.15); border-radius: 8px;"
+                        "background: rgba(0,20,40,0.2); min-height: 40px;"
+                    ):
+                        with ui.row().classes("items-center justify-between no-wrap"):
+                            ui.label(mname).classes("text-caption text-grey-3 ellipsis").style(
+                                "max-width: 140px;"
+                            )
+                            with ui.row().classes("items-center q-gutter-xs no-wrap"):
+                                if has_config:
+                                    ui.badge("⚙設定済", color="amber").props(
+                                        "outline dense"
+                                    ).style("font-size:0.6rem;")
+                                if mcls is not None:
+                                    def _open_config(key=mkey, name=mname, cls=mcls):
+                                        from frontend_nicegui.components.estimator_config_dialog import (
+                                            EstimatorConfigDialog,
+                                        )
+                                        existing = state["model_configs"].get(key)
+                                        dialog = EstimatorConfigDialog(
+                                            model_key=key,
+                                            model_cls=cls,
+                                            model_name=name,
+                                            initial_config=existing,
+                                            on_save=lambda cfg, k=key: state["model_configs"].update({k: cfg}),
+                                        )
+                                        dialog.open()
+
+                                    ui.button(
+                                        icon="tune", on_click=_open_config,
+                                    ).props("flat dense round size=xs color=cyan").tooltip(
+                                        f"{mname}: デフォルト値 / Grid / Optuna"
+                                    )
+
+    # ═══════════════════════════════════════════════════════
+    # 🔧 前処理設定（折りたたみ・コンパクト・目立たない）
+    # ═══════════════════════════════════════════════════════
+    _render_preprocess_section(state, defaults)
+
+    # ═══════════════════════════════════════════════════════
+    # 逆解析連携
+    # ═══════════════════════════════════════════════════════
+    ui.separator().classes("q-my-sm")
+    _render_inverse_link(state)
+
+
+def _render_preprocess_section(state: dict, defaults: list) -> None:
+    """前処理設定（折りたたみ内にコンパクト配置）。"""
     # 組み合わせ数計算
     n_imp = max(1, len(state.get("_pg_num_imputers", ["mean"])))
     n_scl = max(1, len(state.get("_pg_num_scalers", ["standard"])))
@@ -561,47 +889,22 @@ def render_pipeline_config(state: dict) -> None:
     n_est = max(1, len(state.get("selected_models", [])))
     n_total = n_imp * n_scl * n_ci * n_le * n_bi * n_eng * n_sel * n_est
 
-    # ステータス
-    if n_total <= 50:
-        status_text = "✅ 適切"
-        status_color = "teal"
-    elif n_total <= 200:
-        status_text = "⚠️ やや多い"
-        status_color = "amber"
-    else:
-        status_text = "🔴 多すぎ"
-        status_color = "red"
+    status_color = "teal" if n_total <= 50 else ("amber" if n_total <= 200 else "red")
 
-    with ui.card().classes("full-width q-pa-md q-mb-sm").style(
-        "border: 1px solid rgba(0,188,212,0.3); border-radius: 10px;"
-        "background: rgba(0,20,40,0.25);"
+    with ui.card().classes("full-width q-pa-sm q-mb-sm").style(
+        "border: 1px solid rgba(100,120,140,0.2); border-radius: 8px;"
+        "background: rgba(0,15,30,0.2);"
     ):
-        # ── サマリーヘッダー（常時表示） ──
-        with ui.row().classes("items-center q-gutter-sm q-mb-xs"):
-            ui.icon("tune", color="cyan").classes("text-h6")
-            ui.label("Pipeline 全設定").classes("text-subtitle1 text-bold")
-            ui.badge(f"{n_total:,}通り", color=status_color).props("dense")
-
-        with ui.row().classes("q-gutter-md text-caption text-grey q-mb-sm"):
-            ui.label(f"数値: imp×{n_imp} scl×{n_scl}")
-            ui.label(f"カテゴリ: enc×{n_le}")
-            ui.label(f"特徴: eng×{n_eng} sel×{n_sel}")
-            ui.label(f"推定器: {n_est}個")
-            excl = state.get("exclude_cols", [])
-            if excl:
-                ui.label(f"除外列: {len(excl)}個")
-
-        # ── 展開で詳細設定（インライン） ──
         with ui.expansion(
-            "⚙️ 設定を展開", icon="settings",
-        ).classes("full-width").props("dense"):
+            f"🔧 前処理設定（{n_total:,}通り）", icon="build",
+        ).classes("full-width").props("dense header-class=text-grey-5"):
             ui.label(
-                "ステップをタブで切替え → 各ステップでアルゴリズムを選択。"
-                "複数選択した場合は全組み合わせを自動評価。"
-            ).classes("text-caption text-grey q-mb-sm")
+                "通常はデフォルトのままで十分です。"
+                "複数選択すると全組み合わせを評価します。"
+            ).classes("text-caption text-grey-6 q-mb-sm").style("font-size:0.72rem;")
 
             with ui.tabs().classes("full-width").props(
-                "dense no-caps active-color=cyan indicator-color=cyan"
+                "dense no-caps active-color=blue-grey indicator-color=blue-grey"
             ) as pg_tabs:
                 ui.tab("pg_excl", label="🚫 除外")
                 ui.tab("pg_num", label="🔢 数値")
@@ -609,7 +912,6 @@ def render_pipeline_config(state: dict) -> None:
                 ui.tab("pg_bin", label="⚡ バイナリ")
                 ui.tab("pg_eng", label="🔧 特徴生成")
                 ui.tab("pg_sel", label="🎯 特徴選択")
-                ui.tab("pg_est", label="🤖 推定器")
 
             with ui.tab_panels(pg_tabs, value="pg_excl").classes("full-width"):
                 with ui.tab_panel("pg_excl"):
@@ -624,15 +926,6 @@ def render_pipeline_config(state: dict) -> None:
                     _tab_engineer(state)
                 with ui.tab_panel("pg_sel"):
                     _tab_selector(state)
-                with ui.tab_panel("pg_est"):
-                    _tab_estimator(state)
-
-            ui.separator().classes("q-my-sm")
-            _render_combo_summary(state)
-
-        # ── 逆解析連携オプション（パイプライン設定内） ──
-        ui.separator().classes("q-my-sm")
-        _render_inverse_link(state)
 
 
 def _render_inverse_link(state: dict) -> None:
@@ -678,3 +971,4 @@ def _render_inverse_link(state: dict) -> None:
             ui.label(f"目標: {'✅ 設定済み' if has_target else '❌ 未設定'}")
             ui.label(f"制約: {n_constraints}変数")
             ui.label(f"手法: {method_labels.get(method, method)}")
+

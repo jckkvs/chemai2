@@ -212,7 +212,15 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             if key in state:
                 preprocess_params[key] = state[key]
 
-        model_params = state.get("model_params") or None
+        # model_params: 直接指定 + EstimatorConfigDialog で設定された値を統合
+        model_params = dict(state.get("model_params") or {})
+        model_configs = state.get("model_configs", {})
+        for mkey, mcfg in model_configs.items():
+            if hasattr(mcfg, "default_params") and mcfg.default_params:
+                if mkey not in model_params:
+                    model_params[mkey] = {}
+                model_params[mkey].update(mcfg.default_params)
+        model_params = model_params or None
         mono_raw = state.get("monotonic_constraints", {})
         monotonic_constraints = {k: v for k, v in mono_raw.items() if v != 0} or None
         cv_key = state.get("cv_key", "auto")
@@ -389,6 +397,11 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         except Exception as hist_ex:
             logger.warning("解析履歴の保存に失敗: %s", hist_ex)
 
+        # ── タスク3-1: 事前設定済みの自動処理を実行 ──
+        if best_result:
+            await _run_post_analysis_tasks(state, status_container)
+
+
     except AnalysisCancelled:
         progress_label.text = "🛑 解析がキャンセルされました"
         progress_pct.text = "—"
@@ -481,3 +494,187 @@ def _get_error_remedy(error_msg: str, tb_text: str) -> str:
             "• 詳細エラー情報（下）を展開して原因を確認してください\n"
             "• 問題が解決しない場合は、設定を変更して再試行してください"
         )
+
+
+async def _run_post_analysis_tasks(state: dict, status_container) -> None:
+    """
+    順解析完了後に事前設定された自動処理を実行する。
+
+    Implements: F-3-1 | 順解析完了時の自動逆解析実行
+    事前設定 (state["_post_analysis"]) に基づき:
+      - auto_inverse=True → 逆解析を自動実行
+      - auto_report=True → レポートを自動生成（将来）
+      - auto_shap=True → SHAP解析を自動実行（将来）
+    """
+    pa = state.get("_post_analysis")
+    if not pa:
+        return
+
+    ar = state.get("automl_result")
+    if ar is None:
+        return
+
+    tasks_run = []
+
+    # ═══════════════════════════════════════════
+    # 自動逆解析
+    # ═══════════════════════════════════════════
+    if pa.get("auto_inverse"):
+        try:
+            logger.info("[PostAnalysis] 自動逆解析を開始...")
+
+            with status_container:
+                with ui.card().classes("full-width glass-card q-pa-sm q-mb-xs q-mt-sm").style(
+                    "border-left: 3px solid rgba(123, 47, 247, 0.7);"
+                ):
+                    pa_label = ui.label("🔮 逆解析を自動実行中...").classes("text-body2 text-purple")
+                    pa_progress = ui.linear_progress(value=0, show_value=False).props(
+                        "color=purple rounded"
+                    ).style("height: 4px;")
+
+            # 逆解析設定の構築
+            df = state.get("df")
+            target_col = state.get("target_col", "")
+            precalc_df = state.get("precalc_df")
+
+            if df is None or not target_col:
+                pa_label.text = "⚠️ 逆解析スキップ: データまたは目的変数が未設定"
+                return
+
+            # 逆解析の設定を _inv に反映
+            if "_inv" not in state:
+                state["_inv"] = {
+                    "target_mode": "range",
+                    "constraints": {},
+                    "method": "random",
+                    "method_params": {},
+                    "results": None,
+                }
+            inv = state["_inv"]
+
+            # 目標モードの設定
+            inv["target_mode"] = pa.get("inv_target_mode", "maximize")
+            inv["target_min"] = pa.get("inv_target_min")
+            inv["target_max"] = pa.get("inv_target_max")
+
+            # 手法の設定
+            inv["method"] = pa.get("inv_method", "random")
+            inv["method_params"] = dict(pa.get("inv_method_params", {}))
+
+            # 使用モデル
+            inv["selected_model"] = ar.best_model_key if hasattr(ar, "best_model_key") else None
+
+            # 制約の自動設定
+            if pa.get("inv_auto_constraints", True):
+                import pandas as _pd
+                expand = pa.get("inv_constraint_expand", 0.2)
+                exclude = set(state.get("exclude_cols", []))
+                smiles_col = state.get("smiles_col", "")
+                source_df = precalc_df if precalc_df is not None else df
+
+                for col in source_df.columns:
+                    if col == target_col or col == smiles_col or col in exclude:
+                        continue
+                    if not _pd.api.types.is_numeric_dtype(source_df[col]):
+                        continue
+                    col_data = source_df[col].dropna()
+                    if len(col_data) == 0:
+                        continue
+                    col_min = float(col_data.min())
+                    col_max = float(col_data.max())
+                    span = (col_max - col_min) * expand
+                    inv["constraints"][col] = {
+                        "min": col_min - span,
+                        "max": col_max + span,
+                        "fixed": False,
+                        "fixed_val": float(col_data.median()),
+                        "active": True,
+                    }
+
+            pa_progress.value = 0.3
+            pa_label.text = "🔮 逆解析の最適化を実行中..."
+
+            # 逆解析の実行
+            try:
+                from backend.inverse.optimizer import InverseOptimizer
+
+                # パイプラインとメタ情報の取得
+                pipeline = getattr(ar, "best_pipeline", None)
+                if pipeline is None:
+                    pa_label.text = "⚠️ 逆解析スキップ: パイプラインが取得できません"
+                    return
+
+                # 特徴量名の取得
+                proc_X = getattr(ar, "processed_X", None)
+                if proc_X is not None and hasattr(proc_X, "columns"):
+                    feature_names = list(proc_X.columns)
+                else:
+                    feature_names = list(inv["constraints"].keys())
+
+                # 制約の変換
+                bounds = {}
+                fixed_values = {}
+                for col, c in inv["constraints"].items():
+                    if col not in feature_names:
+                        continue
+                    if c.get("fixed"):
+                        fixed_values[col] = c.get("fixed_val", 0)
+                    else:
+                        bounds[col] = (c.get("min", -1e6), c.get("max", 1e6))
+
+                method = inv.get("method", "random")
+                method_params = inv.get("method_params", {})
+
+                optimizer = InverseOptimizer(
+                    pipeline=pipeline,
+                    feature_names=feature_names,
+                    bounds=bounds,
+                    fixed_values=fixed_values,
+                    target_mode=inv.get("target_mode", "maximize"),
+                    target_range=(inv.get("target_min"), inv.get("target_max")),
+                )
+
+                pa_progress.value = 0.5
+
+                result = await run.io_bound(
+                    optimizer.optimize,
+                    method=method,
+                    **method_params,
+                )
+
+                inv["results"] = result
+                pa_progress.value = 1.0
+
+                n_candidates = len(result) if hasattr(result, "__len__") else 0
+                pa_label.text = f"✅ 逆解析完了！ {n_candidates}候補を生成"
+                tasks_run.append("逆解析")
+
+                # 逆解析タブを再描画
+                refresh_inv = state.get("_refresh_inverse")
+                if refresh_inv:
+                    try:
+                        refresh_inv()
+                    except Exception:
+                        pass
+
+                logger.info("[PostAnalysis] 自動逆解析完了: %d候補", n_candidates)
+
+            except ImportError:
+                pa_label.text = "⚠️ 逆解析モジュールが見つかりません"
+                logger.warning("[PostAnalysis] InverseOptimizer import failed")
+            except Exception as inv_ex:
+                pa_label.text = f"⚠️ 逆解析エラー: {str(inv_ex)[:100]}"
+                logger.warning("[PostAnalysis] 逆解析エラー: %s", inv_ex)
+
+        except Exception as e:
+            logger.warning("[PostAnalysis] 自動逆解析の全体エラー: %s", e)
+
+    # ═══════════════════════════════════════════
+    # サマリー通知
+    # ═══════════════════════════════════════════
+    if tasks_run:
+        ui.notify(
+            f"🤖 自動処理完了: {', '.join(tasks_run)}",
+            type="positive", timeout=5000,
+        )
+

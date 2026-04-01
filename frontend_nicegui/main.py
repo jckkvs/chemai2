@@ -706,6 +706,10 @@ def main_page():
             ui.separator().classes("q-my-sm")
             from frontend_nicegui.components.pipeline_config_ui import render_pipeline_config
             render_pipeline_config(state)
+            # 解析後の自動処理設定（逆解析事前設定 — タスク3-1）
+            ui.separator().classes("q-my-sm")
+            from frontend_nicegui.components.post_analysis_config import render_post_analysis_config
+            render_post_analysis_config(state)
 
 
         # ── 結果確認タブ（コンテナ方式）──
@@ -740,6 +744,21 @@ def main_page():
                     render_doe_tab(state)
             _build_doe()
             state["_refresh_doe"] = _build_doe
+
+    # ── 記述子セット常時表示フローティングバー（タスク2-6） ──
+    from frontend_nicegui.components.descriptor_status_bar import render_descriptor_status_bar
+    render_descriptor_status_bar(state)
+
+    # ── タブ遷移コールバック登録（タスク3-2: 逆解析への動線） ──
+    def _switch_to_inverse():
+        """結果タブ等から逆解析タブへ自動遷移する。"""
+        main_tabs.set_value("inverse")
+    state["_switch_to_inverse"] = _switch_to_inverse
+
+    def _switch_to_data_smiles():
+        """記述子バーから SMILES特徴量タブへ遷移する。"""
+        main_tabs.set_value("data")
+    state["_switch_to_data_smiles"] = _switch_to_data_smiles
 
     # ── SMILES列がある場合、特徴量計算をバックグラウンドで自動実行 ──
     # precalc_done=False の間だけ発火する定期ポーリング型。
