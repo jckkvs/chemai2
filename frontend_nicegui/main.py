@@ -757,25 +757,71 @@ def main_page():
             from frontend_nicegui.pages.model_manager import render_model_manager
             render_model_manager()
 
-        # ── レポートエクスポートタブ ──
+        # ── レポートエクスポートタブ（コンテナ方式）──
         with ui.tab_panel(export_tab):
-            from frontend_nicegui.pages.export_panel import render_export_panel
-            render_export_panel(state)
+            _export_container = ui.column().classes("full-width")
+            def _build_export():
+                _export_container.clear()
+                with _export_container:
+                    from frontend_nicegui.pages.export_panel import render_export_panel
+                    render_export_panel(state)
+            _build_export()
+            state["_refresh_export"] = _build_export
 
-        # ── 実験ダッシュボードタブ ──
+        # ── 実験ダッシュボードタブ（コンテナ方式）──
         with ui.tab_panel(comparison_tab):
-            from frontend_nicegui.pages.experiment_comparison import render_experiment_comparison
-            render_experiment_comparison(state)
-    # ── タブ遷移コールバック登録（タスク3-2: 逆解析への動線） ──
+            _comparison_container = ui.column().classes("full-width")
+            def _build_comparison():
+                _comparison_container.clear()
+                with _comparison_container:
+                    from frontend_nicegui.pages.experiment_comparison import render_experiment_comparison
+                    render_experiment_comparison(state)
+            _build_comparison()
+            state["_refresh_experiment_comparison"] = _build_comparison
+
+    # ── タブ遷移コールバック登録 ──
     def _switch_to_inverse():
         """結果タブ等から逆解析タブへ自動遷移する。"""
         main_tabs.set_value("inverse")
     state["_switch_to_inverse"] = _switch_to_inverse
 
+    def _switch_to_results():
+        """解析完了後に結果タブへ自動遷移し再描画する。"""
+        main_tabs.set_value("results")
+        fn = state.get("_refresh_results")
+        if fn:
+            try:
+                fn()
+            except Exception:
+                pass
+    state["_switch_to_results"] = _switch_to_results
+
     def _switch_to_data_smiles():
         """記述子バーから SMILES特徴量タブへ遷移する。"""
         main_tabs.set_value("data")
     state["_switch_to_data_smiles"] = _switch_to_data_smiles
+
+    # ── タブクリック時に各コンテナを最新状態で再描画 ──
+    # 結果・エクスポート・実験比較タブは描画コストが高いため、
+    # タブが実際にアクティブになった瞬間にのみ再描画する。
+    _REBUILD_MAP = {
+        "results":    "_refresh_results",
+        "export":     "_refresh_export",
+        "comparison": "_refresh_experiment_comparison",
+    }
+
+    def _on_tab_change(e):
+        tab_val = getattr(e, "value", None) or str(e)
+        key = _REBUILD_MAP.get(str(tab_val))
+        if key:
+            fn = state.get(key)
+            if fn:
+                try:
+                    fn()
+                except Exception:
+                    pass
+
+    main_tabs.on_value_change(_on_tab_change)
 
     # ── SMILES列がある場合、特徴量計算をバックグラウンドで自動実行 ──
     # precalc_done=False の間だけ発火する定期ポーリング型。

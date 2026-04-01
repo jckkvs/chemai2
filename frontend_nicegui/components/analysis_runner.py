@@ -389,13 +389,20 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         if on_complete:
             on_complete()
 
-        # ── 結果タブを強制再描画（完了直後に "解析結果がまだありません" が出るバグを修正） ──
-        refresh_results = state.get("_refresh_results")
-        if refresh_results and best_result:
+        # ── 結果タブへ自動切り替え＋再描画（解析完了後 "解析結果がまだありません" バグ修正） ──
+        switch_results = state.get("_switch_to_results")
+        if switch_results and best_result:
             try:
-                refresh_results()
+                switch_results()
             except Exception as _re:
-                logger.warning("結果タブの再描画に失敗: %s", _re)
+                logger.warning("結果タブ切替に失敗: %s", _re)
+                # フォールバック: タブ切替なしで再描画のみ
+                refresh_only = state.get("_refresh_results")
+                if refresh_only:
+                    try:
+                        refresh_only()
+                    except Exception:
+                        pass
 
         # 解析履歴を自動記録
         try:
