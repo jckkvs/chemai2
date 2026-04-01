@@ -664,7 +664,11 @@ def main_page():
     with analysis_status_container:
         pass  # analysis_runnerが動的に書き込む
 
-    with ui.tabs().classes("full-width q-mt-sm").props(
+    # ── 記述子セット常時表示バー（タブより上部に固定） ──
+    from frontend_nicegui.components.descriptor_status_bar import render_descriptor_status_bar
+    render_descriptor_status_bar(state)
+
+    with ui.tabs().classes("full-width q-mt-xs").props(
         "active-color=cyan indicator-color=cyan align=left"
     ) as main_tabs:
         data_tab = ui.tab("data", label="📂 データ設定", icon="settings")
@@ -762,10 +766,6 @@ def main_page():
         with ui.tab_panel(comparison_tab):
             from frontend_nicegui.pages.experiment_comparison import render_experiment_comparison
             render_experiment_comparison(state)
-    # ── 記述子セット常時表示フローティングバー（タスク2-6） ──
-    from frontend_nicegui.components.descriptor_status_bar import render_descriptor_status_bar
-    render_descriptor_status_bar(state)
-
     # ── タブ遷移コールバック登録（タスク3-2: 逆解析への動線） ──
     def _switch_to_inverse():
         """結果タブ等から逆解析タブへ自動遷移する。"""
