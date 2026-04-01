@@ -11,6 +11,14 @@ import numpy as np
 import pandas as pd
 from nicegui import ui
 
+from frontend_nicegui.components.results_tab_extras import (
+    _render_model_overview,
+    _render_per_model_tabs,
+    _render_pred_actual_inline,
+    _render_sample_table_inline,
+    _render_extra_visualizations,
+)
+
 
 def render_results_tab(state: dict[str, Any]) -> None:
     """結果確認タブ全体を描画する。"""
@@ -207,50 +215,81 @@ def _render_single_result(ar, state: dict) -> None:
                 ui.label(f"⚠️ {w}").classes("text-amber text-caption")
 
     # ── 結果サブタブ ──
-    with ui.tabs().classes("full-width").props('dense active-color=cyan indicator-color=cyan data-testid="results-tabs"') as res_tabs:
-        tab_eval = ui.tab("eval", label="📈 モデル評価", icon="leaderboard").props('data-testid="tab-eval"')
-        tab_tuning = ui.tab("tuning", label="🎯 チューニング", icon="tune").props('data-testid="tab-tuning"')
-        tab_data = ui.tab("data", label="📊 前処理後データ", icon="table_chart").props('data-testid="tab-data"')
-        tab_interp = ui.tab("interp", label="🔬 モデル解釈性", icon="psychology").props('data-testid="tab-interp"')
-        tab_batch = ui.tab("batch", label="🔮 バッチ予測", icon="batch_prediction").props('data-testid="tab-batch"')
-        tab_report = ui.tab("report", label="📝 レポート", icon="summarize").props('data-testid="tab-report"')
+    with ui.tabs().classes("full-width").props(
+        "dense active-color=cyan indicator-color=cyan scrollable"
+    ) as res_tabs:
+        tab_overview = ui.tab("overview", label="🏆 全モデル概要",    icon="leaderboard")
+        tab_permodel = ui.tab("permodel", label="📊 モデル別詳細",    icon="analytics")
+        tab_pred     = ui.tab("pred",     label="📈 予測実測プロット", icon="scatter_plot")
+        tab_table    = ui.tab("table",    label="📋 データ点表",       icon="table_rows")
+        tab_tuning   = ui.tab("tuning",   label="🎯 チューニング",     icon="tune")
+        tab_data     = ui.tab("data",     label="🔢 前処理後データ",   icon="table_chart")
+        tab_interp   = ui.tab("interp",   label="🔬 解釈性・重要度",   icon="psychology")
+        tab_extra    = ui.tab("extra",    label="🎨 追加可視化",       icon="bar_chart")
+        tab_batch    = ui.tab("batch",    label="🔮 バッチ予測",       icon="batch_prediction")
+        tab_report   = ui.tab("report",   label="📝 レポート",         icon="summarize")
 
-    with ui.tab_panels(res_tabs, value=tab_eval).classes("full-width"):
+    with ui.tab_panels(res_tabs, value=tab_overview).classes("full-width"):
 
         # ════════════════════════════════════════════════════
-        # サブタブ: モデル評価
+        # 全モデル概要
         # ════════════════════════════════════════════════════
-        with ui.tab_panel(tab_eval):
-            _render_model_evaluation(ar)
+        with ui.tab_panel(tab_overview):
+            _render_model_overview(ar)
 
         # ════════════════════════════════════════════════════
-        # サブタブ: チューニング
+        # モデル別詳細
+        # ════════════════════════════════════════════════════
+        with ui.tab_panel(tab_permodel):
+            _render_per_model_tabs(ar)
+
+        # ════════════════════════════════════════════════════
+        # 予測実測プロット
+        # ════════════════════════════════════════════════════
+        with ui.tab_panel(tab_pred):
+            _render_pred_actual_inline(ar)
+
+        # ════════════════════════════════════════════════════
+        # データ点表
+        # ════════════════════════════════════════════════════
+        with ui.tab_panel(tab_table):
+            _render_sample_table_inline(ar)
+
+        # ════════════════════════════════════════════════════
+        # チューニング
         # ════════════════════════════════════════════════════
         with ui.tab_panel(tab_tuning):
             from frontend_nicegui.components.tuning_tab import render_tuning_tab
             render_tuning_tab(state)
 
         # ════════════════════════════════════════════════════
-        # サブタブ: 前処理後データ
+        # 前処理後データ
         # ════════════════════════════════════════════════════
         with ui.tab_panel(tab_data):
             _render_processed_data(ar)
 
         # ════════════════════════════════════════════════════
-        # サブタブ: モデル解釈性
+        # 解釈性・重要度（フル版）
         # ════════════════════════════════════════════════════
         with ui.tab_panel(tab_interp):
-            _render_interpretability(ar, state)
+            from frontend_nicegui.components.interpretation_panel import render_interpretation_panel
+            render_interpretation_panel(ar, state)
 
         # ════════════════════════════════════════════════════
-        # サブタブ: バッチ予測
+        # 追加可視化
+        # ════════════════════════════════════════════════════
+        with ui.tab_panel(tab_extra):
+            _render_extra_visualizations(ar, state)
+
+        # ════════════════════════════════════════════════════
+        # バッチ予測
         # ════════════════════════════════════════════════════
         with ui.tab_panel(tab_batch):
             from frontend_nicegui.components.batch_predict_tab import render_batch_predict_tab
             render_batch_predict_tab(state)
 
         # ════════════════════════════════════════════════════
-        # サブタブ: レポート生成
+        # レポート生成
         # ════════════════════════════════════════════════════
         with ui.tab_panel(tab_report):
             from frontend_nicegui.components.report_generator import render_report_tab

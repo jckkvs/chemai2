@@ -66,26 +66,46 @@ def render_eda_panel(state: dict) -> None:
 
     target_col = state.get("target_col", "")
     precalc_df = state.get("precalc_df")
-    descriptor_sets = state.get("descriptor_sets", {})
+    descriptor_sets_raw = state.get("descriptor_sets", {})
 
     # EDA対象データセットを収集
     eda_datasets: list[tuple[str, pd.DataFrame]] = []
 
-    if descriptor_sets and precalc_df is not None:
-        # SMILES記述子セットごと + 全記述子
-        for set_name, cols in descriptor_sets.items():
+    if descriptor_sets_raw and precalc_df is not None:
+        # descriptor_sets は {name: {"active": bool, "descriptors": [...], "cols": [...]}} の形式
+        # または {name: [列名リスト]} の旧形式の両方に対応する
+        for set_name, set_info in descriptor_sets_raw.items():
+            if isinstance(set_info, dict):
+                # 新形式: cols（計算済み列名）または descriptors（記述子ID）から列を取得
+                cols = set_info.get("cols") or set_info.get("descriptors") or []
+            else:
+                # 旧形式: 直接リスト
+                cols = list(set_info) if set_info else []
+
+            # precalc_df に実在する列のみ使う
             valid_cols = [c for c in cols if c in precalc_df.columns]
+
+            # cols が空 or 有効列なしの場合は set_name をプレフィックスとして列をマッチ
+            if not valid_cols:
+                prefix = set_name.lower().replace(" ", "_")
+                valid_cols = [
+                    c for c in precalc_df.columns
+                    if c.lower().startswith(prefix)
+                ]
+
             if valid_cols:
                 set_df = precalc_df[valid_cols].copy()
                 if target_col and target_col in df.columns:
                     set_df[target_col] = df[target_col].iloc[:len(set_df)].values
                 eda_datasets.append((f"📦 {set_name}", set_df))
-        # 全記述子タブ
+
+        # 全記述子タブ（常に追加）
         if not precalc_df.empty:
             all_df = precalc_df.copy()
             if target_col and target_col in df.columns:
                 all_df[target_col] = df[target_col].iloc[:len(all_df)].values
             eda_datasets.append(("📊 全記述子", all_df))
+
     elif precalc_df is not None and not precalc_df.empty:
         # セット未定義だが記述子あり
         all_df = precalc_df.copy()
