@@ -389,6 +389,14 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         if on_complete:
             on_complete()
 
+        # ── 結果タブを強制再描画（完了直後に "解析結果がまだありません" が出るバグを修正） ──
+        refresh_results = state.get("_refresh_results")
+        if refresh_results and best_result:
+            try:
+                refresh_results()
+            except Exception as _re:
+                logger.warning("結果タブの再描画に失敗: %s", _re)
+
         # 解析履歴を自動記録
         try:
             from backend.preset_manager import record_analysis

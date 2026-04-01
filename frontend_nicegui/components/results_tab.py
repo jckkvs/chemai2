@@ -372,6 +372,17 @@ def _render_model_evaluation(ar) -> None:
             with ui.expansion("📉 残差分析（OOF）", icon="scatter_plot").classes("full-width q-mt-sm"):
                 _render_residual_analysis(ar)
 
+    # ── 学習曲線 ──
+    ui.separator()
+    with ui.expansion("📈 学習曲線 (Learning Curve)", icon="trending_up").classes("full-width q-mt-sm"):
+        _render_learning_curve(ar)
+
+    # ── 分類タスク専用: 混同行列・ROC ──
+    if ar.task in ("classification", "multiclass"):
+        ui.separator()
+        with ui.expansion("🔢 混同行列・ROC曲線", icon="grid_on").classes("full-width q-mt-sm"):
+            _render_classification_metrics(ar)
+
 
 # ================================================================
 # 前処理後データ
@@ -938,6 +949,208 @@ def _render_model_significance(ar) -> None:
                             ui.label(f"{lbl}: {val}").classes("text-caption text-grey").style("font-size: 0.82rem;")
         else:
             ui.label("Fold数が一致するモデルペアがありません").classes("text-caption text-grey")
+
+
+# ================================================================
+# 学習曲線
+# ================================================================
+def _render_learning_curve(ar) -> None:
+    """交差検証ベースの学習曲線（Train vs Validation スコア vs サンプル数）。"""
+    model = getattr(ar, "best_pipeline", None)
+    X = getattr(ar, "processed_X", None)
+    y = getattr(ar, "y_train", None)
+
+    if model is None or X is None or y is None:
+        ui.label("⚠️ モデルまたはデータが取得できません").classes("text-amber text-caption")
+        return
+
+    lc_container = ui.column().classes("full-width")
+
+    async def _calc_lc():
+        lc_container.clear()
+        with lc_container:
+            ui.label("⏳ 学習曲線を計算中...").classes("text-grey-5")
+        try:
+            from sklearn.model_selection import learning_curve
+            import plotly.graph_objects as go
+            import numpy as np
+
+            cv_folds = getattr(ar, "cv_folds", 5)
+            scoring = "r2" if ar.task == "regression" else "accuracy"
+
+            train_sizes, train_scores, val_scores = learning_curve(
+                model, X, y,
+                train_sizes=np.linspace(0.1, 1.0, 8),
+                cv=cv_folds,
+                scoring=scoring,
+                n_jobs=1,
+            )
+
+            train_mean = train_scores.mean(axis=1)
+            train_std  = train_scores.std(axis=1)
+            val_mean   = val_scores.mean(axis=1)
+            val_std    = val_scores.std(axis=1)
+
+            fig = go.Figure()
+            # Train帯
+            fig.add_trace(go.Scatter(
+                x=np.concatenate([train_sizes, train_sizes[::-1]]),
+                y=np.concatenate([train_mean + train_std, (train_mean - train_std)[::-1]]),
+                fill="toself", fillcolor="rgba(0,212,255,0.1)",
+                line=dict(color="rgba(0,0,0,0)"), showlegend=False,
+            ))
+            fig.add_trace(go.Scatter(
+                x=train_sizes, y=train_mean, mode="lines+markers",
+                line=dict(color="#00d4ff", width=2), name="Train スコア",
+                marker=dict(size=6),
+            ))
+            # Val帯
+            fig.add_trace(go.Scatter(
+                x=np.concatenate([train_sizes, train_sizes[::-1]]),
+                y=np.concatenate([val_mean + val_std, (val_mean - val_std)[::-1]]),
+                fill="toself", fillcolor="rgba(74,222,128,0.1)",
+                line=dict(color="rgba(0,0,0,0)"), showlegend=False,
+            ))
+            fig.add_trace(go.Scatter(
+                x=train_sizes, y=val_mean, mode="lines+markers",
+                line=dict(color="#4ade80", width=2), name="Validation スコア",
+                marker=dict(size=6),
+            ))
+
+            fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                height=350,
+                margin=dict(l=10, r=10, t=30, b=10),
+                xaxis_title="学習サンプル数",
+                yaxis_title=scoring,
+                title=f"学習曲線 ({scoring})",
+                legend=dict(orientation="h", y=1.05),
+            )
+
+            lc_container.clear()
+            with lc_container:
+                ui.plotly(fig).classes("full-width")
+                gap = float(train_mean[-1] - val_mean[-1])
+                gap_label = "⚠️ 過学習の可能性あり" if gap > 0.1 else "✅ 汎化性能良好"
+                gap_color = "text-amber" if gap > 0.1 else "text-green"
+                ui.label(f"Train-Val ギャップ: {gap:+.4f}  {gap_label}").classes(f"text-caption {gap_color}")
+
+            ui.notify("✅ 学習曲線計算完了", type="positive")
+
+        except Exception as ex:
+            lc_container.clear()
+            with lc_container:
+                ui.label(f"学習曲線計算エラー: {ex}").classes("text-red text-caption")
+
+    ui.label("学習データ量と汎化性能の関係を可視化します（計算に数秒かかります）。").classes("text-caption text-grey-5 q-mb-sm")
+    ui.button("📈 学習曲線を計算", on_click=_calc_lc).props("outline color=cyan size=sm no-caps")
+    lc_container
+
+
+# ================================================================
+# 分類タスク専用: 混同行列・ROC曲線
+# ================================================================
+def _render_classification_metrics(ar) -> None:
+    """OOFの混同行列・ROC-AUC・Classification Report を描画する。"""
+    y_true = getattr(ar, "oof_true", None)
+    y_pred = getattr(ar, "oof_predictions", None)
+
+    if y_true is None or y_pred is None:
+        ui.label("⚠️ OOFデータが利用できません").classes("text-amber text-caption")
+        return
+
+    try:
+        import numpy as np
+        import plotly.figure_factory as ff
+        import plotly.graph_objects as go
+        from sklearn.metrics import (
+            confusion_matrix, classification_report,
+            roc_auc_score, roc_curve,
+        )
+
+        y_t = np.asarray(y_true).ravel()
+        y_p = np.asarray(y_pred).ravel()
+        classes = sorted(set(y_t.tolist()))
+
+        # ── 混同行列 ──
+        cm = confusion_matrix(y_t, y_p, labels=classes)
+        fig_cm = ff.create_annotated_heatmap(
+            z=cm.tolist(),
+            x=[str(c) for c in classes],
+            y=[str(c) for c in classes],
+            colorscale="Blues",
+        )
+        fig_cm.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            height=350,
+            margin=dict(l=10, r=10, t=50, b=10),
+            title="混同行列 (OOF)",
+            xaxis_title="予測ラベル",
+            yaxis_title="正解ラベル",
+        )
+        ui.label("🔢 混同行列").classes("text-subtitle2 q-mt-md q-mb-sm")
+        ui.plotly(fig_cm).classes("full-width")
+
+        # ── Classification Report テーブル ──
+        try:
+            report_str = classification_report(y_t, y_p, output_dict=True, zero_division=0)
+            rows = []
+            for key, val in report_str.items():
+                if isinstance(val, dict):
+                    rows.append({
+                        "クラス": key,
+                        "Precision": f"{val.get('precision', 0):.4f}",
+                        "Recall": f"{val.get('recall', 0):.4f}",
+                        "F1-score": f"{val.get('f1-score', 0):.4f}",
+                        "Support": str(int(val.get("support", 0))),
+                    })
+            cols = [{"name": c, "label": c, "field": c, "align": "center"} for c in rows[0].keys()]
+            cols[0]["align"] = "left"
+            ui.label("📋 分類レポート").classes("text-subtitle2 q-mt-md q-mb-sm")
+            ui.table(columns=cols, rows=rows).classes("full-width").props("dense flat bordered")
+        except Exception:
+            pass
+
+        # ── 2クラス限定: ROC曲線 ──
+        if len(classes) == 2:
+            try:
+                fpr, tpr, _ = roc_curve(y_t, y_p, pos_label=classes[1])
+                auc_val = roc_auc_score(y_t, y_p)
+                fig_roc = go.Figure()
+                fig_roc.add_trace(go.Scatter(
+                    x=[0, 1], y=[0, 1], mode="lines",
+                    line=dict(color="rgba(255,255,255,0.2)", dash="dash"),
+                    name="Random",
+                ))
+                fig_roc.add_trace(go.Scatter(
+                    x=fpr, y=tpr, mode="lines",
+                    line=dict(color="#00d4ff", width=2),
+                    name=f"ROC (AUC={auc_val:.4f})",
+                    fill="tozeroy",
+                    fillcolor="rgba(0,212,255,0.06)",
+                ))
+                fig_roc.update_layout(
+                    template="plotly_dark",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    height=320,
+                    margin=dict(l=10, r=10, t=40, b=10),
+                    xaxis_title="False Positive Rate",
+                    yaxis_title="True Positive Rate",
+                    title=f"ROC曲線 (AUC = {auc_val:.4f})",
+                )
+                ui.label("📈 ROC曲線").classes("text-subtitle2 q-mt-md q-mb-sm")
+                ui.plotly(fig_roc).classes("full-width")
+            except Exception:
+                pass
+
+    except ImportError as ie:
+        ui.label(f"⚠️ {ie}").classes("text-amber text-caption")
+    except Exception as ex:
+        ui.label(f"分類指標計算エラー: {ex}").classes("text-red text-caption")
 
 
 # ================================================================
