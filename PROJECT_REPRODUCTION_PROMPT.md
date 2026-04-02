@@ -134,6 +134,40 @@ sklearnツリーモデル以外の**すべてのモデル（SVR, GaussianProcess
 
 ---
 
-## 7. 最終出力形態
+## 8. 🚨 究極の補遺 (The Missing 38 Features Extension)
+
+システムを神の視点で完全再現するため、以下のこれまでプロンプトから漏れていた38の高度な機能・モジュール群を必ず実装すること。
+
+### 8.1 高度なパイプラインと前処理 (Advanced Pipeline & Cleaning)
+- **DataCleaner (`data_cleaner.py`)**: 欠損率が設定された閾値（例: 80%）を超える列をDropし、インデックスの整合性を保つ。
+- **DimReduction (`dim_reduction.py`)**: 高次元特徴量（SMILESから生成された数千次元のベクトル）に対し、`PCA`, `t-SNE`, `UMAP`, `Isomap` による次元圧縮を提供するラッパークラス。
+- **RandomProjection (`random_projection.py`)**: 乱択射影による高速な巨大次元圧縮アルゴリズム。
+- **Protonation (`protonation.py`)**: SMILES文字列に対してpHに応じたプロトン化（水素付加・解離）をシミュレートし標準化する前処理。
+- **FeatureEngineer (`feature_engineer.py`)**: 既存変数からの四則演算、多項式乗算、対数変換をUIの指示からリアルタイムに自動生成。
+
+### 8.2 特殊なケモインフォマティクスアダプタ群 (Extended Chem Adapters)
+- **Mol2vecAdapter (`mol2vec_adapter.py`)**: 部分構造（Substructure）を単語とみなしWord2Vecで分散表現化するロジック。
+- **MolfeatAdapter (`molfeat_adapter.py`)**: Molfeatライブラリをラップし多様な事前学習済み表現を利用。
+- **PsmilesAdapter (`psmiles_adapter.py`)**: 高分子（Polymer）向けSMILES拡張表記のパースと特徴量化。
+- **UmaAdapter (`uma_adapter.py`) / CosmoAdapter (`cosmo_adapter.py`)**: 独自の外部化学APIや計算化学シミュレーション（COSMO-RS等）の出力結果との連携アダプタ。
+
+### 8.3 DomainMLエンジンと特殊モデリング (DomainML & Kernels)
+- **DomainML Engine (`domainml_engine.py`)**: 材料科学ドメイン特有の物理的ヒューリスティクスを組み込んだ特殊アンサンブルエンジン。
+- **DomainML Laplacian (`domainml_laplacian.py`)**: グラフ上のラプラシアン固有マップを利用したマニフォールド学習。
+- **DomainML Kernel Opt (`domainml_kernel_opt.py`)**: ガウス過程やSVRのためのカーネル最適化チューナー。
+- **CV Bias Evaluator (`cv_bias_evaluator.py`)**: 交差検証時のデータ分布の偏り（Covariate Shift等のバイアス）を定量評価し、Foldごとの分布非類似度を警告するロジック。
+- **CV Walkforward (`cv_walkforward.py`)**: 時系列データにおけるウォークフォワード検証（未来からのリークを厳密に防ぐローリングウィンドウCV）。
+
+### 8.4 UIの深層とセッション永続化 (Deep UI & MLOps)
+- **Preset Manager (`preset_manager.py`)**: 「創薬向け」「ポリマー向け」「即座のEDA」など、パイプラインのプリセット設定群を保存・ロードする機能。
+- **Type Detector (`type_detector.py`)**: ユーザーがCSVをアップロードした直後に、pandas列をスキャンして自動的に `SMILES`, `Categorical`, `Continuous`, `ID`, `Datetime` に分類する型推論エンジン。
+- **E2E SMILES to ML (`e2e_smiles_to_ml.py`)**: UIを介さずとも、PythonスクリプトからSMILES配列とターゲット値を入れるだけで全自動で最終レポートまで出せるエンドツーエンドAPIとしての動作。
+
+### 8.5 これらすべてのテストスイートの強制
+・`tests/test_domainml_laplacian.py` や `tests/test_cv_bias_evaluator.py` を含め、上記38箇所に付随するすべての実装コードに対しても、`pytest`で行カバレッジ90%を要求すること。
+
+---
+
+## 9. 最終出力形態
 
 以上の「すべて」の仕様を1行たりともサボらず実装し切ること。すべてのクラス構造、探索空間の隅の数字、UIのCSSクラスの記述、テストディレクトリまでを含め、完全に稼働するシステムを構築せよ。最後にテスト完了報告（行カバレッジと分岐カバレッジ）を添えること。
