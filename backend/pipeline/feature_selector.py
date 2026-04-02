@@ -149,6 +149,8 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
         self._selector: Any = None
         self._feature_names_in: list[str] = []
         self._support_mask: np.ndarray | None = None
+        self._fixed_indices: list[int] = []  # fixed=True の列インデックス
+
 
     # ----------------------------------------------------------
     # fit
@@ -179,6 +181,16 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
             self._feature_names_in = [f"x{i}" for i in range(X_arr.shape[1])]
 
         y_arr = np.asarray(y) if y is not None else None
+
+        # fixed 変数のインデックスを記録（選択手法に関わらず常に保持）
+        self._fixed_indices: list[int] = []
+        if self.column_meta:
+            for idx, col in enumerate(self._feature_names_in):
+                meta = self.column_meta.get(col)
+                if meta is not None:
+                    is_fixed = meta.fixed if hasattr(meta, "fixed") else meta.get("fixed", False)
+                    if is_fixed:
+                        self._fixed_indices.append(idx)
 
         if cfg.method == "none":
             logger.debug("FeatureSelector: method=none → パススルー")
@@ -221,6 +233,7 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
     ) -> np.ndarray:
         """
         選択された特徴量のみを返す。
+        fixed=True の列は選択手法に関わらず常に含む。
 
         Args:
             X: 入力特徴量行列
@@ -233,20 +246,44 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
         if self._selector is None or self.config.method == "none":
             return X_arr
 
-        return self._selector.transform(X_arr)
+        selected = self._selector.transform(X_arr)
+
+        # fixed 列を追加（既に選択済みならどこに含まれるか高速path）
+        if self._fixed_indices:
+            selected_mask = self._support_mask if self._support_mask is not None else np.ones(X_arr.shape[1], dtype=bool)
+            # fixed 列でまだ selected に含まれていないものを追加
+            missing_idxs = [i for i in self._fixed_indices if not selected_mask[i]]
+            if missing_idxs:
+                extra_cols = X_arr[:, missing_idxs]
+                selected = np.hstack([selected, extra_cols])
+                logger.debug(f"fixed 列を強制追加: {[self._feature_names_in[i] for i in missing_idxs]}")
+
+        return selected
 
     # ----------------------------------------------------------
     # ユーティリティ
     # ----------------------------------------------------------
 
     def get_feature_names_out(self, input_features: Any = None) -> np.ndarray:
-        """選択された特徴量名を返す。"""
+        """選択された特徴量名を返す（fixed列は常に含む）。"""
         names = input_features or self._feature_names_in
 
         if self._support_mask is None or self.config.method == "none":
             return np.array(names)
 
-        return np.array([n for n, s in zip(names, self._support_mask) if s])
+        selected_names = [n for n, s in zip(names, self._support_mask) if s]
+
+        # fixed 列でまだ選ばれていないものを末尾に追加
+        if self._fixed_indices:
+            selected_set = set(selected_names)
+            for i in self._fixed_indices:
+                if i < len(names):
+                    n = names[i] if hasattr(names, "__getitem__") else list(names)[i]
+                    if n not in selected_set:
+                        selected_names.append(n)
+                        selected_set.add(n)
+
+        return np.array(selected_names)
 
     @property
     def support_mask(self) -> np.ndarray | None:

@@ -443,8 +443,42 @@ def _tab_selector(state: dict) -> None:
 
 
 # ═══════════════════════════════════════════════════════════
+# Tab 6: 変数メタ情報エディタ
+# ═══════════════════════════════════════════════════════════
+
+def _tab_column_meta(state: dict) -> None:
+    """変数ごとのメタ情報（単調性・線形性・グループ・スケーラーHint）を設定するタブ。"""
+    _section("🔖", "変数メタ情報",
+             "各説明変数の単調性制約・線形性ヒント・グループ設定などを指定。\n"
+             "設定はスケーラー推奨・特徴量選択・推定器の単調性制約に自動反映されます。")
+
+    from frontend_nicegui.components.column_meta_editor import render_column_meta_editor
+    df = state.get("df")
+    render_column_meta_editor(state, df)
+
+    # 設定サマリー
+    meta = state.get("column_meta", {})
+    n_mono = sum(1 for m in meta.values() if m.get("monotonic", 0) != 0)
+    n_group = len({m.get("group") for m in meta.values() if m.get("group")})
+    n_fixed = sum(1 for m in meta.values() if m.get("fixed"))
+    n_scale = sum(1 for m in meta.values() if m.get("scale_hint"))
+    if n_mono > 0 or n_group > 0 or n_fixed > 0:
+        ui.separator().classes("q-my-xs")
+        with ui.row().classes("q-gutter-sm text-caption text-grey q-mt-xs"):
+            if n_mono > 0:
+                ui.badge(f"単調性制約: {n_mono}変数", color="teal").props("dense")
+            if n_group > 0:
+                ui.badge(f"グループ: {n_group}種", color="blue").props("dense")
+            if n_fixed > 0:
+                ui.badge(f"常時保持: {n_fixed}変数", color="amber").props("dense")
+            if n_scale > 0:
+                ui.badge(f"スケーラーHint: {n_scale}変数", color="purple").props("dense")
+
+
+# ═══════════════════════════════════════════════════════════
 # Tab 7: JLランダム射影 (Johnson-Lindenstrauss)
 # ═══════════════════════════════════════════════════════════
+
 
 def _tab_jl_rp(state: dict) -> None:
     """JL補題に基づくランダム射影設定UI。"""
@@ -912,6 +946,7 @@ def _render_preprocess_section(state: dict, defaults: list) -> None:
                 ui.tab("pg_bin", label="⚡ バイナリ")
                 ui.tab("pg_eng", label="🔧 特徴生成")
                 ui.tab("pg_sel", label="🎯 特徴選択")
+                ui.tab("pg_meta", label="🔖 変数メタ")
 
             with ui.tab_panels(pg_tabs, value="pg_excl").classes("full-width"):
                 with ui.tab_panel("pg_excl"):
@@ -926,6 +961,15 @@ def _render_preprocess_section(state: dict, defaults: list) -> None:
                     _tab_engineer(state)
                 with ui.tab_panel("pg_sel"):
                     _tab_selector(state)
+                with ui.tab_panel("pg_meta"):
+                    _tab_column_meta(state)
+
+
+            # JL-RP（次元削減）
+            _tab_random_projection(state)
+
+            ui.separator().classes("q-my-xs")
+            _render_combo_summary(state)
 
 
 def _render_inverse_link(state: dict) -> None:

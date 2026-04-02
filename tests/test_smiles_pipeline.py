@@ -85,7 +85,7 @@ class TestSmilesAutoMLPipeline:
         count_descs = [m.name for m in rdkit.get_descriptors_metadata() if m.is_count]
         selected = count_descs[:5] # 上位5件のみ
         
-        transformer = SmilesDescriptorTransformer(smiles_col="smiles", selected_descriptors=selected)
+        transformer = SmilesDescriptorTransformer(smiles_col="smiles", selected_descriptors=selected, count_normalization="none")
         df_processed = transformer.fit_transform(df)
         
         # 期待通り記述子が制限されているか

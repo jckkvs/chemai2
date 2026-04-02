@@ -626,7 +626,7 @@ def _extract_docstring_params(cls: type) -> dict[str, str]:
         raw_indent = len(line) - len(line.lstrip()) if line.strip() else 0
 
         # "Parameters" セクションの検出
-        if stripped in ("Parameters", "Attributes", "Keyword Arguments"):
+        if stripped in ("Parameters", "Attributes", "Keyword Arguments", "Args:", "Attributes:"):
             in_parameters_section = True
             continue
 
@@ -640,9 +640,9 @@ def _extract_docstring_params(cls: type) -> dict[str, str]:
         # 他のセクション（Returns, Notes等）に入ったら終了
         if (
             stripped in ("Returns", "Yields", "Raises", "Notes", "References",
-                         "See Also", "Examples", "Warnings", "Methods")
+                         "See Also", "Examples", "Warnings", "Methods", "Returns:", "Yields:", "Raises:")
             and i + 1 < len(lines)
-            and lines[i + 1].strip().startswith("---")
+            and (lines[i + 1].strip().startswith("---") or stripped.endswith(":"))
         ):
             if current_param and current_desc:
                 descriptions[current_param] = " ".join(current_desc).strip()
@@ -672,8 +672,9 @@ def _extract_docstring_params(cls: type) -> dict[str, str]:
 
                 current_param = candidate
                 # numpydoc: コロンの後ろは型情報なので説明文に含めない
-                # 説明文は次行（インデントが深い行）から始まる
-                current_desc = []
+                # Google style の場合もあるので、コロンの後に文字列があればそれを説明文の先頭とする
+                desc_candidate = parts[1].strip()
+                current_desc = [desc_candidate] if desc_candidate else []
                 continue
 
         # reStructuredText: ":param param_name:"

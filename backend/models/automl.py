@@ -88,6 +88,7 @@ class AutoMLEngine:
         selected_descriptors: list[str] | None = None,
         active_engines: list[str] | None = None,
         monotonic_constraints_dict: dict[str, int] | None = None,
+        column_meta_dict: dict | None = None,
         count_normalization: str = "density",
     ) -> None:
         self.task = task
@@ -103,12 +104,14 @@ class AutoMLEngine:
         self.active_engines = active_engines
         self.count_normalization = count_normalization
         self.monotonic_constraints_dict = monotonic_constraints_dict or {}
+        self.column_meta_dict = column_meta_dict or {}  # ColumnMeta 辭書
 
     def run(
         self,
         df: pd.DataFrame,
         target_col: str,
-        smiles_col: str | None = None,
+        smiles_col: str | list[dict] | None = None,
+        fraction_type: str = "wt",
         group_col: str | None = None,
         preprocess_config: PreprocessConfig | None = None,
         cv_extra_params: dict[str, Any] | None = None,
@@ -143,15 +146,23 @@ class AutoMLEngine:
             logger.info(f"目的変数の欠損により {initial_len - len(df)} 行を除去しました。")
 
         # Step 2: 変数型判定（SMILES等を検出）
-        # ── 重要: smiles_col は SmilesDescriptorTransformer で別途処理するため
-        # ── TypeDetector（→ColumnTransformer構築）の対象から除外する。
-        # ── 除外しないとColumnTransformerがSMILS文字列列を処理しようとし、
-        # ── SmilesDescriptorTransformerの出力（SMILES列なし）と列ミスマッチが起きる。
         self.progress_callback(2, total_steps, "変数型を自動判定中...")
         detector = TypeDetector()
         _detect_cols_to_drop = [target_col]
-        if smiles_col and smiles_col in df.columns:
-            _detect_cols_to_drop.append(smiles_col)
+        
+        comps = []
+        if isinstance(smiles_col, str):
+            comps = [{"smiles_col": smiles_col}]
+        elif isinstance(smiles_col, list):
+            comps = smiles_col
+            
+        _smiles_cols_present = False
+        for c in comps:
+            s_col = c.get("smiles_col")
+            if s_col and s_col in df.columns:
+                _smiles_cols_present = True
+                _detect_cols_to_drop.append(s_col)
+                
         detection_result = detector.detect(df.drop(columns=_detect_cols_to_drop))
 
         # Step 3: タスク判定
@@ -224,12 +235,13 @@ class AutoMLEngine:
         _smiles_transformer_for_cv: SmilesDescriptorTransformer | None = None
         X_train = X.copy()
 
-        if smiles_col and smiles_col in X_train.columns:
-            logger.info(f"SMILES列 '{smiles_col}' を事前変換して記述子DFを構築します。")
+        if _smiles_cols_present:
+            logger.info(f"SMILES成分を事前変換して記述子DFを構築します: {comps}")
             _smiles_transformer_for_cv = SmilesDescriptorTransformer(
-                smiles_col=smiles_col,
+                smiles_col=comps,
                 selected_descriptors=self.selected_descriptors,
                 count_normalization=self.count_normalization,
+                fraction_type=fraction_type
             )
             try:
                 X_train = _smiles_transformer_for_cv.fit_transform(X_train)
@@ -257,20 +269,31 @@ class AutoMLEngine:
             try:
                 model_inst = get_model(mkey, task=task, **self.model_params.get(mkey, {}))
                 # 単調性制約を適用（ネイティブ対応 or ソフト制約ラッパー）
-                if self.monotonic_constraints_dict:
+                # column_meta_dict と monotonic_constraints_dict をマージして使用
+                if self.monotonic_constraints_dict or self.column_meta_dict:
                     try:
                         from backend.pipeline.column_selector import ColumnMeta
                         from backend.pipeline.pipeline_builder import apply_monotonic_constraints
-                        _col_meta = {
-                            col: ColumnMeta(monotonic=self.monotonic_constraints_dict.get(col, 0))
-                            for col in X_train.columns
-                        }
+                        # 優先度: column_meta_dict > monotonic_constraints_dict
+                        _col_meta: dict[str, ColumnMeta] = {}
+                        # まず monotonic_constraints_dict から
+                        for col in X_train.columns:
+                            mono_val = self.monotonic_constraints_dict.get(col, 0)
+                            _col_meta[col] = ColumnMeta(monotonic=mono_val)
+                        # 次に column_meta_dict で上書き（より詳細な情報を持つ）
+                        for col, meta in self.column_meta_dict.items():
+                            if col in X_train.columns:
+                                if isinstance(meta, ColumnMeta):
+                                    _col_meta[col] = meta
+                                elif isinstance(meta, dict):
+                                    _col_meta[col] = ColumnMeta.from_dict(meta)
                         model_inst = apply_monotonic_constraints(
                             model_inst, _col_meta,
                             feature_names=list(X_train.columns)
                         )
                     except Exception as _e:
                         logger.warning(f"単調性制約適用をスキップ ({mkey}): {_e}")
+
                 pipeline_base = build_full_pipeline(
                     detection_result, model_inst,
                     target_col=target_col,
@@ -492,15 +515,31 @@ class AutoMLEngine:
                 # 存在する列だけ使用（SMILES列・目的変数は別途処理）
                 keep = set(desc_cols)
                 available = set(df.columns) - {target_col}
-                if smiles_col:
-                    available -= {smiles_col}
+                
+                comps = []
+                if isinstance(smiles_col, str):
+                    comps = [{"smiles_col": smiles_col}]
+                elif isinstance(smiles_col, list):
+                    comps = smiles_col
+                    
+                for c in comps:
+                    s_col = c.get("smiles_col")
+                    if s_col:
+                        available -= {s_col}
+                        
                 if group_col:
                     available -= {group_col}
                 valid_desc = [c for c in desc_cols if c in available]
                 # 有効な記述子 + 目的変数 + その他必要列でサブDF構築
                 base_cols = [target_col]
-                if smiles_col and smiles_col in df.columns:
-                    base_cols.append(smiles_col)
+                for c in comps:
+                    s_col = c.get("smiles_col")
+                    if s_col and s_col in df.columns:
+                        base_cols.append(s_col)
+                    f_col = c.get("fraction_col")
+                    if f_col and f_col in df.columns:
+                        base_cols.append(f_col)
+                        
                 if group_col and group_col in df.columns:
                     base_cols.append(group_col)
                 use_cols = base_cols + valid_desc

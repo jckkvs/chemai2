@@ -392,36 +392,81 @@ def _render_column_roles(state: dict) -> None:
                         on_change=lambda e: state.update({"task_type": e.value}),
                     ).classes("full-width q-mb-md")
 
-                    # SMILES列
-                    smiles_options = ["（なし）"] + all_cols
-                    cur_smiles = state.get("smiles_col", "")
-                    smiles_val = cur_smiles if cur_smiles in all_cols else "（なし）"
-                    ui.select(
-                        options=smiles_options,
-                        label="🧬 SMILES列（化合物構造 / 任意）",
-                        value=smiles_val,
-                        on_change=lambda e: state.update({
-                            "smiles_col": "" if e.value == "（なし）" else e.value,
-                            "precalc_done": False,
-                        }),
-                    ).classes("full-width q-mb-md").props("clearable").tooltip(
-                        "SMILES形式の化合物構造が含まれる列。指定すると14エンジンで記述子を自動計算します。"
-                    )
+                    # SMILES列 / 混合系対応UI
+                    ui.label("🧬 SMILES混合成分（複数指定可・割合考慮）").classes("text-body2 text-bold q-mt-md")
+                    
+                    if "smiles_components" not in state:
+                        scol = state.get("smiles_col", "")
+                        if scol and scol in all_cols:
+                            state["smiles_components"] = [{"smiles_col": scol, "fraction_col": "（なし）"}]
+                        else:
+                            state["smiles_components"] = []
+
+                    comps_container = ui.column().classes("full-width q-gutter-xs")
+                    
+                    def _render_comps():
+                        comps_container.clear()
+                        with comps_container:
+                            smiles_opts = ["（なし）"] + all_cols
+                            frac_opts = ["（なし）"] + all_cols
+                            
+                            for i, comp in enumerate(state["smiles_components"]):
+                                with ui.row().classes("items-center full-width justify-between no-wrap"):
+                                    def _on_s(e, idx=i):
+                                        state["smiles_components"][idx]["smiles_col"] = e.value
+                                        state["precalc_done"] = False
+                                        if idx == 0:
+                                            state["smiles_col"] = e.value if e.value != "（なし）" else ""
+                                    def _on_f(e, idx=i):
+                                        state["smiles_components"][idx]["fraction_col"] = e.value
+                                        state["precalc_done"] = False
+                                        
+                                    s_val = comp.get("smiles_col", "（なし）")
+                                    f_val = comp.get("fraction_col", "（なし）")
+                                    
+                                    ui.select(smiles_opts, value=s_val if s_val in smiles_opts else "（なし）", 
+                                              label=f"SMILES {i+1}", on_change=_on_s).classes("col-5").props("dense")
+                                    ui.select(frac_opts, value=f_val if f_val in frac_opts else "（なし）",
+                                              label=f"割合(%) {i+1}", on_change=_on_f).classes("col-5").props("dense")
+                                              
+                                    def _del(idx=i):
+                                        state["smiles_components"].pop(idx)
+                                        if len(state["smiles_components"]) == 0:
+                                            state["smiles_col"] = ""
+                                        _render_comps()
+                                    ui.button(icon="close", on_click=_del).props("flat dense color=red").classes("col-1")
+                                    
+                            with ui.row().classes("items-center full-width justify-between q-mt-xs"):
+                                ui.button("＋ 成分追加", on_click=lambda: (state["smiles_components"].append({"smiles_col": "（なし）", "fraction_col": "（なし）"}), _render_comps())).props("outline dense color=cyan size=sm")
+                                
+                                ui.radio({"wt": "wt%", "mol": "mol%"}, value=state.get("fraction_type", "wt"),
+                                         on_change=lambda e: state.update({"fraction_type": e.value})).props("dense inline").tooltip("割合の単位 (wt% / mol%)")
+                                
+                    _render_comps()
+                    ui.label("構成成分を追加し、加重平均による混合系の特徴量を自動計算します").classes("text-caption text-grey-5 q-mb-md")
+
 
                 # ── 右列: オプション設定（折りたたみ） ──
                 with ui.column().classes("col-5"):
                     with ui.expansion("🔧 詳細な列役割設定", icon="settings").classes("full-width"):
-                        excl_opts = [c for c in all_cols
-                                     if c != state.get("target_col") and c != state.get("smiles_col")]
+                        # 除外列リスト生成
+                        target = state.get("target_col")
+                        # smiles_components の列を除外項目に入れるのを防ぐ
+                        smiles_used = []
+                        for c in state.get("smiles_components", []):
+                            if c["smiles_col"] != "（なし）": smiles_used.append(c["smiles_col"])
+                            if c["fraction_col"] != "（なし）": smiles_used.append(c["fraction_col"])
+                        
+                        excl_opts = [c for c in all_cols if c != target and c not in smiles_used]
 
                         # 除外列
                         ui.select(
                             options=excl_opts,
                             label="🚫 除外する列",
-                            value=state.get("exclude_cols", []),
+                            value=[c for c in state.get("exclude_cols", []) if c in excl_opts],
                             on_change=lambda e: state.update({"exclude_cols": e.value or []}),
                         ).classes("full-width q-mb-sm").props("multiple clearable use-chips").tooltip(
-                            "目的変数・SMILES以外で解析に使わない列（ID列・メモ列等）"
+                            "目的変数・SMILES/割合以外で解析に使わない列（ID列・メモ列等）"
                         )
 
                         # グループ列

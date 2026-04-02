@@ -46,6 +46,7 @@ def _run_engine_sync(
     model_params: dict[str, dict] | None = None,
     preprocess_params: dict[str, Any] | None = None,
     monotonic_constraints: dict[str, int] | None = None,
+    column_meta_dict: dict | None = None,
     count_normalization: str = "density",
 ) -> Any:
     """
@@ -74,6 +75,7 @@ def _run_engine_sync(
         selected_descriptors=selected_desc,
         active_engines=active_engines,
         monotonic_constraints_dict=monotonic_constraints,
+        column_meta_dict=column_meta_dict,
         count_normalization=count_normalization,
     )
 
@@ -222,7 +224,21 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                 model_params[mkey].update(mcfg.default_params)
         model_params = model_params or None
         mono_raw = state.get("monotonic_constraints", {})
-        monotonic_constraints = {k: v for k, v in mono_raw.items() if v != 0} or None
+        # column_meta から単調性制約も自動マージ
+        try:
+            from frontend_nicegui.components.column_meta_editor import (
+                build_column_meta_dict,
+                extract_monotonic_from_column_meta,
+            )
+            column_meta_dict = build_column_meta_dict(state)
+            mono_from_meta = extract_monotonic_from_column_meta(state)
+            # マージ: 直接設定が優先
+            merged_mono = {**mono_from_meta, **{k: v for k, v in mono_raw.items() if v != 0}}
+            monotonic_constraints = merged_mono or None
+        except Exception as _e:
+            logger.warning(f"column_meta の変換に失敗: {_e}")
+            column_meta_dict = None
+            monotonic_constraints = {k: v for k, v in mono_raw.items() if v != 0} or None
         cv_key = state.get("cv_key", "auto")
 
         # ══════════════════════════════════════════════════════
@@ -321,9 +337,11 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                     model_params=model_params,
                     preprocess_params=preprocess_params if preprocess_params else None,
                     monotonic_constraints=monotonic_constraints,
+                    column_meta_dict=column_meta_dict,
                     count_normalization=state.get("count_normalization", "density"),
                 )
                 all_results[set_name] = result
+
 
                 # ベストスコア追跡
                 if hasattr(result, "best_score") and result.best_score > best_score:

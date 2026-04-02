@@ -17,6 +17,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from backend.chem.rdkit_adapter import RDKitAdapter
 from backend.chem.mordred_adapter import MordredAdapter
 from backend.chem.psmiles_adapter import PSmilesAdapter
+from backend.chem.mix_rules import default_rules_manager
 
 logger = logging.getLogger(__name__)
 
@@ -40,15 +41,26 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
 
     def __init__(
         self,
-        smiles_col: str,
+        smiles_col: str | list[dict] | None = None,
         selected_descriptors: list[str] | None = None,
         active_engines: list[str] | None = None,
         count_normalization: str = "density",
+        fraction_type: str = "wt"
     ) -> None:
         self.smiles_col = smiles_col
         self.selected_descriptors = selected_descriptors
         self.active_engines = active_engines
         self.count_normalization = count_normalization  # "raw" or "density"
+        self.fraction_type = fraction_type
+        
+        self.components = []
+        if isinstance(smiles_col, str):
+            self.components = [{"smiles_col": smiles_col, "fraction_col": None}]
+        elif isinstance(smiles_col, list):
+            self.components = smiles_col
+        elif smiles_col is None:
+            self.components = [{"smiles_col": "smiles", "fraction_col": None}]
+
         self._descriptor_cols: list[str] = []
         self._non_smiles_cols: list[str] = []
 
@@ -250,82 +262,135 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
         return count_cols
 
     @staticmethod
-    def _compute_molar_volumes(smiles_list: list[str]) -> "np.ndarray | None":
-        """SMILESリストからモル体積を計算する。
-
-        モル体積 V = MolWt / density_est
-        density_est ≈ 1.0 g/cm3 (有機液体の一般的な近似値)
-
-        より正確にはAllChem.ComputeMolVolumeで3D体積を計算可能だが、
-        コンフォマー生成が必要で計算コストが高い。
-        ここではMolWtベースの簡易推定を使用。
-        """
+    def _compute_molecular_weight(smiles_list: list[str]) -> "np.ndarray":
         try:
             from rdkit import Chem
             from rdkit.Chem import Descriptors
-
             volumes = []
             for smi in smiles_list:
                 try:
                     mol = Chem.MolFromSmiles(str(smi))
                     if mol is not None:
                         mw = Descriptors.MolWt(mol)
-                        # 有機化合物の平均密度 ≈ 1.0 g/cm3
-                        # V = MW / density (cm3/mol)
-                        v = max(mw / 1.0, 10.0)  # 最小10 cm3/mol
-                        volumes.append(v)
+                        volumes.append(mw)
                     else:
                         volumes.append(100.0)  # フォールバック
                 except Exception:
                     volumes.append(100.0)
-
             return np.array(volumes)
         except ImportError:
-            logger.warning("RDKitが利用不可。密度変換をスキップ。")
-            return None
+            return np.full(len(smiles_list), 100.0)
+
+    @staticmethod
+    def _compute_molar_volumes(smiles_list: list[str]) -> "np.ndarray | None":
+        """SMILESリストからモル体積を計算する。"""
+        mws = SmilesDescriptorTransformer._compute_molecular_weight(smiles_list)
+        return np.maximum(mws / 1.0, 10.0)
+
+    def _transform_mixture(self, X: pd.DataFrame) -> pd.DataFrame:
+        """複数SMILESコンポーネントからの加重平均記述子の計算"""
+        n_samples = len(X)
+        descs_list = []
+        mw_list = []
+        W_given_list = []
+        
+        for comp in self.components:
+            s_col = comp.get("smiles_col")
+            f_col = comp.get("fraction_col")
+            
+            smi_list = X[s_col].tolist() if s_col and s_col in X.columns else [""] * n_samples
+            
+            # デスクリプタ計算
+            desc = self._compute_descriptors(smi_list)
+            desc = self._apply_count_normalization(desc, smi_list)
+            descs_list.append(desc)
+            
+            # 分子量計算
+            mw = self._compute_molecular_weight(smi_list)
+            mw_list.append(mw)
+            
+            # 割合取得
+            if f_col and f_col in X.columns:
+                w = pd.to_numeric(X[f_col], errors="coerce").fillna(0.0).values
+            else:
+                w = np.ones(n_samples)
+            W_given_list.append(w)
+            
+        # wt/mol 分率の計算
+        W_given_mat = np.column_stack(W_given_list)
+        MW_mat = np.column_stack(mw_list)
+        
+        W_sum = W_given_mat.sum(axis=1, keepdims=True)
+        W_sum[W_sum == 0] = 1.0
+        W_given_mat = W_given_mat / W_sum # normalize
+        
+        if self.fraction_type == "wt":
+            wt_frac = W_given_mat
+            moles = W_given_mat / MW_mat
+            mol_sum = moles.sum(axis=1, keepdims=True)
+            mol_sum[mol_sum == 0] = 1.0
+            mol_frac = moles / mol_sum
+        else: # mol
+            mol_frac = W_given_mat
+            weights = W_given_mat * MW_mat
+            wt_sum = weights.sum(axis=1, keepdims=True)
+            wt_sum[wt_sum == 0] = 1.0
+            wt_frac = weights / wt_sum
+            
+        # ベースとするカラムセットは最初の有効な成分のものとする
+        ref_cols = descs_list[0].columns if descs_list else pd.Index([])
+        
+        res = pd.DataFrame(index=X.index, columns=ref_cols)
+        
+        for col in ref_cols:
+            rule = default_rules_manager.get_rule(str(col))
+            fracs = wt_frac if rule == "wt" else mol_frac
+            
+            val = np.zeros(n_samples)
+            for i in range(len(self.components)):
+                if col in descs_list[i].columns:
+                    val += fracs[:, i] * descs_list[i][col].values
+            res[col] = val
+            
+        return res
 
     def fit(self, X: pd.DataFrame, y: Any = None) -> "SmilesDescriptorTransformer":
-        """学習フェーズで記述子カラム名を記憶する。
-
-        全NaN列は除去してから _descriptor_cols を記憶することで、
-        CV fold 間での列名不一致（KeyError）を防ぐ。
-        """
-        if self.smiles_col not in X.columns:
-            raise ValueError(f"SMILES列 '{self.smiles_col}' がDataFrameに存在しません。")
-        smiles_list = X[self.smiles_col].tolist()
-        X_chem = self._compute_descriptors(smiles_list)
-        X_chem = self._apply_count_normalization(X_chem, smiles_list)
-        # ── 全NaN列の除去（XTB未インストール等で全行NaNになる列を除外）
-        # ── これによりTypeDetectorに渡るDFとCV時のDFが一致する。
+        for comp in self.components:
+            if comp["smiles_col"] not in X.columns:
+                raise ValueError(f"SMILES列 '{comp['smiles_col']}' がDataFrameに存在しません。")
+                
+        X_chem = self._transform_mixture(X)
+        
+        # 全NaN列の除去
         all_nan_cols = [c for c in X_chem.columns if X_chem[c].isna().all()]
         if all_nan_cols:
-            logger.info(
-                f"全行NaN列を除去: {len(all_nan_cols)}列 (例: {all_nan_cols[:5]})"
-            )
             X_chem = X_chem.drop(columns=all_nan_cols)
+            
         self._descriptor_cols = X_chem.columns.tolist()
-        self._non_smiles_cols = [c for c in X.columns if c != self.smiles_col]
+        
+        # 削除すべきSMILES列を特定
+        drop_cols = [c["smiles_col"] for c in self.components]
+        self._non_smiles_cols = [c for c in X.columns if c not in drop_cols]
         return self
 
     def transform(self, X: pd.DataFrame, y: Any = None) -> pd.DataFrame:
-        """SMILES列を記述子列に置換したDataFrameを返す。"""
-        if self.smiles_col not in X.columns:
-            raise ValueError(f"SMILES列 '{self.smiles_col}' がDataFrameに存在しません。")
-        smiles_list = X[self.smiles_col].tolist()
-        X_chem = self._compute_descriptors(smiles_list)
-        X_chem = self._apply_count_normalization(X_chem, smiles_list)
+        for comp in self.components:
+            if comp["smiles_col"] not in X.columns:
+                raise ValueError(f"SMILES列 '{comp['smiles_col']}' がDataFrameに存在しません。")
+                
+        X_chem = self._transform_mixture(X)
 
-        # 記述子カラムをfitで記憶した順序・列に揃える（推論時の列不一致を防ぐ）
         for col in self._descriptor_cols:
             if col not in X_chem.columns:
                 X_chem[col] = 0.0
         X_chem = X_chem[self._descriptor_cols].reset_index(drop=True)
 
-        # 非SMILES列（記述子以外の生データ列）から、SMILES列と新しく計算した記述子の重複列を除去
-        # SMILES列は記述子で置換済みなので、文字列のまま残すとsklearnモデルが
-        # ValueError: could not convert string to float を発生させる
         X_rest = X.reset_index(drop=True)
-        drop_cols = [self.smiles_col] + [c for c in self._descriptor_cols if c in X_rest.columns]
+        drop_cols = []
+        for c in self.components:
+            if c.get("smiles_col"): drop_cols.append(c.get("smiles_col"))
+            if c.get("fraction_col") and c.get("fraction_col") != "（なし）": drop_cols.append(c.get("fraction_col"))
+        drop_cols.extend([c for c in self._descriptor_cols if c in X_rest.columns])
         X_rest = X_rest.drop(columns=[c for c in drop_cols if c in X_rest.columns], errors="ignore")
 
         return pd.concat([X_rest, X_chem], axis=1)

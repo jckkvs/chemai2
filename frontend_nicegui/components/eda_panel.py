@@ -158,45 +158,42 @@ def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict) -> None:
     with ui.tabs().classes("full-width").props(
         "dense no-caps active-color=cyan indicator-color=cyan scrollable"
     ) as eda_tabs:
-        ui.tab("t_stats", label="📋 統計")
-        ui.tab("t_dist", label="📊 分布")
-        ui.tab("t_corr", label="🔥 相関行列")
-        ui.tab("t_target", label="🎯 目的変数vs説明変数")
-        ui.tab("t_pair", label="📈 Pairplot")
-        ui.tab("t_box", label="🎻 Box/Violin")
-        ui.tab("t_qq", label="📐 QQプロット")
-        ui.tab("t_vif", label="📏 VIF(共線性)")
-        ui.tab("t_outlier", label="🎯 外れ値")
-        ui.tab("t_missing", label="🧩 欠損")
+        ui.tab("t_overview", label="📋 データ概要")
+        ui.tab("t_relation", label="🔥 関係性分析")
         ui.tab("t_dr", label="🌀 次元削減")
-        ui.tab("t_fi", label="⭐ 特徴量重要度")
+        ui.tab("t_fi", label="⭐ 重要度・その他")
 
-    with ui.tab_panels(eda_tabs, value="t_stats").classes("full-width bg-transparent"):
-        with ui.tab_panel("t_stats"):
-            _render_stats(df, target_col)
-        with ui.tab_panel("t_dist"):
-            _render_distribution(df, target_col)
-        with ui.tab_panel("t_corr"):
-            _render_correlation(df, target_col)
-        with ui.tab_panel("t_target"):
-            _render_target_vs_features(df, target_col)
-        with ui.tab_panel("t_pair"):
-            _render_pairplot(df, target_col)
-        with ui.tab_panel("t_box"):
-            _render_box_violin(df, target_col)
-        with ui.tab_panel("t_qq"):
-            _render_qqplot(df, target_col)
-        with ui.tab_panel("t_vif"):
-            _render_vif(df, target_col)
-        with ui.tab_panel("t_outlier"):
-            _render_outliers(df, target_col)
-        with ui.tab_panel("t_missing"):
-            _render_missing(df)
+    with ui.tab_panels(eda_tabs, value="t_overview").classes("full-width bg-transparent"):
+        with ui.tab_panel("t_overview"):
+            with ui.expansion("📋 統計サマリー", value=True).classes("full-width bg-dark q-mb-md"):
+                _render_stats(df, target_col)
+            with ui.expansion("🧩 欠損", value=False).classes("full-width bg-dark q-mb-md"):
+                _render_missing(df)
+            with ui.expansion("🎯 外れ値", value=False).classes("full-width bg-dark q-mb-md"):
+                _render_outliers(df, target_col)
+            with ui.expansion("📊 分布", value=False).classes("full-width bg-dark q-mb-md"):
+                _render_distribution(df, target_col)
+                
+        with ui.tab_panel("t_relation"):
+            with ui.expansion("🔥 相関行列 (VIFフィルタ済)", value=True).classes("full-width bg-dark q-mb-md"):
+                _render_correlation(df, target_col)
+            with ui.expansion("🎯 目的変数 vs 説明変数", value=False).classes("full-width bg-dark q-mb-md"):
+                _render_target_vs_features(df, target_col)
+            with ui.expansion("📈 Pairplot", value=False).classes("full-width bg-dark q-mb-md"):
+                _render_pairplot(df, target_col)
+                
         with ui.tab_panel("t_dr"):
             _render_dim_reduction(df, target_col, state)
+            
         with ui.tab_panel("t_fi"):
-            _render_feature_importance(df, target_col)
-
+            with ui.expansion("⭐ 特徴量重要度", value=True).classes("full-width bg-dark q-mb-md"):
+                _render_feature_importance(df, target_col)
+            with ui.expansion("🎻 Box/Violin", value=False).classes("full-width bg-dark q-mb-md"):
+                _render_box_violin(df, target_col)
+            with ui.expansion("📐 QQプロット", value=False).classes("full-width bg-dark q-mb-md"):
+                _render_qqplot(df, target_col)
+            with ui.expansion("📏 VIF(共線性) 詳細", value=False).classes("full-width bg-dark q-mb-md"):
+                _render_vif(df, target_col)
 
 # ═══════════════════════════════════════════════════════════
 # 1. 統計サマリー（歪度・尖度含む）
@@ -298,7 +295,24 @@ def _render_correlation(df: pd.DataFrame, target_col: str) -> None:
         max_cols = 30
         if work_df.shape[1] > max_cols and target_col in work_df.columns:
             corr_abs = work_df.corr(method=method)[target_col].abs().sort_values(ascending=False)
-            top = corr_abs.head(max_cols).index.tolist()
+            candidates = corr_abs.index.tolist()
+            
+            selected = []
+            # VIF代用の相関フィルタリング
+            # 互いの相関が非常に強い特徴量(>0.85)は排除し、独立した情報を優先
+            corr_matrix = work_df.corr(method=method).abs()
+            for c in candidates:
+                if c == target_col: continue
+                if not selected:
+                    selected.append(c)
+                else:
+                    max_corr = corr_matrix.loc[c, selected].max()
+                    if max_corr < 0.85: # 共線性が低い場合のみ追加
+                        selected.append(c)
+                if len(selected) >= max_cols:
+                    break
+                    
+            top = selected + [target_col]
             work_df = work_df[top]
 
         corr = work_df.corr(method=method)

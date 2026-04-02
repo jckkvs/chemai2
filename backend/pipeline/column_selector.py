@@ -32,14 +32,54 @@ class ColumnMeta:
     1列のメタ情報（ユーザーが設定）。
 
     Attributes:
-        monotonic: 単調性制約。0=なし, 1=単調増加, -1=単調減少
+        monotonic: 単調性制約。
+            0  = なし
+            1  = 単調増加
+            -1 = 単調減少
+            2  = 単調（方向自動検出: fit時にSpearman相関で判定）
+        constraint_strength: 単調性制約の強度。
+            None    = デフォルト
+            "weak"  = ソフト制約（できるだけ単調にする）
+            "strong" = ハード制約（±3σ 全範囲で厳密単調）
         linearity: 線形性のヒント。"linear" | "nonlinear" | "unknown"
         group: グループラベル文字列（GroupLasso等で使用）。None=グループなし
+        scale_hint: スケーラー優先ヒント。None=自動 |
+            "standard" | "minmax" | "robust" | "maxabs" | "power_yj" | "log" | "none"
+        description: ユーザーが記録する列の説明テキスト
+        fixed: True のとき特徴量選択で常に保持（選択手法に関わらず残す）
     """
-    monotonic: int = 0          # 0 | 1 | -1
-    linearity: str = "unknown"  # "linear" | "nonlinear" | "unknown"
+    monotonic: int = 0                          # 0 | 1 | -1 | 2
+    constraint_strength: str | None = None      # None | "weak" | "strong"
+    linearity: str = "unknown"                  # "linear" | "nonlinear" | "unknown"
     group: str | None = None
+    scale_hint: str | None = None
+    description: str = ""
+    fixed: bool = False
 
+    def to_dict(self) -> dict:
+        """シリアライズ（state保存用）。"""
+        return {
+            "monotonic": self.monotonic,
+            "constraint_strength": self.constraint_strength,
+            "linearity": self.linearity,
+            "group": self.group,
+            "scale_hint": self.scale_hint,
+            "description": self.description,
+            "fixed": self.fixed,
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "ColumnMeta":
+        """デシリアライズ（state復元用）。"""
+        return ColumnMeta(
+            monotonic=int(d.get("monotonic", 0)),
+            constraint_strength=d.get("constraint_strength") or None,
+            linearity=str(d.get("linearity", "unknown")),
+            group=d.get("group") or None,
+            scale_hint=d.get("scale_hint") or None,
+            description=str(d.get("description", "")),
+            fixed=bool(d.get("fixed", False)),
+        )
 
 # ============================================================
 # ColumnSelectorWrapper — mlxtend ラッパー

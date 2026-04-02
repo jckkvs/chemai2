@@ -183,22 +183,30 @@ def apply_monotonic_constraints(
     """
     estimatorの種類に応じて単調性制約を適用する。
 
-    - **ネイティブ対応**（XGBoost/LightGBM/HistGB）:
-        get_params() のキーチェックで判定し、monotonic_constraints等に直接設定。
+    ルーティング戦略（2段階）:
+    ──────────────────────────
+    1. ネイティブ対応（XGBoost / LightGBM / HistGB / XGBRFRegressor等）:
+       get_params() に "monoton" キーが存在する場合。
+       ※ monotonic=2(自動検出)はネイティブ非対応のため事前解決不可→0にフォールバック
 
-    - **ソフト対応**（SVR/KernelRidge/GPR/SVC等）:
-        MonotonicKernelWrapper / MonotonicKernelClassifierWrapper でラップ。
-        学習データ範囲 ± 1.5σ のグリッドでペナルティ反復フィット。
+    2. ペナルティ拡張法（その他全モデル: SVR, GPR, RFR, Ridge, MLP, ...）:
+       MonotonicConstraintRegressor / MonotonicConstraintClassifier でラップ。
+       ±3σ範囲でペナルティサンプル拡張 + 反復フィッティング。
+       monotonic=2 は fit時に Spearman相関で自動解決。
+
+    制約強度:
+       column_meta の constraint_strength ("weak"/"strong") を反映。
+       同一ラッパー内は最初に見つかった非None値を採用。
 
     Args:
         estimator: sklearn 互換の推定器
         column_meta: 列名 → ColumnMeta の辞書
-        feature_names: 特徴量名リスト。None の場合は column_meta のキー順。
-        soft_monotonic_kwargs: MonotonicKernelWrapper に渡す追加引数
-            (n_grid, sigma_factor, penalty_weight, max_iter)
+        feature_names: 特徴量名リスト。None なら column_meta のキー順。
+        soft_monotonic_kwargs: ラッパーに渡す追加引数
+            n_grid, sigma_factor, penalty_weight, max_iter
 
     Returns:
-        設定済み estimator（サポート外の場合はそのまま返す）
+        設定済み estimator
     """
     names = feature_names or list(column_meta.keys())
     n_features = len(names)
@@ -210,59 +218,75 @@ def apply_monotonic_constraints(
         logger.debug("monotonic_constraints: 全て 0 のためスキップ")
         return estimator
 
-    # ── ネイティブ対応: get_params() に "monoton" を含むキーがある場合 ──
+    n_constrained = sum(1 for c in constraints if c != 0)
+    cls_name = type(estimator).__name__
+
+    # constraint_strength の集約（最初の非None値を採用）
+    strength: str | None = None
+    for n in names:
+        meta = column_meta.get(n)
+        if meta and hasattr(meta, "constraint_strength") and meta.constraint_strength:
+            strength = meta.constraint_strength
+            break
+
+    # ── Step 1: ネイティブ対応チェック ──
     try:
         params = estimator.get_params()
     except Exception:
+        logger.debug(f"get_params() 失敗 ({cls_name}) → スキップ")
         return estimator
 
-    monotonic_keys = [
-        k for k in params
-        if "monoton" in k.lower()
-    ]
+    monotonic_keys = [k for k in params if "monoton" in k.lower()]
 
     if monotonic_keys:
-        # XGBoost / LightGBM / HistGB 等 → ネイティブ設定
-        cls_name = type(estimator).__name__
+        # ネイティブモデルは monotonic=2 非対応 → 0 にフォールバック
+        native_constraints = tuple(
+            (0 if c == 2 else c) for c in constraints
+        )
+        if not any(c != 0 for c in native_constraints):
+            logger.debug("ネイティブモデル: 自動検出のみで確定制約なし → スキップ")
+            return estimator
+
         for key in monotonic_keys:
             try:
-                val: Any = list(constraints) if "lgbm" in cls_name.lower() else constraints
+                if "lgbm" in cls_name.lower() or "lightgbm" in cls_name.lower():
+                    val: Any = list(native_constraints)
+                elif "histgradient" in cls_name.lower():
+                    val = list(native_constraints)
+                else:
+                    val = native_constraints
                 estimator.set_params(**{key: val})
+                n_native = sum(1 for c in native_constraints if c != 0)
                 logger.info(
-                    f"monotonic 制約設定(ネイティブ): {cls_name}.{key}, "
-                    f"制約あり={sum(1 for c in constraints if c != 0)}/{len(constraints)} 列"
+                    f"✅ 単調性制約(ネイティブ): {cls_name}.{key}, "
+                    f"{n_native}/{n_features} 変数"
                 )
                 break
             except Exception as e:
                 logger.warning(f"set_params({key}=...) 失敗: {e}")
         return estimator
 
-    # ── ソフト対応: カーネル系モデルの判定とラップ ──
+    # ── Step 2: ペナルティ拡張法ラッパー（全モデル対応） ──
     try:
-        from backend.models.monotonic_kernel import (
-            is_soft_monotonic_candidate,
-            wrap_with_soft_monotonic,
-        )
-        if is_soft_monotonic_candidate(estimator):
-            kwargs = soft_monotonic_kwargs or {}
-            wrapped = wrap_with_soft_monotonic(
-                estimator,
-                constraints,
-                **kwargs,
-            )
-            logger.info(
-                f"MonotonicKernelWrapper 適用: {type(estimator).__name__}, "
-                f"制約={constraints}"
-            )
-            return wrapped
-    except ImportError:
-        logger.warning("monotonic_kernel モジュールが見つかりません")
+        from backend.models.monotonic_wrapper import wrap_monotonic
+    except ImportError as e:
+        logger.warning(f"monotonic_wrapper モジュールが見つかりません: {e}")
+        return estimator
 
-    # ネイティブ・ソフトどちらも非対応の場合
-    logger.debug(
-        f"'{type(estimator).__name__}' は monotonic パラメータを持ちません。制約を無視します。"
+    kwargs: dict[str, Any] = {"constraint_strength": strength}
+    if soft_monotonic_kwargs:
+        for k in ("n_grid", "sigma_factor", "penalty_weight", "max_iter"):
+            if k in soft_monotonic_kwargs:
+                kwargs[k] = soft_monotonic_kwargs[k]
+
+    wrapped = wrap_monotonic(estimator, constraints, **kwargs)
+    strength_label = f" [{strength}]" if strength else ""
+    logger.info(
+        f"✅ 単調性制約(ペナルティ拡張){strength_label}: {cls_name}, "
+        f"{n_constrained}/{n_features} 変数"
     )
-    return estimator
+    return wrapped
+
 
 
 # ============================================================
