@@ -344,3 +344,133 @@ def analyze_target(
         result["is_balanced"] = float(vc.min() / vc.max()) >= 0.5 if len(vc) >= 2 else True
 
     return result
+
+
+# ============================================================
+# 新規追加EDA機能 (QQプロット、VIF)
+# ============================================================
+
+def compute_vif(
+    df: pd.DataFrame,
+    cols: list[str] | None = None,
+    threshold: float = 10.0,
+) -> dict[str, Any]:
+    """
+    分散膨張因子（VIF）を計算し、多重共線性を診断する。
+    
+    Args:
+        df: 数値のみを含むDataFrame
+        cols: 対象列（None=全数値列）
+        threshold: VIF閾値（デフォルト10.0）
+    
+    Returns:
+        {
+            "vif_values": {"col_name": vif_value, ...},
+            "high_vif_cols": ["col1", "col2"],  # threshold 超え
+            "recommendation": str,
+        }
+    """
+    try:
+        from statsmodels.stats.outliers_influence import variance_inflation_factor
+    except ImportError:
+        return {"error": "statsmodels is required for VIF calculation"}
+    
+    numeric_df = df.select_dtypes(include="number")
+    target_cols = cols if cols else numeric_df.columns.tolist()
+    
+    # 定数列・欠損列を除外
+    valid_cols = []
+    for c in target_cols:
+        if c in numeric_df.columns and numeric_df[c].nunique() > 1 and numeric_df[c].notna().all():
+            valid_cols.append(c)
+            
+    if len(valid_cols) < 2:
+        return {"error": "VIF計算には最低2つの有効な数値列（欠損なし、定数でない）が必要です"}
+        
+    X = numeric_df[valid_cols].copy()
+    
+    # statsmodelsのVIF計算のため定数項を追加するケースもあるが、
+    # スケーリングして計算する方が安定するため、ここでは簡単にそのまま計算（実用上は標準化推奨）
+    from sklearn.preprocessing import StandardScaler
+    X_scaled = StandardScaler().fit_transform(X)
+    
+    vif_dict = {}
+    high_vif = []
+    
+    for i, col in enumerate(valid_cols):
+        try:
+            vif = float(variance_inflation_factor(X_scaled, i))
+            vif_dict[col] = vif
+            if vif > threshold:
+                high_vif.append(col)
+        except Exception:
+            # 完璧な多重共線性がある場合などはエラーになることがある
+            vif_dict[col] = float('inf')
+            high_vif.append(col)
+            
+    # 推奨事項の生成
+    rec = "多重共線性の問題は検出されませんでした。"
+    if high_vif:
+        rec = f"高い多重共線性が検出されました。以下の列のいずれかを除外することを検討してください: {', '.join(high_vif)}"
+        
+    return {
+        "vif_values": vif_dict,
+        "high_vif_cols": high_vif,
+        "recommendation": rec,
+    }
+
+
+def compute_qq_data(series: pd.Series) -> dict[str, Any]:
+    """
+    QQプロット用の理論分位点・実測分位点を計算する。
+    
+    Args:
+        series: 対象の数値Series
+        
+    Returns:
+        {
+            "theoretical_quantiles": list[float],
+            "sample_quantiles": list[float],
+            "r_squared": float (適合度)
+        }
+    """
+    try:
+        from scipy import stats
+    except ImportError:
+        return {"error": "scipy is required for QQ plot calculation"}
+        
+    s = series.dropna()
+    if not pd.api.types.is_numeric_dtype(s) or len(s) < 2:
+        return {"error": "QQプロットには有効な数値データが必要です"}
+        
+    # sample数が大きすぎる場合は間引く (描画負荷軽減)
+    if len(s) > 1000:
+        s = s.sample(1000, random_state=42)
+        
+    # stats.probplotを利用
+    (theoretical, sample), (slope, intercept, r) = stats.probplot(s, dist="norm")
+    
+    return {
+        "theoretical_quantiles": theoretical.tolist(),
+        "sample_quantiles": sample.tolist(),
+        "r_squared": float(r**2),
+        "line": {
+            "slope": float(slope),
+            "intercept": float(intercept)
+        }
+    }
+
+
+def convert_numpy_to_list(obj: Any) -> Any:
+    """numpy配列や数値をPythonネイティブ型に変換する（再帰的）"""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.integer, np.floating)):
+        return obj.item()
+    elif isinstance(obj, dict):
+        return {k: convert_numpy_to_list(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_to_list(item) for item in obj]
+    elif hasattr(obj, '__dict__'):
+        return {k: convert_numpy_to_list(v) for k, v in obj.__dict__.items()}
+    return obj

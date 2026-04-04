@@ -668,18 +668,24 @@ def _ensure_default_sets(state: dict) -> None:
 
                     max_corr_n = min(n_samples // 5, 50)
                     selected_corr: list[str] = []
+                    exclusion_reasons: dict[str, str] = {}
                     top_candidates = sorted_by_corr[:min(200, len(sorted_by_corr))]
+                    
                     if len(top_candidates) > 1:
                         inter_corr = precalc_df[top_candidates].corr().abs()
 
                         for d in top_candidates:
                             if len(selected_corr) >= max_corr_n:
-                                break
+                                exclusion_reasons[d] = f"上限({max_corr_n}個)到達のため除外"
+                                continue
+                                
                             is_redundant = False
                             for s in selected_corr:
                                 if s in inter_corr.columns and d in inter_corr.index:
-                                    if inter_corr.loc[d, s] > 0.9:
+                                    r_val = inter_corr.loc[d, s]
+                                    if r_val > 0.9:
                                         is_redundant = True
+                                        exclusion_reasons[d] = f"⚠️ 多重共線性: {s} と強い相関 (|r|={r_val:.2f})"
                                         break
                             if not is_redundant:
                                 selected_corr.append(d)
@@ -689,6 +695,7 @@ def _ensure_default_sets(state: dict) -> None:
                             "engines": [],
                             "active": True,
                             "descriptors": selected_corr,
+                            "exclusion_reasons": exclusion_reasons
                         }
             except Exception as e:
                 _logger.warning("相関Top-Nセット生成エラー: %s", e)

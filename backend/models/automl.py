@@ -58,6 +58,8 @@ class AutoMLResult:
     # SMILES相関係数とTransformerの保持
     smiles_correlations: dict[str, float] = field(default_factory=dict)
     smiles_transformer: Any | None = None
+    # 自動解決された単調性制約の保持
+    resolved_constraints: dict[str, int] = field(default_factory=dict)
 
 
 class AutoMLEngine:
@@ -90,6 +92,7 @@ class AutoMLEngine:
         monotonic_constraints_dict: dict[str, int] | None = None,
         column_meta_dict: dict | None = None,
         count_normalization: str = "density",
+        auto_feature_selection: bool = False,
     ) -> None:
         self.task = task
         self.cv_folds = cv_folds
@@ -105,6 +108,7 @@ class AutoMLEngine:
         self.count_normalization = count_normalization
         self.monotonic_constraints_dict = monotonic_constraints_dict or {}
         self.column_meta_dict = column_meta_dict or {}  # ColumnMeta 辭書
+        self.auto_feature_selection = auto_feature_selection
 
     def run(
         self,
@@ -149,6 +153,10 @@ class AutoMLEngine:
         self.progress_callback(2, total_steps, "変数型を自動判定中...")
         detector = TypeDetector()
         _detect_cols_to_drop = [target_col]
+        if group_col and group_col in df.columns:
+            _detect_cols_to_drop.append(group_col)
+        if self.cv_groups_col and self.cv_groups_col in df.columns and self.cv_groups_col not in _detect_cols_to_drop:
+            _detect_cols_to_drop.append(self.cv_groups_col)
         
         comps = []
         if isinstance(smiles_col, str):
@@ -190,6 +198,38 @@ class AutoMLEngine:
         # 特徴量が1つも残っていない場合のチェック
         if X.shape[1] == 0:
             raise ValueError("学習に使用できる特徴量がありません。目的変数以外の列が存在するか確認してください。")
+
+        # 自動特徴量選択 (auto_feature_selection)
+        if getattr(self, "auto_feature_selection", False) and X.shape[1] > 2:
+            self.progress_callback(3.5, total_steps, "特徴量の事前選択を実行中...")
+            try:
+                from sklearn.feature_selection import SelectKBest, f_classif, f_regression
+                from backend.utils.config import default_config
+                score_func = f_classif if task == "classification" else f_regression
+                
+                # 事前選択は数値変数のみに対して適用
+                num_cols = X.select_dtypes(include="number").columns.tolist()
+                cat_cols = [c for c in X.columns if c not in num_cols]
+                
+                # ユーザー指定の最大記述子数などを加味した上限設定
+                upper_limit = default_config.max_descriptor_selection
+                
+                if num_cols and len(num_cols) > upper_limit:
+                    k_best = upper_limit
+                    selector = SelectKBest(score_func=score_func, k=k_best)
+                    # NaNがあるとfitでエラーになるため簡易補完してスコア計算
+                    X_num_filled = X[num_cols].fillna(X[num_cols].median())
+                    # 全てNaNの列はmedian()もNaNになるため0補完
+                    X_num_filled = X_num_filled.fillna(0.0)
+                    selector.fit(X_num_filled, y)
+                    selected_num_cols = np.array(num_cols)[selector.get_support()].tolist()
+                    
+                    dropped_cols = set(num_cols) - set(selected_num_cols)
+                    if dropped_cols:
+                        logger.info(f"auto_feature_selection: {len(dropped_cols)}列の数値変数を事前除外。")
+                        X = X[selected_num_cols + cat_cols]
+            except Exception as e:
+                logger.warning(f"自動特徴量選択に失敗しました: {e}")
 
         # Step 5: モデル学習
         self.progress_callback(4, total_steps, "複数モデルで学習中...")
@@ -445,6 +485,21 @@ class AutoMLEngine:
             except Exception as _e:
                 logger.debug(f"SMILES相関計算失敗: {_e}")
 
+        # 最良モデルから、自動検出済みの単調性制約を抽出
+        resolved_constraints: dict[str, int] = {}
+        try:
+            best_estimator = best_pipeline.steps[-1][1]
+            if hasattr(best_estimator, "resolved_constraints_"):
+                res = best_estimator.resolved_constraints_
+                if res and isinstance(res, tuple):
+                    feat_names_final = processed_X_final.columns.tolist() if processed_X_final is not None else []
+                    if len(feat_names_final) == len(res):
+                        for col, val in zip(feat_names_final, res):
+                            if val in (1, -1):
+                                resolved_constraints[col] = val
+        except Exception as _e:
+            logger.debug(f"自動検出済みの単調性制約抽出に失敗: {_e}")
+
         return AutoMLResult(
             task=task,
             best_model_key=best_key,
@@ -463,6 +518,7 @@ class AutoMLEngine:
             oof_true=y if oof_preds is not None else None,
             smiles_transformer=_smiles_transformer_for_cv,
             smiles_correlations=_smiles_correlations,
+            resolved_constraints=resolved_constraints,
         )
 
     def run_multi_feature_sets(

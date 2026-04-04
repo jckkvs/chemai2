@@ -215,7 +215,7 @@ class ColPreprocessor(BaseEstimator, TransformerMixin):
             verbose_feature_names_out=False,
         )
 
-        self._ct.fit(X)
+        self._ct.fit(X, y)
 
         # 出力列名を記録
         try:

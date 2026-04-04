@@ -367,151 +367,161 @@ def _render_column_roles(state: dict) -> None:
             df = state["df"]
             all_cols = list(df.columns)
 
-            with ui.row().classes("full-width q-gutter-lg"):
-                # ── 左列: 必須設定 ──
-                with ui.column().classes("col-6"):
-                    ui.label("必須設定").classes("text-subtitle1 text-bold")
+            with ui.row().classes("full-width"):
+                ui.label("列の役割設定 (データフレーム形式)").classes("text-subtitle1 text-bold")
+                
+            ui.label("表の「役割」セルをダブルクリックして変更してください（複数選択不要、1つずつ設定可能）。").classes("text-caption text-grey-5 q-mb-md")
 
-                    # 目的変数
-                    cur_target = state.get("target_col") or all_cols[-1]
-                    ui.select(
-                        options=all_cols,
-                        label="🎯 目的変数（予測したい列）",
-                        value=cur_target if cur_target in all_cols else all_cols[-1],
-                        on_change=lambda e: _on_target_change(e.value, state),
-                    ).classes("full-width q-mb-md").tooltip("機械学習で予測する列を選択してください")
+            # タスク種別
+            cur_target = state.get("target_col") or all_cols[-1]
+            if "target_col" not in state:
+                state["target_col"] = cur_target
+            
+            with ui.row().classes("items-center q-gutter-md q-mb-md"):
+                ui.label(f"🎯 現在の目的変数: {state.get('target_col', '未設定')}").classes("text-subtitle2 text-cyan")
+                ui.select(
+                    options={"auto": "自動判定", "regression": "回帰", "classification": "分類"},
+                    label="タスクタイプ",
+                    value=state.get("task_type", "auto"),
+                    on_change=lambda e: state.update({"task_type": e.value}),
+                ).classes("w-48").props("dense outlined")
+                
+            # AG Gridのデータ準備
+            row_data = []
+            for col in all_cols:
+                role = "説明変数"
+                if col == state.get("target_col"):
+                    role = "目的変数"
+                elif col in state.get("exclude_cols", []):
+                    role = "除外"
+                elif col == state.get("group_col"):
+                    role = "グループID"
+                elif col == state.get("time_col"):
+                    role = "時系列"
+                elif col == state.get("weight_col"):
+                    role = "Sample Weight"
+                
+                na_count = int(df[col].isna().sum())
+                na_pct = round(na_count / len(df) * 100, 1) if len(df) > 0 else 0
+                n_unique = int(df[col].nunique(dropna=True))
+                
+                row_data.append({
+                    "col_name": col,
+                    "dtype": str(df[col].dtype),
+                    "n_unique": n_unique,
+                    "na_pct": na_pct,
+                    "role": role
+                })
 
-                    # タスク種別
-                    _auto_task = "regression" if cur_target in all_cols and pd.api.types.is_float_dtype(df[cur_target]) else "classification"
-                    _task_label = "📈 回帰（数値予測）" if _auto_task == "regression" else "🏷️ 分類（カテゴリ予測）"
-                    ui.label(f"タスク種別: {_task_label}（自動判定）").classes("text-grey-5 q-mb-sm")
-                    ui.select(
-                        options={"auto": "自動判定", "regression": "回帰", "classification": "分類"},
-                        label="タスクタイプ",
-                        value=state.get("task_type", "auto"),
-                        on_change=lambda e: state.update({"task_type": e.value}),
-                    ).classes("full-width q-mb-md")
-
-                    # SMILES列 / 混合系対応UI
-                    ui.label("🧬 SMILES混合成分（複数指定可・割合考慮）").classes("text-body2 text-bold q-mt-md")
+            grid_options = {
+                "columnDefs": [
+                    {"headerName": "列名", "field": "col_name", "editable": False, "sortable": True, "filter": True, "width": 250},
+                    {"headerName": "データ型", "field": "dtype", "editable": False, "sortable": True, "width": 120},
+                    {"headerName": "ユニーク数", "field": "n_unique", "editable": False, "sortable": True, "width": 120},
+                    {"headerName": "欠損率(%)", "field": "na_pct", "editable": False, "sortable": True, "width": 120},
+                    {
+                        "headerName": "役割 (ダブルクリックで変更)", 
+                        "field": "role", 
+                        "editable": True,
+                        "cellEditor": "agSelectCellEditor",
+                        "cellEditorParams": {
+                            "values": ["説明変数", "目的変数", "除外", "グループID", "時系列", "Sample Weight"]
+                        },
+                        "sortable": True,
+                        "filter": True,
+                        "width": 250,
+                        "cellStyle": {"backgroundColor": "rgba(0, 188, 212, 0.1)", "cursor": "pointer", "fontWeight": "bold"}
+                    }
+                ],
+                "rowData": row_data,
+                "rowSelection": "single",
+                "stopEditingWhenCellsLoseFocus": True,
+                "suppressRowClickSelection": True,
+            }
+            
+            def handle_cell_change(e):
+                col_name = e.args.get("data", {}).get("col_name")
+                new_role = e.args.get("value")
+                if not col_name or not new_role: return
+                
+                # 前の役割をクリア
+                if col_name == state.get("target_col"): state["target_col"] = ""
+                if col_name in state.get("exclude_cols", []): state["exclude_cols"].remove(col_name)
+                if col_name == state.get("group_col"): state["group_col"] = ""
+                if col_name == state.get("time_col"): state["time_col"] = ""
+                if col_name == state.get("weight_col"): state["weight_col"] = ""
+                
+                # 新しい役割を設定
+                if new_role == "目的変数":
+                    _on_target_change(col_name, state)
+                    _build_ui()
+                    return
+                elif new_role == "除外":
+                    if "exclude_cols" not in state: state["exclude_cols"] = []
+                    if col_name not in state["exclude_cols"]: state["exclude_cols"].append(col_name)
+                elif new_role == "グループID":
+                    state["group_col"] = col_name
+                elif new_role == "時系列":
+                    state["time_col"] = col_name
+                elif new_role == "Sample Weight":
+                    state["weight_col"] = col_name
                     
-                    if "smiles_components" not in state:
-                        scol = state.get("smiles_col", "")
-                        if scol and scol in all_cols:
-                            state["smiles_components"] = [{"smiles_col": scol, "fraction_col": "（なし）"}]
-                        else:
-                            state["smiles_components"] = []
+                state["precalc_done"] = False
+                
+            ui.aggrid(grid_options).classes("full-width").style("height: 480px;").on('cellValueChanged', handle_cell_change)
 
-                    comps_container = ui.column().classes("full-width q-gutter-xs")
-                    
-                    def _render_comps():
-                        comps_container.clear()
-                        with comps_container:
-                            smiles_opts = ["（なし）"] + all_cols
-                            frac_opts = ["（なし）"] + all_cols
-                            
-                            for i, comp in enumerate(state["smiles_components"]):
-                                with ui.row().classes("items-center full-width justify-between no-wrap"):
-                                    def _on_s(e, idx=i):
-                                        state["smiles_components"][idx]["smiles_col"] = e.value
-                                        state["precalc_done"] = False
-                                        if idx == 0:
-                                            state["smiles_col"] = e.value if e.value != "（なし）" else ""
-                                    def _on_f(e, idx=i):
-                                        state["smiles_components"][idx]["fraction_col"] = e.value
-                                        state["precalc_done"] = False
-                                        
-                                    s_val = comp.get("smiles_col", "（なし）")
-                                    f_val = comp.get("fraction_col", "（なし）")
-                                    
-                                    ui.select(smiles_opts, value=s_val if s_val in smiles_opts else "（なし）", 
-                                              label=f"SMILES {i+1}", on_change=_on_s).classes("col-5").props("dense")
-                                    ui.select(frac_opts, value=f_val if f_val in frac_opts else "（なし）",
-                                              label=f"割合(%) {i+1}", on_change=_on_f).classes("col-5").props("dense")
-                                              
-                                    def _del(idx=i):
-                                        state["smiles_components"].pop(idx)
-                                        if len(state["smiles_components"]) == 0:
-                                            state["smiles_col"] = ""
-                                        _render_comps()
-                                    ui.button(icon="close", on_click=_del).props("flat dense color=red").classes("col-1")
-                                    
-                            with ui.row().classes("items-center full-width justify-between q-mt-xs"):
-                                ui.button("＋ 成分追加", on_click=lambda: (state["smiles_components"].append({"smiles_col": "（なし）", "fraction_col": "（なし）"}), _render_comps())).props("outline dense color=cyan size=sm")
-                                
-                                ui.radio({"wt": "wt%", "mol": "mol%"}, value=state.get("fraction_type", "wt"),
-                                         on_change=lambda e: state.update({"fraction_type": e.value})).props("dense inline").tooltip("割合の単位 (wt% / mol%)")
-                                
-                    _render_comps()
-                    ui.label("構成成分を追加し、加重平均による混合系の特徴量を自動計算します").classes("text-caption text-grey-5 q-mb-md")
+            # SMILES混合成分のUIは保持
+            ui.separator().classes("q-my-md")
+            with ui.expansion("🧬 SMILES / 混合成分設定", icon="science").classes("full-width bg-dark"):
+                if "smiles_components" not in state:
+                    scol = state.get("smiles_col", "")
+                    if scol and scol in all_cols:
+                        state["smiles_components"] = [{"smiles_col": scol, "fraction_col": "（なし）"}]
+                    else:
+                        state["smiles_components"] = []
 
-
-                # ── 右列: オプション設定（折りたたみ） ──
-                with ui.column().classes("col-5"):
-                    with ui.expansion("🔧 詳細な列役割設定", icon="settings").classes("full-width"):
-                        # 除外列リスト生成
-                        target = state.get("target_col")
-                        # smiles_components の列を除外項目に入れるのを防ぐ
-                        smiles_used = []
-                        for c in state.get("smiles_components", []):
-                            if c["smiles_col"] != "（なし）": smiles_used.append(c["smiles_col"])
-                            if c["fraction_col"] != "（なし）": smiles_used.append(c["fraction_col"])
+                comps_container = ui.column().classes("full-width q-gutter-xs")
+                
+                def _render_comps():
+                    comps_container.clear()
+                    with comps_container:
+                        smiles_opts = ["（なし）"] + all_cols
+                        frac_opts = ["（なし）"] + all_cols
                         
-                        excl_opts = [c for c in all_cols if c != target and c not in smiles_used]
-
-                        # 除外列
-                        ui.select(
-                            options=excl_opts,
-                            label="🚫 除外する列",
-                            value=[c for c in state.get("exclude_cols", []) if c in excl_opts],
-                            on_change=lambda e: state.update({"exclude_cols": e.value or []}),
-                        ).classes("full-width q-mb-sm").props("multiple clearable use-chips").tooltip(
-                            "目的変数・SMILES/割合以外で解析に使わない列（ID列・メモ列等）"
-                        )
-
-                        # グループ列
-                        group_opts = ["（なし）"] + excl_opts
-                        ui.select(
-                            options=group_opts,
-                            label="👥 グループ列（GroupKFold用）",
-                            value=state.get("group_col", "（なし）"),
-                            on_change=lambda e: state.update({
-                                "group_col": None if e.value == "（なし）" else e.value
-                            }),
-                        ).classes("full-width q-mb-sm").tooltip(
-                            "GroupKFold等でリーク防止に使うグループID列（例:バッチID）"
-                        )
-
-                        # 時系列列
-                        ui.select(
-                            options=group_opts,
-                            label="📅 時系列列（任意）",
-                            value=state.get("time_col", "（なし）"),
-                            on_change=lambda e: state.update({
-                                "time_col": None if e.value == "（なし）" else e.value
-                            }),
-                        ).classes("full-width q-mb-sm").tooltip(
-                            "時間的順序を持つ列。TimeSeriesSplit等に使用します。"
-                        )
-
-                        # Sample weight列
-                        ui.select(
-                            options=group_opts,
-                            label="⚖️ Sample weight列（任意）",
-                            value=state.get("weight_col", "（なし）"),
-                            on_change=lambda e: state.update({
-                                "weight_col": None if e.value == "（なし）" else e.value
-                            }),
-                        ).classes("full-width q-mb-sm").tooltip(
-                            "各サンプルの重みを示す列。信頼度の高いサンプルを重視する場合に指定。"
-                        )
-
-
-
-            # ── 列役割サマリー ──
-            ui.separator()
-            ui.label("📋 列役割サマリー").classes("text-subtitle2 q-mt-md")
-            _render_column_summary(state)
+                        for i, comp in enumerate(state["smiles_components"]):
+                            with ui.row().classes("items-center full-width justify-between no-wrap"):
+                                def _on_s(e, idx=i):
+                                    state["smiles_components"][idx]["smiles_col"] = e.value
+                                    state["precalc_done"] = False
+                                    if idx == 0:
+                                        state["smiles_col"] = e.value if e.value != "（なし）" else ""
+                                def _on_f(e, idx=i):
+                                    state["smiles_components"][idx]["fraction_col"] = e.value
+                                    state["precalc_done"] = False
+                                    
+                                s_val = comp.get("smiles_col", "（なし）")
+                                f_val = comp.get("fraction_col", "（なし）")
+                                
+                                ui.select(smiles_opts, value=s_val if s_val in smiles_opts else "（なし）", 
+                                          label=f"SMILES {i+1}", on_change=_on_s).classes("col-5").props("dense")
+                                ui.select(frac_opts, value=f_val if f_val in frac_opts else "（なし）",
+                                          label=f"割合(%) {i+1}", on_change=_on_f).classes("col-5").props("dense")
+                                          
+                                def _del(idx=i):
+                                    state["smiles_components"].pop(idx)
+                                    if len(state["smiles_components"]) == 0:
+                                        state["smiles_col"] = ""
+                                    _render_comps()
+                                ui.button(icon="close", on_click=_del).props("flat dense color=red").classes("col-1")
+                                
+                        with ui.row().classes("items-center full-width justify-between q-mt-xs"):
+                            ui.button("＋ 成分追加", on_click=lambda: (state["smiles_components"].append({"smiles_col": "（なし）", "fraction_col": "（なし）"}), _render_comps())).props("outline dense color=cyan size=sm")
+                            
+                            ui.radio({"wt": "wt%", "mol": "mol%"}, value=state.get("fraction_type", "wt"),
+                                     on_change=lambda e: state.update({"fraction_type": e.value})).props("dense inline").tooltip("割合の単位 (wt% / mol%)")
+                            
+                _render_comps()
+                ui.label("構成成分を追加し、加重平均による混合系の特徴量を自動計算します").classes("text-caption text-grey-5 q-mb-md")
 
     container = ui.column().classes("full-width")
     _build_ui()
@@ -528,94 +538,7 @@ def _on_target_change(val: str, state: dict) -> None:
             state["task_type"] = "classification"
 
 
-def _render_column_summary(state: dict) -> None:
-    """列役割のカード形式ビジュアルサマリー + 欠損値ヒートマップ。"""
-    if state["df"] is None:
-        return
 
-    df = state["df"]
-
-    # 役割→色・アイコン・ラベルのマップ
-    ROLE_MAP = {
-        "target":  {"icon": "🎯", "label": "目的変数", "color": "rgba(0,212,255,0.25)",  "border": "#00d4ff"},
-        "smiles":  {"icon": "🧬", "label": "SMILES",   "color": "rgba(123,47,247,0.25)", "border": "#7b2ff7"},
-        "exclude": {"icon": "🚫", "label": "除外",     "color": "rgba(180,60,60,0.15)",  "border": "#b43c3c"},
-        "group":   {"icon": "👥", "label": "グループ", "color": "rgba(100,200,200,0.15)", "border": "#64c8c8"},
-        "time":    {"icon": "📅", "label": "時系列",   "color": "rgba(200,180,100,0.15)", "border": "#c8b464"},
-        "weight":  {"icon": "⚖️", "label": "weight",   "color": "rgba(160,160,200,0.15)", "border": "#a0a0c8"},
-        "feature": {"icon": "✅", "label": "説明変数", "color": "rgba(74,222,128,0.12)",  "border": "rgba(74,222,128,0.3)"},
-    }
-
-    def _get_role(col: str) -> str:
-        if col == state.get("target_col"):
-            return "target"
-        elif col == state.get("smiles_col"):
-            return "smiles"
-        elif col in state.get("exclude_cols", []):
-            return "exclude"
-        elif col == state.get("group_col"):
-            return "group"
-        elif col == state.get("time_col"):
-            return "time"
-        elif col == state.get("weight_col"):
-            return "weight"
-        return "feature"
-
-    # ── 欠損ヒートマップ概要 ──
-    total_na = df.isna().sum().sum()
-    total_cells = df.shape[0] * df.shape[1]
-    overall_rate = total_na / total_cells * 100 if total_cells > 0 else 0
-
-    if total_na > 0:
-        na_color = "red" if overall_rate > 20 else ("amber" if overall_rate > 5 else "green")
-        with ui.card().classes("full-width q-pa-sm q-mb-sm").style(
-            f"border: 1px solid rgba(251,191,36,0.3); border-radius: 8px;"
-            f"background: rgba(50,40,0,0.15);"
-        ):
-            with ui.row().classes("items-center q-gutter-sm"):
-                ui.icon("warning", color=na_color)
-                ui.label(f"欠損値: {total_na:,}セル ({overall_rate:.1f}%)").classes(f"text-body2 text-{na_color}")
-                ui.label(f"— {df.isna().any(axis=1).sum():,}行に欠損あり").classes("text-caption text-grey")
-
-    # ── カード形式グリッド ──
-    with ui.row().classes("full-width q-gutter-xs").style("flex-wrap: wrap;"):
-        for col in df.columns:
-            role_key = _get_role(col)
-            role = ROLE_MAP[role_key]
-            col_data = df[col]
-            na_count = int(col_data.isna().sum())
-            na_pct = na_count / len(col_data) * 100 if len(col_data) > 0 else 0
-            n_unique = int(col_data.nunique(dropna=True))
-            dtype_str = str(col_data.dtype)
-
-            # 欠損バーの色
-            bar_color = "#4ade80" if na_pct == 0 else ("#fbbf24" if na_pct < 20 else "#f87171")
-            bar_width = max(2, min(100, 100 - na_pct))  # 充填率
-
-            with ui.card().classes("q-pa-xs cursor-pointer").style(
-                f"min-width: 130px; max-width: 180px; flex: 1 1 130px;"
-                f"border: 1px solid {role['border']}; border-radius: 8px;"
-                f"background: {role['color']};"
-            ).tooltip(
-                f"列名: {col}\n型: {dtype_str}\n欠損: {na_count}/{len(col_data)} ({na_pct:.1f}%)\n"
-                f"ユニーク値: {n_unique}"
-            ):
-                # 役割アイコン + 列名
-                with ui.row().classes("items-center q-gutter-none").style("overflow: hidden;"):
-                    ui.label(role["icon"]).style("font-size: 0.8rem;")
-                    ui.label(col).classes("text-caption text-bold").style(
-                        "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px;"
-                    )
-
-                # データ型 + ユニーク数
-                ui.label(f"{dtype_str} | {n_unique}種").classes("text-caption text-grey").style("font-size: 0.82rem;")
-
-                # 欠損率バー
-                ui.html(
-                    f'<div style="width:100%;height:3px;border-radius:2px;background:rgba(255,255,255,0.1);margin-top:2px;">'
-                    f'<div style="width:{bar_width}%;height:100%;border-radius:2px;background:{bar_color};"></div>'
-                    f'</div>'
-                )
 
 
 # ================================================================

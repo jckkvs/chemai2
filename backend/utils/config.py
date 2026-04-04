@@ -42,6 +42,7 @@ AUTOML_N_JOBS: int = -1                         # 並列数(-1=全コア)
 # ============================================================
 SHAP_MAX_DISPLAY: int = 20                      # SummaryPlotの上位特徴量数
 SHAP_KERNEL_NSAMPLES: int = 100                 # KernelExplainerのサンプル数
+SHAP_KERNEL_NSAMPLES_MAX: int = 500             # これ以上の行数なら代表点サンプリング実行
 
 # ============================================================
 # MLflow 設定
@@ -76,6 +77,9 @@ IS_STLITE: bool = bool(os.getenv("ML_GUI_STLITE", ""))
 XTB_EXECUTABLE: str = os.getenv("XTB_EXECUTABLE", "xtb")
 CREST_EXECUTABLE: str = os.getenv("CREST_EXECUTABLE", "crest")
 
+XTB_TIMEOUT_SECONDS_PER_MOL: int = 30           # 1分子あたりのxTB実行タイムアウト(秒)
+MAX_DESCRIPTOR_SELECTION: int = 100             # UI等での記述子選択上限数
+
 # ============================================================
 # パフォーマンス要件
 # ============================================================
@@ -96,12 +100,15 @@ class AppConfig:
     n_jobs: int = AUTOML_N_JOBS
     shap_max_display: int = SHAP_MAX_DISPLAY
     shap_kernel_nsamples: int = SHAP_KERNEL_NSAMPLES
+    shap_kernel_nsamples_max: int = SHAP_KERNEL_NSAMPLES_MAX
     mlflow_tracking_uri: str = MLFLOW_TRACKING_URI
     mlflow_experiment_name: str = MLFLOW_EXPERIMENT_NAME
     is_stlite: bool = IS_STLITE
     cardinality_threshold: int = TYPE_DETECTOR_CARDINALITY_THRESHOLD
     skewness_threshold: float = TYPE_DETECTOR_SKEWNESS_THRESHOLD
     outlier_iqr_factor: float = TYPE_DETECTOR_OUTLIER_IQR_FACTOR
+    xtb_timeout_per_mol: int = XTB_TIMEOUT_SECONDS_PER_MOL
+    max_descriptor_selection: int = MAX_DESCRIPTOR_SELECTION
     extra: dict = field(default_factory=dict)
 
 

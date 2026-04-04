@@ -6,10 +6,12 @@ from backend.optim.constraints import (
 )
 from backend.optim.bayesian_optimizer import BayesianOptimizer
 from backend.optim.inverse_optimizer import InverseConfig, InverseResult, run_inverse_optimization
+from backend.optim.composition_sampler import DirichletSampler
 
 __all__ = [
     "SearchSpace", "Variable", "BayesianOptimizer",
     "RangeConstraint", "SumConstraint", "InequalityConstraint",
     "AtLeastNConstraint", "AtLeastOneConstraint", "CustomConstraint", "apply_constraints",
     "InverseConfig", "InverseResult", "run_inverse_optimization",
+    "DirichletSampler",
 ]

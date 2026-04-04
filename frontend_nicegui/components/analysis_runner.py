@@ -112,7 +112,19 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         return
 
     if _analysis_running:
-        ui.notify("⏳ 解析が既に実行中です", type="info")
+        ui.notify("⏳ 解析が既に実行中です。下のボタンで中断できます。", type="info")
+        # 強制停止ボタンを控えめに表示
+        with status_container:
+            with ui.row().classes("items-center q-gutter-sm q-mt-sm"):
+                ui.label("⏳ 前回の解析がまだ実行中です").classes("text-caption text-grey-5")
+                def _force_stop():
+                    global _cancel_requested, _analysis_running
+                    _cancel_requested = True
+                    _analysis_running = False
+                    ui.notify("🛑 解析を強制停止しました。再実行できます。", type="warning")
+                ui.button("🛑 前回の解析を中断", on_click=_force_stop).props(
+                    "flat dense size=sm no-caps color=orange"
+                ).tooltip("実行中の解析にキャンセル要求を送り、新しい解析を開始可能にします")
         return
 
     _analysis_running = True
@@ -145,6 +157,22 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             with ui.row().classes("justify-between full-width"):
                 progress_detail = ui.label("").classes("text-caption text-grey-5")
                 progress_eta = ui.label("").classes("text-caption text-grey-5")
+            # ── リソースモニター（CPU / メモリ）──
+            with ui.row().classes("items-center q-gutter-md q-mt-xs").style("opacity: 0.7;"):
+                resource_cpu_lbl = ui.label("CPU: —").classes("text-caption text-grey-6").style("font-size: 0.72rem;")
+                resource_mem_lbl = ui.label("MEM: —").classes("text-caption text-grey-6").style("font-size: 0.72rem;")
+
+    # ── リソースモニタータイマー（1秒間隔）──
+    def _poll_resources():
+        try:
+            import psutil
+            cpu = psutil.cpu_percent(interval=None)
+            mem = psutil.virtual_memory()
+            resource_cpu_lbl.text = f"CPU: {cpu:.0f}%"
+            resource_mem_lbl.text = f"MEM: {mem.percent:.0f}% ({mem.used / (1024**3):.1f}/{mem.total / (1024**3):.1f} GB)"
+        except Exception:
+            pass
+    resource_timer = ui.timer(1.0, _poll_resources)
 
     # 進捗キュー（スレッドセーフ）
     progress_queue: queue.Queue = queue.Queue(maxsize=100)
@@ -375,6 +403,14 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             state["best_set_name"] = best_set_name
             state["pipeline_result"] = type("PipelineResult", (), {"elapsed": best_result.elapsed_seconds})()
 
+            # ── 自動解決された単調性制約を column_meta に反映し、UIへフィードバック ──
+            res_constraints = getattr(best_result, "resolved_constraints", {})
+            cm = state.setdefault("column_meta", {})
+            for col, val in res_constraints.items():
+                if col not in cm:
+                    cm[col] = {"monotonic": 0}
+                cm[col]["resolved_monotonic"] = val
+
         # 成功表示
         elapsed_total = time.time() - _start_time
         progress_bar.value = 1.0
@@ -404,23 +440,24 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             progress_label.text = "❌ 全セットの解析に失敗しました"
             progress_detail.text = "設定を確認して再実行してください"
 
-        if on_complete:
-            on_complete()
-
-        # ── 結果タブへ自動切り替え＋再描画（解析完了後 "解析結果がまだありません" バグ修正） ──
+        # ── 結果タブへ自動切り替え＋再描画 ──
+        # 重要: on_complete（タブ遷移）の前に _switch_to_results（再描画含む）を呼ぶ。
+        # これにより「空の結果タブ」バグを防止する。
         switch_results = state.get("_switch_to_results")
         if switch_results and best_result:
             try:
                 switch_results()
             except Exception as _re:
                 logger.warning("結果タブ切替に失敗: %s", _re)
-                # フォールバック: タブ切替なしで再描画のみ
                 refresh_only = state.get("_refresh_results")
                 if refresh_only:
                     try:
                         refresh_only()
                     except Exception:
                         pass
+
+        if on_complete:
+            on_complete()
 
         # 解析履歴を自動記録
         try:
@@ -488,6 +525,10 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
     finally:
         _analysis_running = False
         timer.deactivate()
+        try:
+            resource_timer.deactivate()
+        except Exception:
+            pass
 
 
 def _get_error_remedy(error_msg: str, tb_text: str) -> str:

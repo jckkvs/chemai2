@@ -74,3 +74,13 @@ staticfiles/
 
 # HuggingFace token config (contains secret token)
 .hf_config.json
+
+# エラー・出力ログ等
+*_err.txt
+*_err_utf8.txt
+*_out.txt
+*_out_utf8.txt
+error_trace.txt
+pytest_*.txt
+test_*.txt
+test.xyz

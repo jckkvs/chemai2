@@ -215,9 +215,10 @@ class XTBAdapter(BaseChemAdapter):
         calc_type: str = "opt",   # デフォルトを構造最適化に変更（要件2.1）
         convergence: str = "normal",
         solvent: str = "none",
-        timeout: int = 300,
+        timeout: int | None = None,
         max_retries: int = 3,
     ):
+        from backend.utils.config import default_config
         self.gfn = gfn
         # 科学的根拠: 構造最適化によりSMILESから機械的に生成した初期構造の
         # 歪みが解消され、電子状態記述子の精度が向上する。
@@ -225,7 +226,7 @@ class XTBAdapter(BaseChemAdapter):
         self.calc_type = calc_type
         self.convergence = convergence
         self.solvent = solvent
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else default_config.xtb_timeout_per_mol
         self.max_retries = max_retries
 
     @property

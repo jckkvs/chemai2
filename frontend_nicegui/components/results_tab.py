@@ -51,38 +51,34 @@ def render_results_tab(state: dict[str, Any]) -> None:
     if current_view not in success_results:
         current_view = set_names[0]
 
+    # ═══════════════════════════════════════════════════════
+    # 全セット×全推定器 クロス比較（2セット以上の場合）
+    # ═══════════════════════════════════════════════════════
     if len(set_names) >= 2:
-        # セット選択タブ
-        with ui.card().classes("glass-card q-pa-md full-width q-mb-md"):
-            with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
-                ui.icon("layers", color="cyan")
-                ui.label("記述子セット別 結果").classes("text-h6")
-                ui.badge(f"{len(set_names)}セット", color="teal").props("dense")
+        _render_cross_set_comparison(success_results, state)
 
-            set_tab_keys = []
-            with ui.tabs().classes("full-width").props(
-                "dense no-caps active-color=cyan indicator-color=cyan scrollable"
-            ) as set_result_tabs:
-                for sn in set_names:
-                    sr = success_results[sn]
-                    is_best = (sn == state.get("best_set_name", ""))
-                    label = f"🏆 {sn} ({sr.best_score:.4f})" if is_best else f"{sn} ({sr.best_score:.4f})"
-                    key = f"res_set_{sn}"
-                    set_tab_keys.append(key)
-                    ui.tab(key, label=label)
+    # ── セット切替タブ（常に表示 — 1セットでもセット名を明示）──
+    with ui.card().classes("glass-card q-pa-md full-width q-mb-md"):
+        with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+            ui.icon("layers", color="cyan")
+            ui.label("特徴量セット別 結果").classes("text-h6")
+            ui.badge(f"{len(set_names)}セット", color="teal").props("dense")
 
-            best_tab_key = f"res_set_{current_view}"
-            with ui.tab_panels(set_result_tabs, value=best_tab_key).classes("full-width bg-transparent"):
-                for sn in set_names:
-                    key = f"res_set_{sn}"
-                    with ui.tab_panel(key):
-                        _render_single_result(success_results[sn], state)
-    else:
-        ar = success_results.get(current_view, single_ar)
-        _render_single_result(ar, state)
-        return
+        with ui.tabs().classes("full-width").props(
+            "dense no-caps active-color=cyan indicator-color=cyan scrollable"
+        ) as set_result_tabs:
+            for sn in set_names:
+                sr = success_results[sn]
+                is_best = (sn == state.get("best_set_name", ""))
+                label = f"🏆 {sn} ({sr.best_score:.4f})" if is_best else f"{sn} ({sr.best_score:.4f})"
+                ui.tab(f"res_set_{sn}", label=label)
 
-    # ── 複数セットの場合はここでreturn済み（タブ内に_render_single_resultが呼ばれている） ──
+        best_tab_key = f"res_set_{current_view}"
+        with ui.tab_panels(set_result_tabs, value=best_tab_key).classes("full-width bg-transparent"):
+            for sn in set_names:
+                with ui.tab_panel(f"res_set_{sn}"):
+                    _render_single_result(success_results[sn], state)
+
     return
 
 
@@ -214,86 +210,408 @@ def _render_single_result(ar, state: dict) -> None:
             for w in ar.warnings:
                 ui.label(f"⚠️ {w}").classes("text-amber text-caption")
 
-    # ── 結果サブタブ ──
+    # ── 結果サブタブ（8タブ構造）──
     with ui.tabs().classes("full-width").props(
         "dense active-color=cyan indicator-color=cyan scrollable"
     ) as res_tabs:
-        tab_overview = ui.tab("overview", label="🏆 全モデル概要",    icon="leaderboard")
-        tab_permodel = ui.tab("permodel", label="📊 モデル別詳細",    icon="analytics")
-        tab_pred     = ui.tab("pred",     label="📈 予測実測プロット", icon="scatter_plot")
-        tab_table    = ui.tab("table",    label="📋 データ点表",       icon="table_rows")
-        tab_tuning   = ui.tab("tuning",   label="🎯 チューニング",     icon="tune")
-        tab_data     = ui.tab("data",     label="🔢 前処理後データ",   icon="table_chart")
+        tab_best     = ui.tab("best",     label="🏆 ベスト推定器",     icon="star")
+        tab_overview = ui.tab("overview", label="📊 全モデル概要",    icon="leaderboard")
+        tab_compare  = ui.tab("compare",  label="🔄 推定器比較",     icon="compare_arrows")
+        tab_permodel = ui.tab("permodel", label="📈 モデル別詳細",    icon="analytics")
         tab_interp   = ui.tab("interp",   label="🔬 解釈性・重要度",   icon="psychology")
         tab_extra    = ui.tab("extra",    label="🎨 追加可視化",       icon="bar_chart")
         tab_batch    = ui.tab("batch",    label="🔮 バッチ予測",       icon="batch_prediction")
         tab_report   = ui.tab("report",   label="📝 レポート",         icon="summarize")
 
-    with ui.tab_panels(res_tabs, value=tab_overview).classes("full-width"):
+    with ui.tab_panels(res_tabs, value=tab_best).classes("full-width"):
 
-        # ════════════════════════════════════════════════════
-        # 全モデル概要
-        # ════════════════════════════════════════════════════
+        # ════════ ベスト推定器（集約サマリー）════════
+        with ui.tab_panel(tab_best):
+            _render_best_estimator_tab(ar, state)
+
+        # ════════ 全モデル概要 ════════
         with ui.tab_panel(tab_overview):
             _render_model_overview(ar)
 
-        # ════════════════════════════════════════════════════
-        # モデル別詳細
-        # ════════════════════════════════════════════════════
+        # ════════ 推定器比較（新設）════════
+        with ui.tab_panel(tab_compare):
+            _render_model_comparison_tab(ar, state)
+
+        # ════════ モデル別詳細 ════════
         with ui.tab_panel(tab_permodel):
             _render_per_model_tabs(ar)
 
-        # ════════════════════════════════════════════════════
-        # 予測実測プロット
-        # ════════════════════════════════════════════════════
-        with ui.tab_panel(tab_pred):
-            _render_pred_actual_inline(ar)
-
-        # ════════════════════════════════════════════════════
-        # データ点表
-        # ════════════════════════════════════════════════════
-        with ui.tab_panel(tab_table):
-            _render_sample_table_inline(ar)
-
-        # ════════════════════════════════════════════════════
-        # チューニング
-        # ════════════════════════════════════════════════════
-        with ui.tab_panel(tab_tuning):
-            from frontend_nicegui.components.tuning_tab import render_tuning_tab
-            render_tuning_tab(state)
-
-        # ════════════════════════════════════════════════════
-        # 前処理後データ
-        # ════════════════════════════════════════════════════
-        with ui.tab_panel(tab_data):
-            _render_processed_data(ar)
-
-        # ════════════════════════════════════════════════════
-        # 解釈性・重要度（フル版）
-        # ════════════════════════════════════════════════════
+        # ════════ 解釈性・重要度（SHAP/SAGE/SRI）════════
         with ui.tab_panel(tab_interp):
             from frontend_nicegui.components.interpretation_panel import render_interpretation_panel
             render_interpretation_panel(ar, state)
 
-        # ════════════════════════════════════════════════════
-        # 追加可視化
-        # ════════════════════════════════════════════════════
+        # ════════ 追加可視化 ════════
         with ui.tab_panel(tab_extra):
             _render_extra_visualizations(ar, state)
 
-        # ════════════════════════════════════════════════════
-        # バッチ予測
-        # ════════════════════════════════════════════════════
+        # ════════ バッチ予測 ════════
         with ui.tab_panel(tab_batch):
             from frontend_nicegui.components.batch_predict_tab import render_batch_predict_tab
             render_batch_predict_tab(state)
 
-        # ════════════════════════════════════════════════════
-        # レポート生成
-        # ════════════════════════════════════════════════════
+        # ════════ レポート ════════
         with ui.tab_panel(tab_report):
             from frontend_nicegui.components.report_generator import render_report_tab
             render_report_tab(state)
+
+
+# ================================================================
+# 全セット×全推定器 クロス比較
+# ================================================================
+def _render_cross_set_comparison(success_results: dict, state: dict) -> None:
+    """全セット×全推定器のスコアをヒートマップ・ランキングで横断比較する。"""
+    import plotly.graph_objects as go
+
+    # データ収集: {(set_name, model_key): score}
+    all_combos = []
+    all_model_keys = set()
+    for sn, ar in success_results.items():
+        scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+        for mk, ms in scores.items():
+            all_combos.append({"セット": sn, "モデル": mk, "スコア": ms})
+            all_model_keys.add(mk)
+
+    if not all_combos:
+        return
+
+    set_names = list(success_results.keys())
+    model_keys = sorted(all_model_keys)
+
+    with ui.expansion("🏆 全セット×全推定器 クロス比較", icon="compare", value=True).classes(
+        "full-width q-mb-md"
+    ).style("border: 1px solid rgba(0,212,255,0.2); border-radius: 12px;"):
+
+        # ── 1. 最優秀組み合わせカード ──
+        best = max(all_combos, key=lambda x: x["スコア"])
+        with ui.card().classes("q-pa-sm q-mb-md").style(
+            "background: linear-gradient(135deg, rgba(0,212,255,0.12), rgba(123,47,247,0.12));"
+            "border: 1px solid rgba(0,212,255,0.3); border-radius: 10px;"
+        ):
+            with ui.row().classes("items-center q-gutter-md"):
+                ui.icon("emoji_events", color="amber", size="md")
+                ui.label(f"最優秀: {best['セット']} × {best['モデル']}").classes("text-subtitle1 text-bold hero-gradient")
+                ui.badge(f"{best['スコア']:.4f}", color="cyan").props("dense")
+
+        # ── 2. ヒートマップ ──
+        z_matrix = []
+        for sn in set_names:
+            ar = success_results[sn]
+            scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+            row = [scores.get(mk, float("nan")) for mk in model_keys]
+            z_matrix.append(row)
+
+        fig_hm = go.Figure(go.Heatmap(
+            z=z_matrix,
+            x=[mk[:20] for mk in model_keys],
+            y=[sn[:25] for sn in set_names],
+            colorscale="Viridis",
+            text=[[f"{v:.4f}" if not np.isnan(v) else "—" for v in row] for row in z_matrix],
+            texttemplate="%{text}",
+            textfont=dict(size=10),
+            hoverongaps=False,
+            colorbar=dict(title="CVスコア"),
+        ))
+        fig_hm.update_layout(
+            template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            height=max(200, 50 * len(set_names) + 60),
+            margin=dict(l=10, r=10, t=30, b=80),
+            title="セット×推定器 スコアヒートマップ",
+            xaxis_tickangle=-30,
+        )
+        ui.plotly(fig_hm).classes("full-width")
+
+        # ── 3. 統合ランキングテーブル ──
+        ui.separator().classes("q-my-sm")
+        ui.label("📋 統合ランキング（全組み合わせ）").classes("text-subtitle2 q-mb-xs")
+        sorted_combos = sorted(all_combos, key=lambda x: x["スコア"], reverse=True)
+        rows = []
+        for rank, c in enumerate(sorted_combos, 1):
+            is_best = (rank == 1)
+            rows.append({
+                "順位": rank,
+                "セット": c["セット"],
+                "推定器": c["モデル"],
+                "CVスコア": f"{c['スコア']:.4f}",
+                "最良": "🏆" if is_best else "",
+            })
+        cols = [
+            {"name": k, "label": k, "field": k,
+             "align": "left" if k in ("セット", "推定器") else "center", "sortable": True}
+            for k in ["順位", "セット", "推定器", "CVスコア", "最良"]
+        ]
+        ui.table(columns=cols, rows=rows[:30]).classes("full-width").props("dense flat bordered")
+        if len(rows) > 30:
+            ui.label(f"... 上位30件を表示（全{len(rows)}件）").classes("text-caption text-grey-6")
+
+
+# ================================================================
+# ベスト推定器タブ（集約ビュー）
+# ================================================================
+def _render_best_estimator_tab(ar, state: dict) -> None:
+    """ベストモデルのサマリー + OOF + Feature Importance + 残差 + 前処理後データを集約表示。"""
+    import plotly.graph_objects as go
+
+    model = getattr(ar, "best_pipeline", None)
+    proc_X = getattr(ar, "processed_X", None)
+    y_true = getattr(ar, "oof_true", None)
+    y_pred = getattr(ar, "oof_predictions", None)
+
+    # ── OOFメトリクス ──
+    if y_true is not None and y_pred is not None:
+        y_t = np.asarray(y_true).ravel()
+        y_p = np.asarray(y_pred).ravel()
+        residuals = y_t - y_p
+
+        if ar.task == "regression":
+            from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+            try:
+                r2   = r2_score(y_t, y_p)
+                rmse = float(np.sqrt(mean_squared_error(y_t, y_p)))
+                mae  = float(mean_absolute_error(y_t, y_p))
+            except Exception:
+                r2 = rmse = mae = float("nan")
+
+            ui.label("📐 OOF回帰メトリクス").classes("text-subtitle1 text-bold q-mb-xs")
+            with ui.row().classes("q-gutter-md q-mb-md"):
+                for val, lbl, color in [
+                    (f"{r2:.4f}", "R² (OOF)", "cyan"),
+                    (f"{rmse:.4f}", "RMSE (OOF)", "amber"),
+                    (f"{mae:.4f}", "MAE (OOF)", "green"),
+                ]:
+                    with ui.card().classes("q-pa-sm").style(
+                        "min-width:90px; background:rgba(0,0,0,0.2); border-radius:8px;"
+                        "border:1px solid rgba(0,212,255,0.15);"
+                    ):
+                        ui.label(val).classes(f"text-h6 text-bold text-{color}")
+                        ui.label(lbl).classes("text-caption text-grey-5")
+
+            # 予測実測プロット
+            rng = [min(y_t.min(), y_p.min()), max(y_t.max(), y_p.max())]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=rng, y=rng, mode="lines",
+                line=dict(color="rgba(255,255,255,0.25)", dash="dash", width=1.5),
+                name="y = x",
+            ))
+            fig.add_trace(go.Scatter(
+                x=y_t, y=y_p, mode="markers",
+                marker=dict(size=6, color=residuals, colorscale="RdBu_r",
+                            showscale=True, colorbar=dict(title="残差"), opacity=0.7),
+                name="データ点",
+            ))
+            fig.update_layout(
+                template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0.15)", height=380,
+                margin=dict(l=10, r=10, t=30, b=10),
+                xaxis_title="実測値", yaxis_title="予測値",
+                title=f"予測 vs 実測 (OOF, n={len(y_t)})",
+            )
+            ui.plotly(fig).classes("full-width")
+
+            # 残差分析（インライン・コンパクト版）
+            with ui.expansion("📉 残差分析", icon="scatter_plot").classes("full-width q-mt-sm"):
+                _render_residual_analysis(ar)
+
+        else:
+            # 分類タスク
+            from sklearn.metrics import accuracy_score, f1_score
+            try:
+                acc = accuracy_score(y_t, y_p)
+                f1 = f1_score(y_t, y_p, average="weighted", zero_division=0)
+            except Exception:
+                acc = f1 = float("nan")
+            ui.label("📐 OOF分類メトリクス").classes("text-subtitle1 text-bold q-mb-xs")
+            with ui.row().classes("q-gutter-md q-mb-md"):
+                for val, lbl in [(f"{acc:.4f}", "Accuracy"), (f"{f1:.4f}", "F1-weighted")]:
+                    with ui.card().classes("q-pa-sm glass-card"):
+                        ui.label(val).classes("text-h6 text-bold hero-gradient")
+                        ui.label(lbl).classes("text-caption text-grey-5")
+            # 混同行列
+            with ui.expansion("🔢 混同行列・ROC", icon="grid_on").classes("full-width q-mt-sm"):
+                _render_classification_metrics(ar)
+
+    # ── Feature Importance (自動表示) ──
+    ui.separator().classes("q-my-md")
+    ui.label("📊 Feature Importance").classes("text-subtitle1 text-bold q-mb-xs")
+    if model is not None:
+        try:
+            estimator = model
+            if hasattr(model, "steps"):
+                estimator = model.steps[-1][1]
+                if hasattr(estimator, "steps"):
+                    estimator = estimator.steps[-1][1]
+
+            feat_names = list(proc_X.columns) if proc_X is not None and hasattr(proc_X, "columns") else []
+
+            if hasattr(estimator, "feature_importances_"):
+                imp = estimator.feature_importances_
+                names = feat_names[:len(imp)] if len(feat_names) >= len(imp) else [f"f{i}" for i in range(len(imp))]
+                idx = np.argsort(imp)[::-1]
+                top = min(20, len(idx))
+                fig_fi = go.Figure(go.Bar(
+                    x=imp[idx[:top]][::-1],
+                    y=[names[i] for i in idx[:top]][::-1],
+                    orientation="h",
+                    marker=dict(color=imp[idx[:top]][::-1], colorscale="Viridis"),
+                ))
+                fig_fi.update_layout(
+                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0.1)",
+                    height=max(300, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
+                    xaxis_title="重要度", title=f"Feature Importance ({ar.best_model_key})",
+                )
+                ui.plotly(fig_fi).classes("full-width")
+            elif hasattr(estimator, "coef_"):
+                coefs = estimator.coef_.ravel()
+                names = feat_names[:len(coefs)] if len(feat_names) >= len(coefs) else [f"f{i}" for i in range(len(coefs))]
+                idx = np.argsort(np.abs(coefs))[::-1]
+                top = min(20, len(idx))
+                colors = ["rgba(74,222,128,0.7)" if coefs[i] > 0 else "rgba(248,113,113,0.7)" for i in idx[:top]]
+                fig_coef = go.Figure(go.Bar(
+                    x=coefs[idx[:top]][::-1],
+                    y=[names[i] for i in idx[:top]][::-1],
+                    orientation="h", marker_color=colors[::-1],
+                ))
+                fig_coef.update_layout(
+                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0.1)",
+                    height=max(300, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
+                    xaxis_title="回帰係数", title=f"回帰係数 ({ar.best_model_key})",
+                )
+                ui.plotly(fig_coef).classes("full-width")
+            else:
+                ui.label("ℹ️ SHAP解析で特徴量重要度を確認してください → 「解釈性・重要度」タブ").classes("text-grey-5")
+        except Exception as ex:
+            ui.label(f"Feature Importance取得エラー: {ex}").classes("text-red text-caption")
+    else:
+        ui.label("⚠️ モデルが取得できません").classes("text-amber")
+
+    # ── 前処理後データ概要 ──
+    if proc_X is not None and hasattr(proc_X, "shape"):
+        ui.separator().classes("q-my-md")
+        with ui.expansion("🔢 前処理後データ概要", icon="table_chart").classes("full-width"):
+            _render_processed_data(ar)
+
+    # ── 学習曲線 ──
+    ui.separator().classes("q-my-md")
+    with ui.expansion("📈 学習曲線 (Learning Curve)", icon="trending_up").classes("full-width"):
+        _render_learning_curve(ar)
+
+
+# ================================================================
+# 推定器比較タブ（新設）
+# ================================================================
+def _render_model_comparison_tab(ar, state: dict) -> None:
+    """全推定器のFoldスコアを多角的に比較する。"""
+    import plotly.graph_objects as go
+
+    model_details = getattr(ar, "model_details", {})
+    scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+
+    if not scores:
+        ui.label("モデルスコアがありません").classes("text-grey")
+        return
+
+    sorted_models = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    scoring = getattr(ar, "scoring", "score")
+
+    ui.label("🔄 推定器横断比較").classes("text-h6 text-bold q-mb-md")
+    ui.label(
+        "全推定器のFoldスコアを箱ひげ図・レーダー・統計検定で比較し、最適なモデルを多角的に評価します。"
+    ).classes("text-caption text-grey-5 q-mb-md")
+
+    # ── 1. ランキングテーブル ──
+    rows = []
+    for rank, (mk, ms) in enumerate(sorted_models, 1):
+        detail = model_details.get(mk, {})
+        cv_s = detail.get("cv_scores", [])
+        std = float(np.std(cv_s)) if cv_s else 0.0
+        fit_time = detail.get("fit_time", 0) or 0
+        rows.append({
+            "順位": rank, "モデル": mk, "CVスコア": f"{ms:.4f}",
+            "±std": f"{std:.4f}" if std else "—",
+            "学習時間": f"{fit_time:.2f}s" if fit_time else "—",
+            "Folds": len(cv_s) if cv_s else "—",
+            "最良": "🏆" if rank == 1 else "",
+        })
+    cols = [
+        {"name": k, "label": k, "field": k,
+         "align": "left" if k == "モデル" else "center", "sortable": True}
+        for k in ["順位", "モデル", "CVスコア", "±std", "学習時間", "Folds", "最良"]
+    ]
+    ui.table(columns=cols, rows=rows).classes("full-width").props("dense flat bordered")
+
+    # ── 2. Fold別ボックスプロット ──
+    fold_data = [
+        (mk, det.get("cv_scores", []))
+        for mk, det in model_details.items()
+        if det.get("cv_scores")
+    ]
+    if fold_data:
+        ui.separator().classes("q-my-md")
+        ui.label("📦 Fold別スコア分布").classes("text-subtitle1 text-bold q-mb-xs")
+        fig_box = go.Figure()
+        for mk, cv_scores in sorted(fold_data, key=lambda x: np.mean(x[1]), reverse=True):
+            fig_box.add_trace(go.Box(
+                y=cv_scores, name=mk[:22], boxmean=True,
+                marker_color="#00d4ff",
+            ))
+        fig_box.update_layout(
+            template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0.1)", height=380,
+            margin=dict(l=10, r=10, t=30, b=60),
+            yaxis_title=scoring, title="Fold別CVスコア分布",
+            xaxis_tickangle=-30,
+        )
+        ui.plotly(fig_box).classes("full-width")
+
+    # ── 3. レーダーチャート（上位5モデル）──
+    if len(sorted_models) >= 3:
+        ui.separator().classes("q-my-md")
+        ui.label("🕸️ 多軸レーダー比較").classes("text-subtitle1 text-bold q-mb-xs")
+        try:
+            n_top = min(5, len(sorted_models))
+            categories = [scoring, "安定性(1-std)", "速度スコア"]
+            fig_rad = go.Figure()
+            for mk, ms in sorted_models[:n_top]:
+                detail = model_details.get(mk, {})
+                cv_s = detail.get("cv_scores", [ms])
+                std = float(np.std(cv_s)) if len(cv_s) > 1 else 0.0
+                stability = max(0.0, 1.0 - std * 10.0)
+                fit_time = detail.get("fit_time", 1.0) or 1.0
+                speed = 1.0 - min(1.0, fit_time / 30.0)
+                values = [ms, stability, speed, ms]
+                cats = categories + [categories[0]]
+                fig_rad.add_trace(go.Scatterpolar(
+                    r=values, theta=cats, fill="toself", name=mk[:18], opacity=0.6,
+                ))
+            fig_rad.update_layout(
+                template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", height=380,
+                margin=dict(l=40, r=40, t=60, b=40),
+                polar=dict(radialaxis=dict(visible=True, range=[0, 1]), bgcolor="rgba(0,0,0,0.1)"),
+                title=f"モデル比較レーダー (上位{n_top})", legend=dict(orientation="h", y=-0.1),
+            )
+            ui.plotly(fig_rad).classes("full-width")
+        except Exception:
+            pass
+
+    # ── 4. 統計検定 ──
+    ui.separator().classes("q-my-md")
+    with ui.expansion("📐 モデル間統計検定（対応t検定）", icon="science").classes("full-width"):
+        _render_model_significance(ar)
+
+    # ── 5. チューニングへのリンク ──
+    ui.separator().classes("q-my-md")
+    with ui.expansion("🎯 チューニング", icon="tune").classes("full-width"):
+        from frontend_nicegui.components.tuning_tab import render_tuning_tab
+        render_tuning_tab(state)
 
 
 # ================================================================

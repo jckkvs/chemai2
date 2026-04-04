@@ -16,13 +16,12 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_THREADING_LAYER", "SEQUENTIAL")
 
-import numpy as np
-import pandas as pd
 import pytest
 from backend.utils.optional_import import probe_all_optional_libraries
 
 # テストセッション開始時に可用性キャッシュを初期化
 probe_all_optional_libraries()
+
 
 
 @pytest.fixture(scope="session")
@@ -31,7 +30,9 @@ def random_seed() -> int:
 
 
 @pytest.fixture(scope="session")
-def small_regression_df() -> pd.DataFrame:
+def small_regression_df():
+    import numpy as np
+    import pandas as pd
     """セッションスコープの小さい回帰DataFrameフィクスチャ。"""
     np.random.seed(42)
     n = 150
@@ -45,7 +46,9 @@ def small_regression_df() -> pd.DataFrame:
 
 
 @pytest.fixture(scope="session")
-def small_classification_df() -> pd.DataFrame:
+def small_classification_df():
+    import numpy as np
+    import pandas as pd
     """セッションスコープの分類DataFrameフィクスチャ。"""
     np.random.seed(42)
     n = 150

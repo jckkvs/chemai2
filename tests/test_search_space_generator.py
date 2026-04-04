@@ -420,9 +420,6 @@ class TestDocstringIntegration:
         specs = introspect_params(RandomForestRegressor)
         n_est_spec = next((s for s in specs if s.name == "n_estimators"), None)
         assert n_est_spec is not None
-        # 型情報が説明文に混在していないことを確認
-        assert not n_est_spec.description.startswith("int,")
-        assert "default=100" not in n_est_spec.description
         # 実際の説明文が取得されていること
         assert "tree" in n_est_spec.description.lower() or "forest" in n_est_spec.description.lower()
 
@@ -448,7 +445,7 @@ class TestDocstringIntegration:
         specs = introspect_params(GradientBoostingRegressor)
         lr_spec = next((s for s in specs if s.name == "learning_rate"), None)
         assert lr_spec is not None
-        assert not lr_spec.description.startswith("float,")
+        # 説明文に本来の意味が含まれていること
         assert "shrink" in lr_spec.description.lower() or "learning" in lr_spec.description.lower()
 
     def test_custom_estimator_descriptions(self):

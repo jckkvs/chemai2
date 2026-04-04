@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from backend.utils.optional_import import require, safe_import
-from backend.utils.config import SHAP_MAX_DISPLAY, SHAP_KERNEL_NSAMPLES, RANDOM_STATE
+from backend.utils.config import SHAP_MAX_DISPLAY, SHAP_KERNEL_NSAMPLES, SHAP_KERNEL_NSAMPLES_MAX, RANDOM_STATE
 
 _shap = safe_import("shap", "shap")
 
@@ -38,6 +38,7 @@ class ShapConfig:
     background_size: int = 100
     plot_types: list[str] = field(default_factory=lambda: ["summary", "waterfall", "dependence"])
     kernel_nsamples: int = SHAP_KERNEL_NSAMPLES
+    kernel_nsamples_max: int = SHAP_KERNEL_NSAMPLES_MAX
 
 
 @dataclass
@@ -97,19 +98,23 @@ class ShapExplainer:
         self,
         config_or_max_display: ShapConfig | int = SHAP_MAX_DISPLAY,
         kernel_nsamples: int = SHAP_KERNEL_NSAMPLES,
+        kernel_nsamples_max: int = SHAP_KERNEL_NSAMPLES_MAX,
     ) -> None:
         require("shap", feature="SHAP解釈")
         if isinstance(config_or_max_display, ShapConfig):
             self._config = config_or_max_display
             self.max_display = config_or_max_display.max_display
             self.kernel_nsamples = config_or_max_display.kernel_nsamples
+            self.kernel_nsamples_max = config_or_max_display.kernel_nsamples_max
         else:
             self._config = ShapConfig(
                 max_display=config_or_max_display,
                 kernel_nsamples=kernel_nsamples,
+                kernel_nsamples_max=kernel_nsamples_max,
             )
             self.max_display = config_or_max_display
             self.kernel_nsamples = kernel_nsamples
+            self.kernel_nsamples_max = kernel_nsamples_max
 
     def _select_explainer_type(self, model: Any) -> str:
         """モデルの種類に応じてExplainerタイプ文字列を返す。
@@ -254,8 +259,20 @@ class ShapExplainer:
 
         # KernelExplainer: フォールバック（モデル非依存）
         logger.info("KernelExplainer を使用（フォールバック）")
-        bg = (background_data if background_data is not None
-              else shap.sample(X, min(self.kernel_nsamples, len(X))))
+        n_samples = len(X) if background_data is None else len(background_data)
+        
+        if background_data is None:
+            if n_samples > self.kernel_nsamples_max:
+                logger.info(f"データ数({n_samples})上限超過。shap.kmeans()で{self.kernel_nsamples}点に縮約します。")
+                bg = shap.kmeans(X, self.kernel_nsamples)
+            else:
+                bg = shap.sample(X, min(self.kernel_nsamples, n_samples))
+        else:
+            if n_samples > self.kernel_nsamples_max:
+                logger.info(f"バックグラウンドデータ上限超過。shap.kmeans()で{self.kernel_nsamples}点に縮約します。")
+                bg = shap.kmeans(background_data, self.kernel_nsamples)
+            else:
+                bg = background_data
 
         def _predict_fn(data: np.ndarray) -> np.ndarray:
             if hasattr(model, "predict_proba"):

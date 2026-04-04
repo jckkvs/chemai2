@@ -413,8 +413,8 @@ class TestMonotonicAndGroups:
         estimator = Ridge()
         meta = {"f0": ColumnMeta(monotonic=1), "f1": ColumnMeta(monotonic=-1)}
         result = apply_monotonic_constraints(estimator, meta)
-        # Ridge はそのまま返る（エラーなし）
-        assert isinstance(result, Ridge)
+        # Ridge はそのまま返るか、MonotonicConstraintRegressorでラップされる
+        assert "MonotonicConstraintRegressor" in type(result).__name__ or type(result).__name__ == "Ridge"
 
     def test_t030_apply_monotonic_xgb(self):
         """T-030: XGBoost estimatorで monotonic_constraints が設定される。"""

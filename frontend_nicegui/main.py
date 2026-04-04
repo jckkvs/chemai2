@@ -668,6 +668,21 @@ def main_page():
     from frontend_nicegui.components.descriptor_status_bar import render_descriptor_status_bar
     render_descriptor_status_bar(state)
 
+    # ── 解析フロー進捗ステッパー ──
+    from frontend_nicegui.components.flow_stepper import render_flow_stepper
+    with ui.card().classes("full-width q-pa-xs q-mb-xs").style(
+        "background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05);"
+        "border-radius: 8px;"
+    ):
+        stepper_container = ui.column().classes("full-width items-center")
+
+    def _refresh_stepper():
+        stepper_container.clear()
+        with stepper_container:
+            render_flow_stepper(state, compact=True)
+    _refresh_stepper()
+    state["_refresh_stepper"] = _refresh_stepper
+
     with ui.tabs().classes("full-width q-mt-xs").props(
         "active-color=cyan indicator-color=cyan align=left"
     ) as main_tabs:

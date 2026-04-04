@@ -37,12 +37,14 @@ class AnalysisSession(models.Model):
                               choices=[
                                   ("created", "作成済"),
                                   ("data_loaded", "データ読込済"),
+                                  ("eda_completed", "EDA完了"),
                                   ("descriptors_calculated", "記述子計算済"),
                                   ("running", "解析実行中"),
                                   ("completed", "完了"),
                                   ("error", "エラー"),
                               ])
     result_data = models.JSONField(default=dict, blank=True)
+    eda_results = models.JSONField(null=True, blank=True, default=dict)
     error_message = models.TextField(blank=True, default="")
 
     class Meta:

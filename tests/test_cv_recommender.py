@@ -1,17 +1,8 @@
+# -*- coding: utf-8 -*-
 """
-backend/utils/cv_recommender テスト.
+tests/test_cv_recommender.py
 
-テストID対応:
-    T-CVR01: recommend_cv_strategy — 通常回帰データ
-    T-CVR02: recommend_cv_strategy — 時系列データ（列名パターン）
-    T-CVR03: recommend_cv_strategy — 時系列データ（単調増加列）
-    T-CVR04: recommend_cv_strategy — グループ指定あり
-    T-CVR05: recommend_cv_strategy — クラス不均衡
-    T-CVR06: recommend_cv_strategy — 小サンプル（LOO）
-    T-CVR07: recommend_cv_strategy — 小サンプル（RepeatedKFold）
-    T-CVR08: _detect_timeseries — 列名パターン網羅
-    T-CVR09: _detect_imbalance — 比率境界テスト
-    T-CVR10: _assess_sample_size — カテゴリ境界テスト
+cv_recommender.py の網羅的テストスイート。
 """
 from __future__ import annotations
 
@@ -26,294 +17,221 @@ from backend.utils.cv_recommender import (
     _detect_groups,
     _detect_imbalance,
     _assess_sample_size,
+    _recommend_n_splits,
+    _recommend_ts_splits,
 )
 
+# ────────────────────────────────────────────────────────────
+# 1. ヘルパー関数のテスト
+# ────────────────────────────────────────────────────────────
+class TestRecommendSplits:
+    def test_recommend_n_splits(self):
+        assert _recommend_n_splits(15000) == 10
+        assert _recommend_n_splits(1500) == 5
+        assert _recommend_n_splits(250) == 5
+        assert _recommend_n_splits(80) == 3
+        assert _recommend_n_splits(10) == 2
 
-# ============================================================
-# フィクスチャ
-# ============================================================
+    def test_recommend_ts_splits(self):
+        assert _recommend_ts_splits(600) == 5
+        assert _recommend_ts_splits(250) == 4
+        assert _recommend_ts_splits(80) == 3
+        assert _recommend_ts_splits(10) == 2
 
-@pytest.fixture
-def normal_regression_data():
-    """T-CVR01: 標準的な回帰データ (100サンプル, 5特徴量)"""
-    rng = np.random.RandomState(42)
-    X = pd.DataFrame(rng.randn(100, 5), columns=[f"feat_{i}" for i in range(5)])
-    y = pd.Series(rng.randn(100), name="target")
-    return X, y
-
-
-@pytest.fixture
-def timeseries_data_by_name():
-    """T-CVR02: 列名に 'date' を含む時系列データ"""
-    rng = np.random.RandomState(42)
-    n = 100
-    X = pd.DataFrame({
-        "date": pd.date_range("2020-01-01", periods=n),
-        "feature_a": rng.randn(n),
-        "feature_b": rng.randn(n),
-    })
-    y = pd.Series(rng.randn(n))
-    return X, y
-
-
-@pytest.fixture
-def timeseries_data_monotonic():
-    """T-CVR03: 等間隔単調増加列（列名に時系列キーワードなし）"""
-    rng = np.random.RandomState(42)
-    n = 100
-    X = pd.DataFrame({
-        "index_val": np.arange(n),  # 完全な等間隔単調増加
-        "sensor_a": rng.randn(n),
-        "sensor_b": rng.randn(n),
-    })
-    y = pd.Series(rng.randn(n))
-    return X, y
-
-
-@pytest.fixture
-def grouped_data():
-    """T-CVR04: グループ構造のあるデータ"""
-    rng = np.random.RandomState(42)
-    n = 100
-    groups = np.repeat(["A", "B", "C", "D", "E"], 20)
-    X = pd.DataFrame({
-        "group_id": groups,
-        "feat_1": rng.randn(n),
-        "feat_2": rng.randn(n),
-    })
-    y = pd.Series(rng.randn(n))
-    return X, y, groups
-
-
-@pytest.fixture
-def imbalanced_classification_data():
-    """T-CVR05: クラス不均衡の分類データ"""
-    rng = np.random.RandomState(42)
-    n = 200
-    X = pd.DataFrame(rng.randn(n, 3), columns=["a", "b", "c"])
-    # 90% がクラス 0, 10% がクラス 1 → 比率 9:1
-    y = pd.Series([0] * 180 + [1] * 20)
-    return X, y
-
-
-@pytest.fixture
-def very_small_data():
-    """T-CVR06: 非常に小さなデータ (15サンプル)"""
-    rng = np.random.RandomState(42)
-    X = pd.DataFrame(rng.randn(15, 3), columns=["a", "b", "c"])
-    y = pd.Series(rng.randn(15))
-    return X, y
-
-
-@pytest.fixture
-def small_data():
-    """T-CVR07: 小さなデータ (40サンプル)"""
-    rng = np.random.RandomState(42)
-    X = pd.DataFrame(rng.randn(40, 3), columns=["a", "b", "c"])
-    y = pd.Series(rng.randn(40))
-    return X, y
-
-
-# ============================================================
-# T-CVR01: 通常回帰データ → KFold推奨
-# ============================================================
-
-class TestNormalRegression:
-    def test_recommends_kfold(self, normal_regression_data):
-        X, y = normal_regression_data
-        rec = recommend_cv_strategy(X, y)
-        assert isinstance(rec, CVRecommendation)
-        assert rec.recommended_cv == "kfold"
-        assert rec.confidence > 0
-        assert "n_splits" in rec.recommended_params
-        assert rec.recommended_params["n_splits"] in (3, 5, 10)
-
-    def test_result_has_all_fields(self, normal_regression_data):
-        X, y = normal_regression_data
-        rec = recommend_cv_strategy(X, y)
-        assert rec.reason != ""
-        assert isinstance(rec.alternative_cvs, list)
-        assert isinstance(rec.detected_features, dict)
-        assert "n_samples" in rec.detected_features
-
-
-# ============================================================
-# T-CVR02: 時系列データ（列名パターン）
-# ============================================================
-
-class TestTimeseriesByName:
-    def test_detects_timeseries_column(self, timeseries_data_by_name):
-        X, y = timeseries_data_by_name
-        rec = recommend_cv_strategy(X, y)
-        assert rec.recommended_cv == "timeseries"
-        assert rec.confidence >= 0.70
-        assert "時系列" in rec.reason or "TimeSeriesSplit" in rec.reason
-
-
-# ============================================================
-# T-CVR03: 時系列データ（単調増加列）
-# ============================================================
-
-class TestTimeseriesMonotonic:
-    def test_detects_monotonic_column(self, timeseries_data_monotonic):
-        X, y = timeseries_data_monotonic
-        rec = recommend_cv_strategy(X, y)
-        assert rec.recommended_cv == "timeseries"
-        assert rec.confidence >= 0.60
-
-
-# ============================================================
-# T-CVR04: グループ指定あり → GroupKFold/LOGO推奨
-# ============================================================
-
-class TestGroupedData:
-    def test_recommends_group_cv(self, grouped_data):
-        X, y, groups = grouped_data
-        rec = recommend_cv_strategy(X, y, metadata={"group_col": "group_id"})
-        assert rec.recommended_cv in ("group_kfold", "logo")
-        assert rec.confidence >= 0.80
-        assert "グループ" in rec.reason
-
-    def test_logo_for_few_groups(self, grouped_data):
-        """5グループ以下 → LOGO推奨"""
-        rng = np.random.RandomState(42)
-        X = pd.DataFrame({
-            "group_id": np.repeat(["A", "B", "C"], 10),
-            "feat": rng.randn(30),
-        })
-        y = pd.Series(rng.randn(30))
-        rec = recommend_cv_strategy(X, y, metadata={"group_col": "group_id"})
-        assert rec.recommended_cv == "logo"
-
-
-# ============================================================
-# T-CVR05: クラス不均衡 → StratifiedKFold推奨
-# ============================================================
-
-class TestImbalancedClassification:
-    def test_recommends_stratified(self, imbalanced_classification_data):
-        X, y = imbalanced_classification_data
-        rec = recommend_cv_strategy(X, y, metadata={"task_type": "classification"})
-        assert rec.recommended_cv == "stratified_kfold"
-        assert rec.confidence >= 0.70
-        assert "不均衡" in rec.reason
-
-
-# ============================================================
-# T-CVR06: 非常に小さなデータ → LOO推奨
-# ============================================================
-
-class TestVerySmallData:
-    def test_recommends_loo(self, very_small_data):
-        X, y = very_small_data
-        rec = recommend_cv_strategy(X, y)
-        assert rec.recommended_cv == "loo"
-        assert len(rec.warnings) > 0  # 計算コスト警告
-
-
-# ============================================================
-# T-CVR07: 小さなデータ → RepeatedKFold推奨
-# ============================================================
-
-class TestSmallData:
-    def test_recommends_repeated_kfold(self, small_data):
-        X, y = small_data
-        rec = recommend_cv_strategy(X, y)
-        assert rec.recommended_cv == "repeated_kfold"
-        assert rec.recommended_params.get("n_repeats", 0) > 1
-
-
-# ============================================================
-# T-CVR08: _detect_timeseries — 列名パターン網羅
-# ============================================================
-
+# ────────────────────────────────────────────────────────────
+# 2. _detect_timeseries のテスト
+# ────────────────────────────────────────────────────────────
 class TestDetectTimeseries:
-    @pytest.mark.parametrize("col_name", [
-        "date", "Date", "DATE",
-        "timestamp", "datetime",
-        "year", "month",
-        "created_at", "updated_at",
-        "日付", "日時", "年月日",
-    ])
-    def test_detects_various_patterns(self, col_name):
-        rng = np.random.RandomState(42)
-        X = pd.DataFrame({
-            col_name: range(50),
-            "feature": rng.randn(50),
-        })
-        result = _detect_timeseries(X, {})
-        assert result["is_timeseries"], f"'{col_name}' should be detected as timeseries"
+    def test_explicit_metadata(self):
+        X = pd.DataFrame({"A": [1, 2], "time": [3, 4]})
+        meta = {"time_col": "time"}
+        res = _detect_timeseries(X, meta)
+        assert res["is_timeseries"]
+        assert res["detected_column"] == "time"
+        assert res["confidence"] == 0.95
 
-    def test_no_false_positive(self):
-        rng = np.random.RandomState(42)
-        X = pd.DataFrame({
-            "feature_a": rng.randn(50),
-            "feature_b": rng.randn(50),
-        })
-        result = _detect_timeseries(X, {})
-        assert not result["is_timeseries"]
+    def test_column_pattern(self):
+        X = pd.DataFrame({"A": [1, 2], "created_at": [3, 4]})
+        res = _detect_timeseries(X, {})
+        assert res["is_timeseries"]
+        assert "created_at" in res["detected_column"].lower()
 
+    def test_monotonic_increasing(self):
+        # CVが小さい単調増加列
+        vals = np.linspace(0, 100, 20)
+        X = pd.DataFrame({"A": vals})
+        res = _detect_timeseries(X, {})
+        assert res["is_timeseries"]
+        assert res["detected_column"] == "A"
+        assert res["confidence"] == 0.70
 
-# ============================================================
-# T-CVR09: _detect_imbalance — 比率境界テスト
-# ============================================================
+    def test_not_timeseries(self):
+        X = pd.DataFrame({"A": np.random.randn(20)})
+        res = _detect_timeseries(X, {})
+        assert not res["is_timeseries"]
 
+# ────────────────────────────────────────────────────────────
+# 3. _detect_groups のテスト
+# ────────────────────────────────────────────────────────────
+class TestDetectGroups:
+    def test_explicit_group_col(self):
+        X = pd.DataFrame({"g": [1, 1, 2, 2], "v": [1, 2, 3, 4]})
+        res = _detect_groups(X, pd.Series([0, 1, 0, 1]), {"group_col": "g"})
+        assert res["has_groups"]
+        assert res["n_groups"] == 2
+        assert res["confidence"] == 0.95
+
+    def test_explicit_groups_array(self):
+        X = pd.DataFrame({"v": [1, 2, 3, 4]})
+        res = _detect_groups(X, pd.Series([0, 1, 0, 1]), {"groups": [1, 1, 2, 2]})
+        assert res["has_groups"]
+        assert res["n_groups"] == 2
+        assert res["confidence"] == 0.90
+        
+    def test_leakage_groups(self):
+        X = pd.DataFrame({"v": [1, 2, 3, 4]})
+        res = _detect_groups(X, pd.Series([0, 1, 0, 1]), {"leakage_group_labels": [1, 1, 2, 2]})
+        assert res["has_groups"]
+        assert res["confidence"] == 0.85
+
+    def test_rbf_similarity(self):
+        # 高い類似度を持つペアを意図的に作成
+        X_arr = np.concatenate([
+            np.tile([1.0, 1.0], (10, 1)),
+            np.tile([-1.0, -1.0], (10, 1)),
+            np.tile([5.0, 5.0], (5, 1))
+        ])
+        X = pd.DataFrame(X_arr, columns=["f1", "f2"])
+        y = pd.Series([0]*25)
+        res = _detect_groups(X, y, {})
+        assert res["has_groups"]
+        assert res["n_groups"] >= 2
+        assert res["confidence"] == 0.65
+
+    def test_no_groups(self):
+        X = pd.DataFrame(np.random.randn(50, 5))
+        y = pd.Series(np.random.randn(50))
+        res = _detect_groups(X, y, {})
+        assert not res["has_groups"]
+
+# ────────────────────────────────────────────────────────────
+# 4. _detect_imbalance のテスト
+# ────────────────────────────────────────────────────────────
 class TestDetectImbalance:
+    def test_highly_imbalanced(self):
+        y = pd.Series([0]*100 + [1]*5)
+        res = _detect_imbalance(y)
+        assert res["is_imbalanced"]
+        assert res["imbalance_ratio"] > 10
+        assert res["confidence"] == 0.90
+
+    def test_moderately_imbalanced(self):
+        y = pd.Series([0]*50 + [1]*10)
+        res = _detect_imbalance(y)
+        assert res["is_imbalanced"]
+        assert 3 < res["imbalance_ratio"] <= 10
+        assert res["confidence"] == 0.75
+
+    def test_few_samples_in_minority(self):
+        y = pd.Series([0]*20 + [1]*8)  # ratio < 3 but min_count < 10
+        res = _detect_imbalance(y)
+        assert res["is_imbalanced"]
+        assert res["confidence"] == 0.70
+
     def test_balanced(self):
-        y = pd.Series([0] * 50 + [1] * 50)
-        result = _detect_imbalance(y)
-        assert not result["is_imbalanced"]
+        y = pd.Series([0]*50 + [1]*50)
+        res = _detect_imbalance(y)
+        assert not res["is_imbalanced"]
 
-    def test_moderate_imbalance(self):
-        """3:1超 → 不均衡判定"""
-        y = pd.Series([0] * 80 + [1] * 20)
-        result = _detect_imbalance(y)
-        assert result["is_imbalanced"]
-        assert result["imbalance_ratio"] == 4.0
+    def test_single_class(self):
+        y = pd.Series([0]*50)
+        res = _detect_imbalance(y)
+        assert not res["is_imbalanced"]
+        assert "1クラス" in res["reason"]
 
-    def test_severe_imbalance(self):
-        """10:1超 → 高度不均衡"""
-        y = pd.Series([0] * 110 + [1] * 10)
-        result = _detect_imbalance(y)
-        assert result["is_imbalanced"]
-        assert result["confidence"] >= 0.90
-
-
-# ============================================================
-# T-CVR10: _assess_sample_size — カテゴリ境界テスト
-# ============================================================
-
+# ────────────────────────────────────────────────────────────
+# 5. _assess_sample_size のテスト
+# ────────────────────────────────────────────────────────────
 class TestAssessSampleSize:
     def test_very_small(self):
-        result = _assess_sample_size(15, 3)
-        assert result["is_small"]
-        assert result["category"] == "very_small"
+        res = _assess_sample_size(15, 5)
+        assert res["is_small"]
+        assert res["category"] == "very_small"
 
     def test_small(self):
-        result = _assess_sample_size(40, 3)
-        assert result["is_small"]
-        assert result["category"] == "small"
+        res = _assess_sample_size(40, 5)
+        assert res["is_small"]
+        assert res["category"] == "small"
 
-    def test_high_dimensional(self):
-        result = _assess_sample_size(100, 200)
-        assert result["is_small"]
-        assert result["category"] == "high_dim"
+    def test_high_dim(self):
+        res = _assess_sample_size(100, 80)
+        assert res["is_small"]
+        assert res["category"] == "high_dim"
 
     def test_normal(self):
-        result = _assess_sample_size(500, 10)
-        assert not result["is_small"]
-        assert result["category"] == "normal"
+        res = _assess_sample_size(200, 10)
+        assert not res["is_small"]
 
+# ────────────────────────────────────────────────────────────
+# 6. recommend_cv_strategy メインAPIのテスト
+# ────────────────────────────────────────────────────────────
+class TestRecommendCvStrategy:
+    def test_timeseries_priority(self):
+        # 時系列でもありクラス不均衡でもある場合、時系列が優先される
+        X = pd.DataFrame({"time": np.arange(100), "feat": np.random.randn(100)})
+        y = pd.Series([0]*90 + [1]*10)
+        res = recommend_cv_strategy(X, y, {"task_type": "classification"})
+        assert res.recommended_cv == "timeseries"
 
-# ============================================================
-# numpy配列入力の互換性テスト
-# ============================================================
+    def test_groups_priority(self):
+        # グループでもあり小サンプル(<20)の場合、グループが優先
+        X = pd.DataFrame({"v": np.random.randn(15)})
+        y = pd.Series(np.random.randn(15))
+        groups = np.array([0,0,0,1,1,1,2,2,2,3,3,3,4,4,4])
+        res = recommend_cv_strategy(X, y, {"groups": groups})
+        # n_groups = 5 なので logo が推奨される
+        assert res.recommended_cv == "logo"
 
-class TestNumpyInput:
-    def test_numpy_arrays(self):
-        rng = np.random.RandomState(42)
-        X = rng.randn(80, 4)
-        y = rng.randn(80)
-        rec = recommend_cv_strategy(X, y)
-        assert isinstance(rec, CVRecommendation)
-        assert rec.recommended_cv in ("kfold", "repeated_kfold")
+    def test_groups_group_kfold(self):
+        X = pd.DataFrame({"v": np.random.randn(40)})
+        y = pd.Series(np.random.randn(40))
+        groups = np.repeat(np.arange(10), 4) # 10 groups
+        res = recommend_cv_strategy(X, y, {"groups": groups})
+        assert res.recommended_cv == "group_kfold"
+
+    def test_imbalance_stratified(self):
+        X = pd.DataFrame(np.random.randn(100, 5))
+        y = pd.Series([0]*95 + [1]*5)
+        res = recommend_cv_strategy(X, y, {"task_type": "classification"})
+        assert res.recommended_cv == "stratified_kfold"
+
+    def test_small_sample_loo(self):
+        X = pd.DataFrame(np.random.randn(15, 5))
+        y = pd.Series(np.random.randn(15))
+        res = recommend_cv_strategy(X, y, {"task_type": "regression"})
+        assert res.recommended_cv == "loo"
+
+    def test_small_sample_repeated(self):
+        X = pd.DataFrame(np.random.randn(30, 5))
+        y = pd.Series(np.random.randn(30))
+        res = recommend_cv_strategy(X, y, {"task_type": "regression"})
+        assert res.recommended_cv == "repeated_kfold"
+
+    def test_default_regression(self):
+        X = pd.DataFrame(np.random.randn(500, 5))
+        y = pd.Series(np.random.randn(500))
+        res = recommend_cv_strategy(X, y, {"task_type": "regression"})
+        assert res.recommended_cv == "kfold"
+        assert res.recommended_params["n_splits"] == 5
+
+    def test_default_classification(self):
+        X = pd.DataFrame(np.random.randn(500, 5))
+        y = pd.Series([0]*250 + [1]*250)
+        res = recommend_cv_strategy(X, y, {"task_type": "classification"})
+        assert res.recommended_cv == "stratified_kfold"
+
+    def test_numpy_input(self):
+        X = np.random.randn(100, 5)
+        y = np.random.randn(100)
+        res = recommend_cv_strategy(X, y)
+        assert res.recommended_cv == "kfold"

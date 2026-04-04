@@ -124,6 +124,11 @@ class MordredAdapter(BaseChemAdapter):
         )
 
     def is_available(self) -> bool:
+        import sys
+        if sys.version_info >= (3, 12):
+            logger.warning("MordredAdapter: Python 3.12+ では非互換エラーが発生しやすいため無効化されています。")
+            return False
+            
         try:
             import mordred  # noqa: F401
             from rdkit import Chem  # noqa: F401

@@ -151,49 +151,54 @@ def render_eda_panel(state: dict) -> None:
 
 
 def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict) -> None:
-    """単一データセットの包括的EDA — 12タブ構成。"""
+    """単一データセットの包括的EDA — より少ないタブとカードベースのUI"""
     with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
         ui.badge(f"{df.shape[0]}行 × {df.shape[1]}列", color="grey-7").props("dense")
 
     with ui.tabs().classes("full-width").props(
         "dense no-caps active-color=cyan indicator-color=cyan scrollable"
     ) as eda_tabs:
-        ui.tab("t_overview", label="📋 データ概要")
-        ui.tab("t_relation", label="🔥 関係性分析")
-        ui.tab("t_dr", label="🌀 次元削減")
-        ui.tab("t_fi", label="⭐ 重要度・その他")
+        ui.tab("t_data", label="📊 データ品質・分布・関係性")
+        ui.tab("t_advanced", label="🌀 次元の削減と重要度")
 
-    with ui.tab_panels(eda_tabs, value="t_overview").classes("full-width bg-transparent"):
-        with ui.tab_panel("t_overview"):
-            with ui.expansion("📋 統計サマリー", value=True).classes("full-width bg-dark q-mb-md"):
-                _render_stats(df, target_col)
-            with ui.expansion("🧩 欠損", value=False).classes("full-width bg-dark q-mb-md"):
-                _render_missing(df)
-            with ui.expansion("🎯 外れ値", value=False).classes("full-width bg-dark q-mb-md"):
-                _render_outliers(df, target_col)
-            with ui.expansion("📊 分布", value=False).classes("full-width bg-dark q-mb-md"):
-                _render_distribution(df, target_col)
-                
-        with ui.tab_panel("t_relation"):
-            with ui.expansion("🔥 相関行列 (VIFフィルタ済)", value=True).classes("full-width bg-dark q-mb-md"):
-                _render_correlation(df, target_col)
-            with ui.expansion("🎯 目的変数 vs 説明変数", value=False).classes("full-width bg-dark q-mb-md"):
-                _render_target_vs_features(df, target_col)
-            with ui.expansion("📈 Pairplot", value=False).classes("full-width bg-dark q-mb-md"):
-                _render_pairplot(df, target_col)
-                
-        with ui.tab_panel("t_dr"):
-            _render_dim_reduction(df, target_col, state)
-            
-        with ui.tab_panel("t_fi"):
-            with ui.expansion("⭐ 特徴量重要度", value=True).classes("full-width bg-dark q-mb-md"):
-                _render_feature_importance(df, target_col)
-            with ui.expansion("🎻 Box/Violin", value=False).classes("full-width bg-dark q-mb-md"):
-                _render_box_violin(df, target_col)
-            with ui.expansion("📐 QQプロット", value=False).classes("full-width bg-dark q-mb-md"):
-                _render_qqplot(df, target_col)
-            with ui.expansion("📏 VIF(共線性) 詳細", value=False).classes("full-width bg-dark q-mb-md"):
-                _render_vif(df, target_col)
+    with ui.tab_panels(eda_tabs, value="t_data").classes("full-width bg-transparent"):
+        with ui.tab_panel("t_data"):
+            with ui.row().classes("full-width q-mb-md q-col-gutter-lg"):
+                # 統計サマリー (半分の幅)
+                with ui.column().classes("col-12 col-md-5"):
+                    ui.label("📋 統計サマリー").classes("text-subtitle2 text-bold")
+                    _render_stats(df, target_col)
+                # 相関行列 (半分の幅)
+                with ui.column().classes("col-12 col-md-6"):
+                    ui.label("🔥 相関行列 (VIFフィルタ済)").classes("text-subtitle2 text-bold text-amber")
+                    _render_correlation(df, target_col)
+
+            ui.separator().classes("q-my-md")
+            with ui.row().classes("full-width q-col-gutter-lg"):
+                with ui.column().classes("col-12 col-md-6"):
+                    ui.label("🎯 目的変数 vs 特徴量 (相関上位)").classes("text-subtitle2 text-bold")
+                    _render_target_vs_features(df, target_col)
+                with ui.column().classes("col-12 col-md-6"):
+                    ui.label("📊 特徴量の分布 (相関上位)").classes("text-subtitle2 text-bold")
+                    _render_distribution(df, target_col)
+
+        with ui.tab_panel("t_advanced"):
+            with ui.row().classes("full-width q-mb-md q-col-gutter-lg"):
+                 with ui.column().classes("col-12 col-md-6"):
+                     ui.label("⭐ 特徴量重要度").classes("text-subtitle2 text-bold")
+                     _render_feature_importance(df, target_col)
+                 with ui.column().classes("col-12 col-md-5"):
+                     ui.label("🌀 次元削減").classes("text-subtitle2 text-bold")
+                     _render_dim_reduction(df, target_col, state)
+                     
+            ui.separator().classes("q-my-md")
+            with ui.row().classes("full-width q-col-gutter-lg"):
+                 with ui.column().classes("col-12 col-md-6"):
+                     ui.label("🎯 外れ値").classes("text-subtitle2 text-bold")
+                     _render_outliers(df, target_col)
+                 with ui.column().classes("col-12 col-md-5"):
+                     ui.label("🧩 欠損").classes("text-subtitle2 text-bold")
+                     _render_missing(df)
 
 # ═══════════════════════════════════════════════════════════
 # 1. 統計サマリー（歪度・尖度含む）
@@ -227,47 +232,40 @@ def _render_stats(df: pd.DataFrame, target_col: str) -> None:
 # 2. 分布（ヒストグラム + KDE）
 # ═══════════════════════════════════════════════════════════
 def _render_distribution(df: pd.DataFrame, target_col: str) -> None:
-    import plotly.figure_factory as ff
-    import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
 
     num_cols = df.select_dtypes(include="number").columns.tolist()
     if not num_cols:
         ui.label("数値列がありません").classes("text-caption text-grey")
         return
 
-    default_col = target_col if target_col in num_cols else num_cols[0]
-    col_select = ui.select(num_cols, value=default_col, label="列を選択").props("outlined dense").classes("q-mb-sm")
-    chart_container = ui.column().classes("full-width")
+    # 目的変数との相関が高い上位6つの特徴量を選択（または全体から適当に）
+    if target_col in num_cols:
+        num_cols.remove(target_col)
+        
+    try:
+        corr = df[num_cols].corrwith(df[target_col]).abs().sort_values(ascending=False)
+        top_cols = corr.head(6).index.tolist()
+    except Exception:
+        top_cols = num_cols[:6]
 
-    def _update():
-        chart_container.clear()
-        col = col_select.value
-        if not col or col not in df.columns:
-            return
-        series = df[col].dropna()
-        if series.empty:
-            return
-        with chart_container:
-            try:
-                fig = ff.create_distplot([series.values], [col], show_rug=True, colors=["#00d4ff"])
-                fig.update_layout(title=f"{col} の分布（ヒストグラム + KDE + ラグ）")
-                _dark_fig(fig, 380)
-                ui.plotly(fig).classes("full-width")
-            except Exception:
-                fig = px.histogram(series, nbins=30, title=f"{col} の分布",
-                                   template="plotly_dark", color_discrete_sequence=["#00d4ff"])
-                _dark_fig(fig, 350)
-                ui.plotly(fig).classes("full-width")
-
-            # 基本統計バッジ
-            with ui.row().classes("q-gutter-md text-caption text-grey q-mt-xs"):
-                ui.label(f"平均: {series.mean():.4g}")
-                ui.label(f"中央値: {series.median():.4g}")
-                ui.label(f"歪度: {series.skew():.3f}")
-                ui.label(f"尖度: {series.kurtosis():.3f}")
-
-    col_select.on("update:model-value", lambda: _update())
-    _update()
+    if not top_cols: return
+    
+    rows, cols = (len(top_cols)+1)//2, 2 if len(top_cols)>=2 else 1
+    fig = make_subplots(rows=rows, cols=cols, subplot_titles=top_cols)
+    
+    for i, c in enumerate(top_cols):
+        r = i//cols + 1
+        c_idx = i%cols + 1
+        fig.add_trace(
+            go.Histogram(x=df[c].dropna(), name=c, showlegend=False, marker_color="#00d4ff", nbinsx=30),
+            row=r, col=c_idx
+        )
+        
+    _dark_fig(fig, height=max(200, 180*rows))
+    fig.update_layout(margin=dict(l=30, r=20, t=30, b=20))
+    ui.plotly(fig).classes("full-width")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -346,36 +344,45 @@ def _render_correlation(df: pd.DataFrame, target_col: str) -> None:
 # 4. 目的変数 vs 説明変数（散布図 + 回帰線）
 # ═══════════════════════════════════════════════════════════
 def _render_target_vs_features(df: pd.DataFrame, target_col: str) -> None:
-    import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
 
     num_cols = [c for c in df.select_dtypes(include="number").columns if c != target_col]
     if not num_cols or target_col not in df.columns:
         ui.label("目的変数または説明変数が不足しています").classes("text-caption text-grey")
         return
 
-    col_select = ui.select(num_cols, value=num_cols[0], label="説明変数を選択").props("outlined dense")
-    chart_container = ui.column().classes("full-width")
+    try:
+        corr = df[num_cols].corrwith(df[target_col]).abs().sort_values(ascending=False)
+        top_cols = corr.head(6).index.tolist()
+    except Exception:
+        top_cols = num_cols[:6]
 
-    def _draw():
-        chart_container.clear()
-        col = col_select.value
-        if not col:
-            return
-        plot_df = df[[col, target_col]].dropna()
-        if plot_df.empty:
-            return
-        with chart_container:
-            fig = px.scatter(plot_df, x=col, y=target_col, trendline="ols",
-                             title=f"{target_col} vs {col}", template="plotly_dark",
-                             color_discrete_sequence=["#00d4ff"])
-            _dark_fig(fig, 400)
-            ui.plotly(fig).classes("full-width")
-            # 相関係数表示
-            r = plot_df[col].corr(plot_df[target_col])
-            ui.label(f"Pearson r = {r:.4f}").classes("text-caption text-cyan q-mt-xs")
-
-    col_select.on("update:model-value", lambda: _draw())
-    _draw()
+    if not top_cols: return
+    
+    rows, cols = (len(top_cols)+1)//2, 2 if len(top_cols)>=2 else 1
+    # 相関係数をタイトルに含む
+    titles = []
+    for c in top_cols:
+        r_val = df[c].corr(df[target_col])
+        titles.append(f"{c} (r={r_val:.2f})")
+        
+    fig = make_subplots(rows=rows, cols=cols, subplot_titles=titles)
+    
+    for i, c in enumerate(top_cols):
+        r = i//cols + 1
+        c_idx = i%cols + 1
+        plot_df = df[[c, target_col]].dropna()
+        if not plot_df.empty:
+            fig.add_trace(
+                go.Scatter(x=plot_df[c], y=plot_df[target_col], mode="markers", name=c, showlegend=False,
+                           marker=dict(color="#00d4ff", size=4, opacity=0.6)),
+                row=r, col=c_idx
+            )
+            
+    _dark_fig(fig, height=max(200, 180*rows))
+    fig.update_layout(margin=dict(l=30, r=20, t=30, b=20))
+    ui.plotly(fig).classes("full-width")
 
 
 # ═══════════════════════════════════════════════════════════

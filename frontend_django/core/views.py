@@ -925,3 +925,69 @@ def check_leakage(request, session_id):
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({"error": str(e)}, status=500)
+
+
+# ═══════════════════════════════════════════════════════════
+# EDA
+# ═══════════════════════════════════════════════════════════
+
+@csrf_exempt
+@require_POST
+def run_eda(request, session_id):
+    """EDA計算を実行し結果をセッションに保存"""
+    session = get_object_or_404(AnalysisSession, id=session_id)
+    
+    try:
+        # データ読み込み
+        df = pd.read_csv(session.uploaded_file.path)
+        
+        # EDA関数呼び出し
+        from backend.data.eda import (
+            summarize_dataframe,
+            compute_column_stats,
+            compute_correlation,
+            detect_outliers,
+            analyze_target,
+            compute_vif,
+            convert_numpy_to_list,
+        )
+        
+        # 計算実行
+        eda_results = {
+            "summary": summarize_dataframe(df),
+            "column_stats": [cs.__dict__ for cs in compute_column_stats(df)],
+            "correlation": compute_correlation(df).to_dict(),
+            "outliers": [
+                {k: v for k, v in o.__dict__.items() if k != "outlier_indices"}
+                for o in detect_outliers(df)
+            ],
+            "vif": compute_vif(df),
+        }
+        
+        if session.target_col and session.target_col in df.columns:
+            eda_results["target_analysis"] = analyze_target(df, session.target_col)
+        
+        # JSONシリアライズ対応
+        eda_results = convert_numpy_to_list(eda_results)
+        
+        # 結果をセッションに保存
+        session.eda_results = eda_results
+        session.status = "eda_completed"
+        session.save()
+        
+        return JsonResponse({"success": True, "message": "EDA計算完了"})
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({"error": str(e), "trace": traceback.format_exc()}, status=500)
+
+
+def get_eda_results(request, session_id):
+    """EDA結果を取得"""
+    session = get_object_or_404(AnalysisSession, id=session_id)
+    
+    if not session.eda_results:
+        return JsonResponse({"error": "EDA結果がありません"}, status=404)
+    
+    return JsonResponse({"success": True, "results": session.eda_results})

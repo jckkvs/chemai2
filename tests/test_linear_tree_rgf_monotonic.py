@@ -399,19 +399,19 @@ class TestPipelineIntegration:
             pytest.skip("xgboost未インストール")
 
     def test_apply_monotonic_constraints_soft(self):
-        """SVRにMonotonicKernelWrapperが適用される"""
+        """SVRにMonotonicConstraintRegressorが適用される"""
         from sklearn.svm import SVR
         from backend.pipeline.pipeline_builder import apply_monotonic_constraints
         from backend.pipeline.column_selector import ColumnMeta
-        from backend.models.monotonic_kernel import MonotonicKernelWrapper
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
         estimator = SVR()
         cm = {
             "feat0": ColumnMeta(monotonic=1),
             "feat1": ColumnMeta(monotonic=0),
         }
         result = apply_monotonic_constraints(estimator, cm)
-        assert isinstance(result, MonotonicKernelWrapper), (
-            f"SVRに対してMonotonicKernelWrapperが適用されていない。実際: {type(result)}"
+        assert isinstance(result, MonotonicConstraintRegressor), (
+            f"SVRに対してMonotonicConstraintRegressorが適用されていない。実際: {type(result)}"
         )
 
     def test_apply_no_constraint_returns_same(self):

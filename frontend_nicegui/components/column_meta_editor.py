@@ -186,7 +186,17 @@ def render_column_meta_editor(state: dict, df: pd.DataFrame | None = None) -> No
                         )
                         def _on_mono(_, c=col, v=val):
                             _set_meta(state, c, "monotonic", int(v))
-                        b = ui.button(label, on_click=_on_mono).props(
+                        
+                        # 自動(2)かつ解決済みの場合は表示を変更
+                        display_label = label
+                        if val == "2" and active:
+                            res = meta.get("resolved_monotonic")
+                            if res == 1:
+                                display_label = "🔄(📈)"
+                            elif res == -1:
+                                display_label = "🔄(📉)"
+
+                        b = ui.button(display_label, on_click=_on_mono).props(
                             "flat dense no-caps size=xs"
                         ).style(btn_style + "min-width:28px; margin:1px; border-radius:4px;")
                         b.tooltip({"0": "制約なし", "1": "単調増加", "-1": "単調減少", "2": "単調(自動検出)"}[val])
