@@ -687,21 +687,12 @@ def main_page():
     with analysis_status_container:
         pass  # analysis_runnerが動的に書き込む
 
-    # ── 記述子セット常時表示バー ──
-    from frontend_nicegui.components.descriptor_status_bar import render_descriptor_status_bar
-    render_descriptor_status_bar(state)
-
-    # ── 解析フロー進捗ステッパー（非表示: スペース確保のため折り畳み）──
-    from frontend_nicegui.components.flow_stepper import render_flow_stepper
-    with ui.element("div").style("display:none"):
-        stepper_container = ui.column().classes("full-width items-center")
-
+    # 記述子セット表示バー・フローステッパーは削除（UI簡素化）
+    # _refresh_stepper は他コードから参照されるためノーオペレーションで保持
     def _refresh_stepper():
-        stepper_container.clear()
-        with stepper_container:
-            render_flow_stepper(state, compact=True)
-    _refresh_stepper()
+        pass
     state["_refresh_stepper"] = _refresh_stepper
+
 
     with ui.tabs().classes("full-width q-mt-xs").props(
         "active-color=cyan indicator-color=cyan align=left"
