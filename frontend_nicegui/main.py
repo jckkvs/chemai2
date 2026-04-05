@@ -424,9 +424,12 @@ def main_page():
     ui.add_head_html(f"<style>{CUSTOM_CSS}</style>")
 
     # ═══════════════════════════════════════════════════════════
-    # ヘッダー
+    # ヘッダー（コンパクト化: analysis_status_container を外に移動）
     # ═══════════════════════════════════════════════════════════
-    with ui.header().classes("items-center justify-between q-px-lg"):
+    # analysis_status_container はヘッダー外に定義（ヘッダー膨張を防ぐ）
+    analysis_status_container = ui.column().classes("full-width")
+
+    with ui.header().classes("items-center justify-between q-px-md q-py-none").props("dense"):
         with ui.row().classes("items-center q-gutter-sm"):
             ui.label("⚗️").classes("text-h5")
             ui.label("ChemAI ML Studio").classes("text-h5 text-bold hero-gradient")
@@ -458,8 +461,6 @@ def main_page():
                             ui.badge(key, color="grey-8").props("dense")
                             ui.label(desc).classes("text-caption")
 
-        # ── ワンクリック解析ボタン（ヘッダー常設） ──
-        analysis_status_container = ui.column().classes("full-width")
 
         async def _run_analysis():
             # ── プリフライトチェック ──
@@ -485,11 +486,11 @@ def main_page():
                 run_btn.text = "🚀 解析開始"
                 run_btn.classes("btn-run-analysis")
 
-        # F-08: 解析開始ボタン — 大きく+パルスアニメーション+改善ツールチップ
+        # F-08: 解析開始ボタン（コンパクトヘッダーに合わせて md サイズ）
         run_btn = ui.button(
             "🚀 解析開始", on_click=_run_analysis,
         ).classes("btn-primary btn-run-analysis").props(
-            "size=lg icon=rocket_launch no-caps unelevated"
+            "size=md icon=rocket_launch no-caps unelevated"
         )
         run_btn.tooltip(
             "ワンクリックで全自動ML: データ前処理 → 特徴選択 → "
@@ -704,20 +705,17 @@ def main_page():
     # メインコンテンツ — 2タブ構造
     # ═══════════════════════════════════════════════════════════
 
-    # 解析状態表示エリア（タブの上）
+    # 解析状態表示エリア（ヘッダー外・サイドバー下部に相当する位置）
     with analysis_status_container:
         pass  # analysis_runnerが動的に書き込む
 
-    # ── 記述子セット常時表示バー（タブより上部に固定） ──
+    # ── 記述子セット常時表示バー ──
     from frontend_nicegui.components.descriptor_status_bar import render_descriptor_status_bar
     render_descriptor_status_bar(state)
 
-    # ── 解析フロー進捗ステッパー ──
+    # ── 解析フロー進捗ステッパー（非表示: スペース確保のため折り畳み）──
     from frontend_nicegui.components.flow_stepper import render_flow_stepper
-    with ui.card().classes("full-width q-pa-xs q-mb-xs").style(
-        "background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05);"
-        "border-radius: 8px;"
-    ):
+    with ui.element("div").style("display:none"):
         stepper_container = ui.column().classes("full-width items-center")
 
     def _refresh_stepper():
