@@ -724,7 +724,7 @@ def main_page():
         results_tab = ui.tab("results", label="📊 結果確認", icon="analytics")
         inverse_tab = ui.tab("inverse", label="🔮 逆解析", icon="find_replace")
         doe_tab = ui.tab("doe", label="🧪 実験計画", icon="science")
-        model_tab = ui.tab("models", label="🤗 モデル管理", icon="download")
+        model_tab = ui.tab("models", label="🎯 学習済みモデル", icon="download").props('hint="学習済みMLモデルの選択・評価・比較"')
         export_tab = ui.tab("export", label="📤 レポート", icon="file_download")
         comparison_tab = ui.tab("comparison", label="🔬 実験ダッシュ", icon="dashboard")
 

@@ -1272,61 +1272,34 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                         type="positive",
                                     )
 
-                                # ── 各物性をアコーディオンに変更し全ON/OFF/個別チェックを追加 ──
+                                # ── プロパティをチェックボックスとして表示 ──
                                 _valid_dn = [d.name for d in rec.descriptors if d.name in all_descs]
                                 _n_valid = len(_valid_dn)
                                 _n_total_rec = len(rec.descriptors)
                                 _n_sel = sum(1 for dn in _valid_dn if dn in state.get("selected_descriptors", []))
-                                _badge_col = "teal" if _n_valid == _n_total_rec else "amber"
+                                
+                                # 全て選択されているかを判定
+                                _is_all_on = (_n_sel == _n_valid and _n_valid > 0)
+                                
+                                def _toggle_rec(val, ds=_valid_dn, r=rec):
+                                    s = set(state.get("selected_descriptors", []))
+                                    if val:
+                                        s.update(ds)
+                                        ui.notify(f"{r.target_name}: {len(ds)}個の記述子を追加", type="positive")
+                                    else:
+                                        s -= set(ds)
+                                    state["selected_descriptors"] = list(s)
 
-                                with ui.expansion(
-                                    rec.target_name, icon="science",
-                                ).classes("full-width q-mb-xs").props("dense"):
-                                    # バッジ行
-                                    with ui.row().classes("items-center q-gutter-sm q-mb-xs"):
-                                        ui.badge(
-                                            f"計算済 {_n_valid} / 推奨 {_n_total_rec} 個",
-                                            color=_badge_col,
-                                        ).props("outline")
-                                        ui.badge(
-                                            f"選択中 {_n_sel} 個",
-                                            color="green" if _n_sel > 0 else "grey",
-                                        ).props("outline")
-                                    # 一括操作ボタン
-                                    with ui.row().classes("q-gutter-xs q-mb-sm"):
-                                        def _all_on_r(ds=_valid_dn):
-                                            s = set(state.get("selected_descriptors", []))
-                                            s.update(ds)
-                                            state["selected_descriptors"] = list(s)
-                                            ui.notify(f"{len(ds)}個 全ON", type="positive")
-                                        def _all_off_r(ds=_valid_dn):
-                                            s = set(state.get("selected_descriptors", []))
-                                            s -= set(ds)
-                                            state["selected_descriptors"] = list(s)
-                                            ui.notify(f"{len(ds)}個 全OFF", type="info")
-                                        def _apply_only_r(ds=_valid_dn, r=rec):
-                                            state["selected_descriptors"] = list(ds)
-                                            state["_applied_recommendation"] = r
-                                            ui.notify(f"{r.target_name}: {len(ds)}個だけ選択", type="positive")
-                                        ui.button("全ON", on_click=_all_on_r).props("unelevated size=xs no-caps color=teal")
-                                        ui.button("全OFF", on_click=_all_off_r).props("outline size=xs no-caps color=grey")
-                                        ui.button("これだけ適用", on_click=_apply_only_r).props("outline size=xs no-caps color=cyan")
-                                    # 個別ON/OFFチェックボックス
-                                    with ui.row().classes("q-gutter-xs flex-wrap"):
-                                        for _d in rec.descriptors:
-                                            if _d.name not in all_descs:
-                                                ui.badge(_d.name, color="grey-7").props("outline dense").tooltip("未計算")
-                                            else:
-                                                _is_on = _d.name in state.get("selected_descriptors", [])
-                                                def _tog(val, dn=_d.name):
-                                                    s = set(state.get("selected_descriptors", []))
-                                                    if val: s.add(dn)
-                                                    else: s.discard(dn)
-                                                    state["selected_descriptors"] = list(s)
-                                                ui.checkbox(
-                                                    _d.name, value=_is_on,
-                                                    on_change=lambda e, dn=_d.name: _tog(e.value, dn),
-                                                ).props("dense").tooltip(_d.meaning or _d.name)
+                                with ui.row().classes("full-width items-center q-gutter-x-sm q-py-xs"):
+                                    ui.checkbox(
+                                        rec.target_name, 
+                                        value=_is_all_on,
+                                        on_change=lambda e, d=_valid_dn, r=rec: _toggle_rec(e.value, d, r)
+                                    )
+                                    ui.badge(
+                                        f"計算済 {_n_valid} / 推奨 {_n_total_rec} 個",
+                                        color="teal" if _n_valid == _n_total_rec else "amber",
+                                    ).props("outline")
 
 
                 except ImportError:

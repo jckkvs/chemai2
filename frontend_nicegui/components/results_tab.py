@@ -20,18 +20,22 @@ from frontend_nicegui.components.results_tab_extras import (
 )
 
 
-def render_results_tab(state: dict[str, Any]) -> None:
-    """結果確認タブ全体を描画する。"""
 
-    # ── 複数セット対応: セット選択UI ──
+def render_results_tab(state: dict[str, Any]) -> None:
+    """結果確認タブ全体を描画する。（専門家の検証フロー4タブ構成）"""
+
     all_results = state.get("automl_results", {})
-    single_ar = state.get("automl_result")
+    single_ar   = state.get("automl_result")
 
     # 結果が全くない場合
     if not all_results and single_ar is None:
-        with ui.card().classes("glass-card q-pa-xl full-width animate-slide-up items-center justify-center text-center").props('data-testid="no-results-card"'):
+        with ui.card().classes(
+            "glass-card q-pa-xl full-width animate-slide-up items-center justify-center text-center"
+        ).props('data-testid="no-results-card"'):
             ui.icon("analytics", color="grey-7", size="xl").classes("q-mb-md").props('aria-hidden="true"')
-            ui.label("解析結果がまだありません").classes("text-h6 text-grey-5").props('role="heading" aria-level="2"')
+            ui.label("解析結果がまだありません").classes("text-h6 text-grey-5").props(
+                'role="heading" aria-level="2"'
+            )
             ui.label(
                 "「📂 データ設定」タブでデータを読み込み、画面上部の「🚀 解析開始」ボタンを押してください。"
             ).classes("text-grey-6 q-mt-sm")
@@ -42,190 +46,595 @@ def render_results_tab(state: dict[str, Any]) -> None:
     if not success_results and single_ar:
         success_results = {"デフォルト": single_ar}
 
-    # ── セット切替タブ（2セット以上の場合） ──
     set_names = list(success_results.keys())
     if not set_names:
         return
 
-    current_view = state.get("_viewing_set", state.get("best_set_name", set_names[0]))
-    if current_view not in success_results:
-        current_view = set_names[0]
+    # 最良セットを自動選択（専門家は「最良モデル詳細」を最初に見る）
+    best_set_name = state.get("best_set_name", set_names[0])
+    if best_set_name not in success_results:
+        best_set_name = set_names[0]
+    best_ar = success_results[best_set_name]
 
-    # ═══════════════════════════════════════════════════════
-    # 全セット×全推定器 クロス比較（2セット以上の場合）
-    # ═══════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════
+    # 4タブ構成（専門家の検証フロー）
+    # ═══════════════════════════════════════════════════
+    with ui.tabs().classes("full-width").props(
+        "dense no-caps active-color=cyan indicator-color=cyan scrollable"
+    ) as main_tabs:
+        tab_insight   = ui.tab("insight",  label="🏆 最良モデル詳細",   icon="star")
+        tab_compare   = ui.tab("compare",  label="📊 全体比較",          icon="compare_arrows")
+        tab_explorer  = ui.tab("explorer", label="🧪 モデル詳細検証",    icon="science")
+        tab_data      = ui.tab("dataview", label="📥 データプレビュー",  icon="table_chart")
+
+    with ui.tab_panels(main_tabs, value=tab_insight).classes("full-width bg-transparent"):
+
+        # ════════ ① 最良モデル詳細 ════════
+        with ui.tab_panel(tab_insight):
+            _render_best_insight_tab(best_ar, state, best_set_name)
+
+        # ════════ ② 全体比較 ════════
+        with ui.tab_panel(tab_compare):
+            _render_comparison_tab(success_results, state)
+
+        # ════════ ③ モデル詳細検証 ════════
+        with ui.tab_panel(tab_explorer):
+            _render_model_explorer_tab(success_results, state)
+
+        # ════════ ④ データプレビュー ════════
+        with ui.tab_panel(tab_data):
+            _render_data_preview_tab(state)
+
+
+# ================================================================
+# ヘルパー: SMILES → Base64 画像
+# ================================================================
+def _smiles_to_b64(smiles: str, size: tuple[int, int] = (200, 200)) -> str:
+    """SMILESをRDKitで描画してBase64文字列を返す。RDKit未導入の場合は空文字。"""
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import Draw
+        import io, base64
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return ""
+        img = Draw.MolToImage(mol, size=size)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return ""
+
+
+def _detect_smiles_col(df: pd.DataFrame) -> str | None:
+    """DataFrameの列名からSMILES列を自動検出（大文字小文字不問）。"""
+    for col in df.columns:
+        if "smiles" in col.lower():
+            return col
+    return None
+
+
+# ================================================================
+# ① 最良モデル詳細タブ
+# ================================================================
+def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
+    """正方形プロット（ホバー→構造サイドパネル）＋指標カード＋Feature Importance。"""
+    import plotly.graph_objects as go
+
+    # ── ヘッダー ──
+    with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+        ui.icon("emoji_events", color="amber", size="md")
+        ui.label(f"最良モデル: {ar.best_model_key}").classes("text-h5 text-bold hero-gradient")
+        ui.badge(f"セット: {set_name}", color="teal").props("dense")
+        ui.badge(f"CVスコア: {ar.best_score:.4f}", color="cyan").props("dense")
+
+    model    = getattr(ar, "best_pipeline", None)
+    proc_X   = getattr(ar, "processed_X", None)
+    y_true   = getattr(ar, "oof_true", None)
+    y_pred   = getattr(ar, "oof_predictions", None)
+
+    # ── 指標カード行 ──
+    if y_true is not None and y_pred is not None:
+        y_t = np.asarray(y_true).ravel()
+        y_p = np.asarray(y_pred).ravel()
+        residuals = y_t - y_p
+
+        if ar.task == "regression":
+            from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+            try:
+                r2   = r2_score(y_t, y_p)
+                rmse = float(np.sqrt(mean_squared_error(y_t, y_p)))
+                mae  = float(mean_absolute_error(y_t, y_p))
+            except Exception:
+                r2 = rmse = mae = float("nan")
+
+            with ui.row().classes("q-gutter-sm q-mb-md"):
+                for val, lbl, col in [
+                    (f"CVスコア: {ar.best_score:.4f}", ar.scoring,         "cyan"),
+                    (f"{r2:.4f}",                       "R² (OOF)",        "teal"),
+                    (f"{rmse:.4f}",                     "RMSE (OOF)",      "amber"),
+                    (f"{mae:.4f}",                      "MAE (OOF)",       "green"),
+                    (f"{len(y_t)}",                     "サンプル数",       "grey-5"),
+                ]:
+                    with ui.card().classes("q-pa-xs").style(
+                        f"min-width:90px; background:rgba(0,0,0,0.2); border-radius:8px;"
+                        f"border:1px solid rgba(0,212,255,0.15);"
+                    ):
+                        ui.label(val).classes(f"text-subtitle1 text-bold text-{col}")
+                        ui.label(lbl).classes("text-caption text-grey-5")
+
+            # ── 正方形プロット＋SMILES サイドパネル ──
+            smiles_list: list[str] = []
+            df_orig = state.get("df")
+            smiles_col = _detect_smiles_col(df_orig) if df_orig is not None else None
+            if smiles_col and df_orig is not None and len(df_orig) >= len(y_t):
+                smiles_list = df_orig[smiles_col].iloc[:len(y_t)].astype(str).tolist()
+
+            rng_lo = float(min(y_t.min(), y_p.min()))
+            rng_hi = float(max(y_t.max(), y_p.max()))
+            pad = (rng_hi - rng_lo) * 0.05
+            axis_range = [rng_lo - pad, rng_hi + pad]
+
+            fig_scatter = go.Figure()
+            # 参照線
+            fig_scatter.add_trace(go.Scatter(
+                x=axis_range, y=axis_range, mode="lines",
+                line=dict(color="rgba(255,255,255,0.25)", dash="dash", width=1.5),
+                name="y = x", hoverinfo="skip",
+            ))
+            # データ点
+            hover_template = (
+                "<b>実測値:</b> %{x:.4f}<br>"
+                "<b>予測値:</b> %{y:.4f}<br>"
+                "<b>残差:</b> %{customdata[0]:.4f}"
+                + ("<br><b>SMILES:</b> %{customdata[1]}" if smiles_list else "")
+                + "<extra></extra>"
+            )
+            custom_data = [
+                [float(r), s] if smiles_list else [float(r), ""]
+                for r, s in zip(residuals, smiles_list or [""] * len(residuals))
+            ]
+            fig_scatter.add_trace(go.Scatter(
+                x=y_t, y=y_p, mode="markers",
+                marker=dict(size=7, color=residuals, colorscale="RdBu_r",
+                            showscale=True, colorbar=dict(title="残差"), opacity=0.75),
+                name="データ点",
+                customdata=custom_data,
+                hovertemplate=hover_template,
+            ))
+            fig_scatter.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.15)",
+                width=500, height=500,
+                margin=dict(l=55, r=20, t=50, b=55),
+                xaxis=dict(
+                    title="実測値 (Actual)", range=axis_range,
+                    gridcolor="rgba(255,255,255,0.08)",
+                ),
+                yaxis=dict(
+                    title="予測値 (Predicted)", range=axis_range,
+                    scaleanchor="x", scaleratio=1,
+                    gridcolor="rgba(255,255,255,0.08)",
+                ),
+                title=dict(
+                    text=f"予測 vs 実測 (OOF, n={len(y_t)})",
+                    font=dict(size=14),
+                ),
+            )
+
+            with ui.row().classes("full-width q-gutter-md items-start"):
+                # 左: プロット
+                plot_col = ui.column()
+                with plot_col:
+                    scatter_plot = ui.plotly(fig_scatter)
+
+                # 右: ホバー情報パネル（SMILES がある場合のみ表示）
+                if smiles_list:
+                    with ui.card().classes("q-pa-md").style(
+                        "min-width:260px; max-width:280px;"
+                        "border:1px solid rgba(0,212,255,0.2); border-radius:10px;"
+                        "background:rgba(0,20,40,0.4);"
+                    ):
+                        ui.label("🔬 化学構造").classes("text-subtitle2 text-bold text-cyan q-mb-xs")
+                        hint_lbl = ui.label("プロット上の点にカーソルを合わせてください").classes(
+                            "text-caption text-grey-5 q-mb-xs"
+                        )
+                        mol_img  = ui.image("").style(
+                            "width:220px; height:220px; border-radius:8px;"
+                            "background:rgba(255,255,255,0.05);"
+                        )
+                        smiles_lbl = ui.label("").classes("text-caption text-grey-4 q-mt-xs").style(
+                            "word-break:break-all; max-width:240px;"
+                        )
+                        resid_lbl  = ui.label("").classes("text-caption text-amber q-mt-xs")
+
+                        def _on_hover(e):
+                            pts = e.args.get("points", [])
+                            if not pts:
+                                return
+                            pt = pts[0]
+                            cd = pt.get("customdata") or []
+                            resid_val = cd[0] if len(cd) > 0 else None
+                            smi       = cd[1] if len(cd) > 1 else ""
+                            hint_lbl.set_visibility(False)
+                            if smi:
+                                b64 = _smiles_to_b64(smi, size=(220, 220))
+                                if b64:
+                                    mol_img.set_source(f"data:image/png;base64,{b64}")
+                                smiles_lbl.text = f"SMILES: {smi}"
+                            if resid_val is not None:
+                                resid_lbl.text = f"残差: {resid_val:+.4f}"
+
+                        scatter_plot.on("plotly_hover", _on_hover)
+
+            # 残差分析（折りたたみ）
+            with ui.expansion("📉 残差分析", icon="scatter_plot").classes("full-width q-mt-sm"):
+                _render_residual_analysis(ar)
+
+        else:
+            # 分類タスク
+            from sklearn.metrics import accuracy_score, f1_score
+            try:
+                acc = accuracy_score(y_t, y_p)
+                f1  = f1_score(y_t, y_p, average="weighted", zero_division=0)
+            except Exception:
+                acc = f1 = float("nan")
+            with ui.row().classes("q-gutter-sm q-mb-md"):
+                for val, lbl, col in [
+                    (f"{ar.best_score:.4f}", ar.scoring,     "cyan"),
+                    (f"{acc:.4f}",           "Accuracy(OOF)","teal"),
+                    (f"{f1:.4f}",            "F1-weighted",  "amber"),
+                ]:
+                    with ui.card().classes("q-pa-xs").style(
+                        "min-width:90px; background:rgba(0,0,0,0.2); border-radius:8px;"
+                        "border:1px solid rgba(0,212,255,0.15);"
+                    ):
+                        ui.label(val).classes(f"text-subtitle1 text-bold text-{col}")
+                        ui.label(lbl).classes("text-caption text-grey-5")
+            with ui.expansion("🔢 混同行列・ROC", icon="grid_on").classes("full-width q-mt-sm"):
+                _render_classification_metrics(ar)
+
+    # ── Feature Importance ──
+    ui.separator().classes("q-my-md")
+    ui.label("📊 Feature Importance").classes("text-subtitle1 text-bold q-mb-xs")
+    if model is not None:
+        import plotly.graph_objects as go
+        try:
+            est = model
+            if hasattr(model, "steps"):
+                est = model.steps[-1][1]
+                if hasattr(est, "steps"):
+                    est = est.steps[-1][1]
+            feat_names = list(proc_X.columns) if proc_X is not None and hasattr(proc_X, "columns") else []
+            if hasattr(est, "feature_importances_"):
+                imp   = est.feature_importances_
+                names = feat_names[:len(imp)] if len(feat_names) >= len(imp) else [f"f{i}" for i in range(len(imp))]
+                idx   = np.argsort(imp)[::-1]
+                top   = min(20, len(idx))
+                fig_fi = go.Figure(go.Bar(
+                    x=imp[idx[:top]][::-1], y=[names[i] for i in idx[:top]][::-1],
+                    orientation="h",
+                    marker=dict(color=imp[idx[:top]][::-1], colorscale="Teal"),
+                ))
+                fig_fi.update_layout(
+                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0.1)",
+                    height=max(300, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
+                    xaxis_title="重要度", title=f"Feature Importance ({ar.best_model_key})",
+                )
+                ui.plotly(fig_fi).classes("full-width")
+            elif hasattr(est, "coef_"):
+                coefs  = est.coef_.ravel()
+                names  = feat_names[:len(coefs)] if len(feat_names) >= len(coefs) else [f"f{i}" for i in range(len(coefs))]
+                idx    = np.argsort(np.abs(coefs))[::-1]
+                top    = min(20, len(idx))
+                colors = ["rgba(74,222,128,0.75)" if coefs[i] >= 0 else "rgba(248,113,113,0.75)" for i in idx[:top]]
+                fig_c  = go.Figure(go.Bar(
+                    x=coefs[idx[:top]][::-1], y=[names[i] for i in idx[:top]][::-1],
+                    orientation="h", marker_color=colors[::-1],
+                ))
+                fig_c.update_layout(
+                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0.1)",
+                    height=max(300, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
+                    xaxis_title="回帰係数", title=f"回帰係数 ({ar.best_model_key})",
+                )
+                ui.plotly(fig_c).classes("full-width")
+
+                # 回帰係数詳細テーブルの表示（標準化前後）
+                try:
+                    from backend.models.linear_utils import extract_regression_coefficients
+                    # スケーラーを探す（パイプラインの場合）
+                    scaler = None
+                    if hasattr(model, "steps"):
+                        for step_name, step_obj in model.steps:
+                            if "scaler" in step_name.lower() or "scale" in step_name.lower() or "standard" in step_name.lower():
+                                scaler = step_obj
+                                break
+                    
+                    df_coef = extract_regression_coefficients(
+                        est, 
+                        feature_names=feat_names[:len(coefs)] if len(feat_names) >= len(coefs) else [f"f{i}" for i in range(len(coefs))],
+                        X_original=proc_X,  # 厳密には標準化前ではないがインターフェースとして
+                        X_scaled=proc_X,
+                        scaler=scaler
+                    )
+
+                    with ui.expansion("📐 回帰係数詳細", icon="format_list_numbered").classes("full-width q-mt-sm").props('default-opened'):
+                        # 切り替えボタン
+                        with ui.row().classes("q-mb-sm"):
+                            btn_scaled = ui.button("標準化後で表示")
+                            btn_original = ui.button("標準化前で表示")
+                            ui.label("※標準化後: 特徴量間の相対的重要度比較用 / 標準化前: 実スケールでの解釈用").classes("text-caption text-grey-5")
+                        
+                        @ui.refreshable
+                        def coef_table_view(show_scaled: bool):
+                            cols = [
+                                {"name": "rank", "label": "順位", "field": "rank", "align": "center"},
+                                {"name": "feature", "label": "特徴量", "field": "feature", "align": "left"},
+                                {"name": "coef", "label": "係数", "field": "coef_scaled" if show_scaled else "coef_original", 
+                                 "format": lambda v: f"{v:+.4f}" if pd.notna(v) else "-", "align": "right"},
+                                {"name": "abs_coef", "label": "寄与度", "field": "abs_coef_scaled", 
+                                 "format": lambda v: f"{v:.4f}" if pd.notna(v) else "-", "align": "right"},
+                            ]
+                            if not show_scaled:
+                                cols.append({"name": "coef_scaled_ref", "label": "参考(標準化後)", 
+                                           "field": "coef_scaled", "format": lambda v: f"{v:+.4f}", "align": "right"})
+                            
+                            df_view = df_coef.copy()
+                            df_view["rank"] = range(1, len(df_view)+1)
+                            ui.table(df_view.to_dict('records'), columns=cols, row_key="feature").classes("full-width").props("dense flat bordered dark")
+
+                        def update_table(show_scaled: bool):
+                            coef_table_view.refresh(show_scaled)
+                            btn_scaled.props(f'color={"primary" if show_scaled else ""}')
+                            btn_original.props(f'color={"primary" if not show_scaled else ""}')
+
+                        btn_scaled.on("click", lambda: update_table(True))
+                        btn_original.on("click", lambda: update_table(False))
+                        
+                        # 初期表示
+                        coef_table_view(True)
+                        update_table(True)
+                except Exception as ex:
+                    ui.label(f"回帰係数詳細表示エラー: {ex}").classes("text-red text-caption")
+            else:
+                ui.label("ℹ️ SHAP解析は「🧪 モデル詳細検証」タブ → 解釈性・重要度 で確認できます").classes("text-grey-5")
+        except Exception as ex:
+            ui.label(f"Feature Importance取得エラー: {ex}").classes("text-red text-caption")
+    else:
+        ui.label("⚠️ モデルが取得できません").classes("text-amber")
+
+
+# ================================================================
+# ② 全体比較タブ
+# ================================================================
+def _render_comparison_tab(success_results: dict, state: dict) -> None:
+    """ヒートマップ＋統合ランキング＋既存機能へのショートカット。"""
+    set_names = list(success_results.keys())
+
+    # ── 全セット横断比較（2セット以上）──
     if len(set_names) >= 2:
         _render_cross_set_comparison(success_results, state)
-
-    # ── セット切替タブ（常に表示 — 1セットでもセット名を明示）──
-    with ui.card().classes("glass-card q-pa-md full-width q-mb-md"):
-        with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
-            ui.icon("layers", color="cyan")
-            ui.label("特徴量セット別 結果").classes("text-h6")
-            ui.badge(f"{len(set_names)}セット", color="teal").props("dense")
-
-        with ui.tabs().classes("full-width").props(
-            "dense no-caps active-color=cyan indicator-color=cyan scrollable"
-        ) as set_result_tabs:
-            for sn in set_names:
-                sr = success_results[sn]
-                is_best = (sn == state.get("best_set_name", ""))
-                label = f"🏆 {sn} ({sr.best_score:.4f})" if is_best else f"{sn} ({sr.best_score:.4f})"
-                ui.tab(f"res_set_{sn}", label=label)
-
-        best_tab_key = f"res_set_{current_view}"
-        with ui.tab_panels(set_result_tabs, value=best_tab_key).classes("full-width bg-transparent"):
-            for sn in set_names:
-                with ui.tab_panel(f"res_set_{sn}"):
-                    _render_single_result(success_results[sn], state)
-
-    return
-
-
-def _render_single_result(ar, state: dict) -> None:
-    """単一セットの結果詳細を描画する。"""
-    scores = ar.model_scores if hasattr(ar, "model_scores") else {}
-    with ui.card().classes("glass-card q-pa-md full-width q-mb-md animate-slide-up best-model-glow").props('data-testid="best-model-summary-card"'):
-        # 行1: 最良モデル + スコア
-        with ui.row().classes("items-center q-gutter-md"):
-            ui.icon("emoji_events", color="amber", size="lg").props('aria-label="最良モデル"')
-            ui.label(f"最良モデル: {ar.best_model_key}").classes("text-h5 text-bold hero-gradient").props('role="heading" aria-level="2" id="best-model-title"')
-            ui.badge(f"{ar.best_score:.4f}", color="cyan").props("floating")
-
-        # 行2: 統計カード群
+    else:
+        # 1セットの場合はシンプルなスコア比較テーブル
+        ar = success_results[set_names[0]]
         scores = ar.model_scores if hasattr(ar, "model_scores") else {}
-        n_models = len(scores)
-        proc_X = getattr(ar, "processed_X", None)
-        n_feats = proc_X.shape[1] if proc_X is not None and hasattr(proc_X, "shape") else "?"
+        if scores:
+            ui.label("📋 推定器スコア比較").classes("text-h6 q-mb-sm")
+            rows = [
+                {"順位": r, "モデル": mk, "CVスコア": f"{ms:.4f}", "最良": "🏆" if r == 1 else ""}
+                for r, (mk, ms) in enumerate(
+                    sorted(scores.items(), key=lambda x: x[1], reverse=True), 1
+                )
+            ]
+            cols = [{"name": k, "label": k, "field": k, "sortable": True} for k in ["順位", "モデル", "CVスコア", "最良"]]
+            ui.table(columns=cols, rows=rows).classes("full-width").props("dense flat bordered")
 
-        # 次点モデル差分
-        runner_up_text = ""
-        if n_models >= 2:
-            sorted_models = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-            runner_up_key, runner_up_score = sorted_models[1]
-            diff = ar.best_score - runner_up_score
-            runner_up_text = f"2位: {runner_up_key} ({runner_up_score:.4f}, 差: {diff:+.4f})"
+    ui.separator().classes("q-my-md")
 
-        with ui.row().classes("q-gutter-sm q-mt-sm"):
-            for i, (val, lbl, icon_name) in enumerate([
-                (ar.task, "タスク", "category"),
-                (f"{ar.elapsed_seconds:.1f}秒", "所要時間", "timer"),
-                (f"{n_models}個", "比較モデル数", "compare_arrows"),
-                (str(n_feats), "特徴量数", "functions"),
-            ]):
-                delay_class = f"delay-{(i+1)*100}"
-                with ui.card().classes(f"q-pa-xs animate-slide-up hover-bounce {delay_class}").style(
-                    "min-width: 90px; background: rgba(0,212,255,0.08); border-radius: 8px;"
-                ):
-                    with ui.row().classes("items-center q-gutter-xs"):
-                        ui.icon(icon_name, size="xs", color="cyan")
-                        ui.label(str(val)).classes("text-subtitle2 text-bold")
-                    ui.label(lbl).classes("text-caption text-grey-5").style("font-size: 0.82rem;")
+    # ── 各セットのサブタブ詳細（既存機能へのアクセス） ──
+    ui.label("📂 セット別詳細・既存機能").classes("text-h6 q-mb-sm")
+    with ui.tabs().classes("full-width").props(
+        "dense no-caps active-color=cyan indicator-color=cyan scrollable"
+    ) as set_tabs:
+        for sn in set_names:
+            sr = success_results[sn]
+            is_best = sn == state.get("best_set_name", set_names[0])
+            ui.tab(f"cmp_{sn}", label=f"{'🏆 ' if is_best else ''}{sn}")
 
-        if runner_up_text:
-            ui.label(runner_up_text).classes("text-caption text-grey-5 q-mt-xs")
+    first_key = f"cmp_{set_names[0]}"
+    with ui.tab_panels(set_tabs, value=first_key).classes("full-width bg-transparent"):
+        for sn in set_names:
+            with ui.tab_panel(f"cmp_{sn}"):
+                _render_single_result(success_results[sn], state)
 
-        # 行3: エクスポートボタン群
-        with ui.row().classes("q-gutter-sm q-mt-sm"):
-            async def _export_csv():
-                """モデル比較表 + OOF予測をCSVでダウンロード。"""
-                import io
-                import csv
 
-                buf = io.StringIO()
-                writer = csv.writer(buf)
+# ================================================================
+# ③ モデル詳細検証タブ
+# ================================================================
+def _render_model_explorer_tab(success_results: dict, state: dict) -> None:
+    """セレクトボックスでモデルを選択し、最良モデル詳細と同じビューを表示。"""
+    # 全セット × 全モデルの組み合わせリストを構築
+    options: dict[str, tuple] = {}
+    for sn, ar in success_results.items():
+        scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+        for mk in sorted(scores.keys()):
+            label = f"{sn} / {mk}"
+            options[label] = (sn, mk, ar)
 
-                # モデル比較
-                writer.writerow(["=== モデル比較 ==="])
-                writer.writerow(["モデル", "スコア"])
-                for mk, ms in sorted(scores.items(), key=lambda x: x[1], reverse=True):
-                    writer.writerow([mk, f"{ms:.6f}"])
-                writer.writerow([])
+    if not options:
+        ui.label("解析結果がありません").classes("text-grey")
+        return
 
-                # OOF予測
-                y_true = getattr(ar, "oof_true", None)
-                y_pred = getattr(ar, "oof_predictions", None)
-                if y_true is not None and y_pred is not None:
-                    writer.writerow(["=== OOF予測 ==="])
-                    writer.writerow(["実測値", "予測値", "残差"])
-                    yt = np.asarray(y_true).ravel()
-                    yp = np.asarray(y_pred).ravel()
-                    for t, p in zip(yt, yp):
-                        writer.writerow([f"{t:.6f}", f"{p:.6f}", f"{t - p:.6f}"])
+    ui.label("🔽 確認したいモデルを選択してください").classes("text-subtitle2 q-mb-sm")
+    sel = ui.select(list(options.keys()), value=list(options.keys())[0], label="セット / モデル").props(
+        "outlined dense"
+    ).classes("full-width q-mb-md")
 
-                csv_text = buf.getvalue()
-                ui.download(csv_text.encode("utf-8-sig"), f"chemai_results_{ar.best_model_key}.csv")
-                ui.notify("📥 CSVダウンロードを開始しました", type="positive")
+    view_container = ui.column().classes("full-width")
 
-            ui.button("📥 結果CSV", on_click=_export_csv).props(
-                'outline color=cyan size=sm no-caps icon=download data-testid="export-csv-btn" aria-label="結果CSVをダウンロード"'
-            ).tooltip("モデル比較表 + OOF予測値をCSVダウンロード")
+    def _draw():
+        view_container.clear()
+        key = sel.value
+        if key not in options:
+            return
+        sn, mk, ar_full = options[key]
 
-            # ── タスク3-2: 逆解析CTAボタン ──
-            def _go_inverse():
-                """逆解析タブに遷移し、最良モデルを自動設定する。"""
-                # 逆解析設定にモデル情報を事前セット
-                if "_inv" not in state:
-                    state["_inv"] = {
-                        "target_mode": "range",
-                        "target_min": None,
-                        "target_max": None,
-                        "constraints": {},
-                        "method": "random",
-                        "method_params": {},
-                        "results": None,
-                    }
-                best_key = ar.best_model_key if hasattr(ar, "best_model_key") else None
-                if best_key:
-                    state["_inv"]["selected_model"] = best_key
-                # タブ遷移
-                switch_fn = state.get("_switch_to_inverse")
-                if switch_fn:
-                    switch_fn()
-                    # 逆解析タブを再描画して最新モデル情報を反映
-                    refresh_inv = state.get("_refresh_inverse")
-                    if refresh_inv:
-                        try:
-                            refresh_inv()
-                        except Exception:
-                            pass
-                    ui.notify(
-                        f"🔮 {best_key} で逆解析を設定できます",
-                        type="info", timeout=3000,
-                    )
-                else:
-                    ui.notify("🔮 逆解析タブに移動してください", type="info")
+        # 選択モデルのスコアを表示
+        scores = ar_full.model_scores if hasattr(ar_full, "model_scores") else {}
+        score  = scores.get(mk, float("nan"))
 
-            ui.button("🔮 このモデルで逆解析", on_click=_go_inverse).props(
-                'unelevated color=purple size=sm no-caps icon=find_replace '
-                'data-testid="inverse-cta-btn" aria-label="逆解析を開始"'
-            ).tooltip(
-                f"{ar.best_model_key} の学習済みモデルを使って、"
-                "目標物性を持つ最適な説明変数値を探索します"
-            ).classes("text-bold")
+        with view_container:
+            with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+                ui.badge(f"モデル: {mk}", color="teal").props("dense")
+                ui.badge(f"CVスコア: {score:.4f}", color="cyan").props("dense")
+                ui.badge(f"セット: {sn}", color="grey-7").props("dense")
+
+            # 最良モデルと同じビューを再利用（arはセット全体のオブジェクト）
+            # OOFを含む詳細はar全体に紐付いているため、best_model_key を一時差し替え
+            class _ArProxy:
+                """best_model_keyのみ差し替えたプロキシ。"""
+                pass
+
+            proxy = _ArProxy()
+            proxy.__dict__.update(ar_full.__dict__)
+            proxy.best_model_key = mk
+
+            _render_best_insight_tab(proxy, state, sn)
+
+    sel.on_value_change(lambda: _draw())
+    _draw()
+
+
+# ================================================================
+# ④ データプレビュータブ
+# ================================================================
+def _render_data_preview_tab(state: dict) -> None:
+    """読み込みデータの確認。SMILES列が存在すれば化学構造画像を表示。"""
+    df = state.get("df")
+    if df is None:
+        ui.label("⚠️ データが読み込まれていません").classes("text-amber")
+        return
+
+    smiles_col = _detect_smiles_col(df)
+    has_rdkit  = False
+    try:
+        from rdkit import Chem  # noqa: F401
+        has_rdkit = True
+    except ImportError:
+        pass
+
+    with ui.row().classes("q-gutter-sm q-mb-md"):
+        ui.badge(f"{df.shape[0]}行 × {df.shape[1]}列", color="teal").props("dense")
+        if smiles_col:
+            ui.badge(f"SMILES列: {smiles_col}", color="cyan").props("dense")
+        if not has_rdkit:
+            ui.badge("RDKit未導入 — 構造画像なし", color="amber").props("dense")
+
+    # 表示行数制御
+    max_rows = 50
+    preview  = df.head(max_rows)
+
+    if smiles_col and has_rdkit:
+        # 構造画像付きテーブル（HTMLレンダリング）
+        ui.label(f"📋 データプレビュー（先頭{max_rows}行、構造画像付き）").classes("text-subtitle2 q-mb-xs")
+        ui.label("※ 構造画像はクライアント側で描画されるため、行数が多いと表示に時間がかかります").classes(
+            "text-caption text-grey-5 q-mb-sm"
+        )
+
+        display_cols = [smiles_col] + [c for c in preview.columns if c != smiles_col][:8]
+        columns_def  = [
+            {"name": "mol_img", "label": "構造", "field": "mol_img"},
+        ] + [
+            {"name": c, "label": c, "field": c, "sortable": True}
+            for c in display_cols
+        ]
+
+        rows_data = []
+        for _, row in preview.iterrows():
+            smi    = str(row.get(smiles_col, ""))
+            b64    = _smiles_to_b64(smi, size=(80, 80))
+            img_html = (
+                f'<img src="data:image/png;base64,{b64}" '
+                f'style="width:80px;height:80px;border-radius:4px;" />'
+                if b64 else "—"
+            )
+            r_dict = {"mol_img": img_html}
+            for c in display_cols:
+                v = row.get(c, "")
+                r_dict[c] = f"{v:.4g}" if isinstance(v, float) else str(v)
+            rows_data.append(r_dict)
+
+        tbl = ui.table(columns=columns_def, rows=rows_data, row_key=smiles_col).classes(
+            "full-width"
+        ).props("dense flat bordered")
+        tbl.add_slot(
+            "body-cell-mol_img",
+            '<td class="q-td"><span v-html="props.value"></span></td>',
+        )
+
+    else:
+        # 通常テーブル（SMILESなし or RDKit未導入）
+        ui.label(f"📋 データプレビュー（先頭{max_rows}行）").classes("text-subtitle2 q-mb-sm")
+        display_cols = list(preview.columns[:20])
+        columns_def  = [
+            {"name": c, "label": c, "field": c, "sortable": True, "align": "left"}
+            for c in display_cols
+        ]
+        rows_data = []
+        for _, row in preview.iterrows():
+            r_dict = {}
+            for c in display_cols:
+                v = row[c]
+                r_dict[c] = "—" if pd.isna(v) else (f"{v:.4g}" if isinstance(v, float) else str(v))
+            rows_data.append(r_dict)
+        ui.table(columns=columns_def, rows=rows_data).classes("full-width").props("dense flat bordered")
+        if df.shape[1] > 20:
+            ui.label(f"... 他 {df.shape[1] - 20} 列").classes("text-caption text-grey-6")
+
+    # 基本統計量
+    ui.separator().classes("q-my-md")
+    with ui.expansion("📐 基本統計量", icon="calculate").classes("full-width"):
+        num_df = df.select_dtypes(include="number")
+        if not num_df.empty:
+            desc = num_df.describe().T.round(4).reset_index().rename(columns={"index": "列名"})
+            dcols = [{"name": c, "label": c, "field": c, "sortable": True} for c in desc.columns]
+            ui.table(
+                columns=dcols, rows=desc.to_dict("records"),
+                pagination={"rowsPerPage": 20},
+            ).classes("full-width").props("dense flat bordered")
+
+
+# ================================================================
+# 旧 _render_single_result（② 全体比較タブ → セット別詳細 から呼ばれる）
+# ================================================================
+def _render_single_result(ar, state: dict) -> None:
+    """単一セットの結果詳細を描画する（既存機能へのアクセスを保持）。"""
+    scores = ar.model_scores if hasattr(ar, "model_scores") else {}
 
     # ── 警告 ──
     if ar.warnings:
-        with ui.expansion(f"⚠️ 警告 ({len(ar.warnings)}件)", icon="warning").classes("full-width q-mb-md animate-shake"):
+        with ui.expansion(f"⚠️ 警告 ({len(ar.warnings)}件)", icon="warning").classes(
+            "full-width q-mb-md animate-shake"
+        ):
             for w in ar.warnings:
                 ui.label(f"⚠️ {w}").classes("text-amber text-caption")
 
-    # ── 結果サブタブ（8タブ構造）──
+    # ── サブタブ（既存8タブを残す）──
     with ui.tabs().classes("full-width").props(
         "dense active-color=cyan indicator-color=cyan scrollable"
     ) as res_tabs:
-        tab_best     = ui.tab("best",     label="🏆 ベスト推定器",     icon="star")
-        tab_overview = ui.tab("overview", label="📊 全モデル概要",    icon="leaderboard")
-        tab_compare  = ui.tab("compare",  label="🔄 推定器比較",     icon="compare_arrows")
-        tab_permodel = ui.tab("permodel", label="📈 モデル別詳細",    icon="analytics")
-        tab_interp   = ui.tab("interp",   label="🔬 解釈性・重要度",   icon="psychology")
-        tab_extra    = ui.tab("extra",    label="🎨 追加可視化",       icon="bar_chart")
-        tab_batch    = ui.tab("batch",    label="🔮 バッチ予測",       icon="batch_prediction")
-        tab_report   = ui.tab("report",   label="📝 レポート",         icon="summarize")
+        tab_best     = ui.tab("best",     label="🏆 ベスト推定器",   icon="star")
+        tab_overview = ui.tab("overview", label="📊 全モデル概要",   icon="leaderboard")
+        tab_compare  = ui.tab("compare",  label="🔄 推定器比較",    icon="compare_arrows")
+        tab_permodel = ui.tab("permodel", label="📈 モデル別詳細",   icon="analytics")
+        tab_interp   = ui.tab("interp",   label="🔬 解釈性・重要度", icon="psychology")
+        tab_extra    = ui.tab("extra",    label="🎨 追加可視化",     icon="bar_chart")
+        tab_batch    = ui.tab("batch",    label="🔮 バッチ予測",     icon="batch_prediction")
+        tab_report   = ui.tab("report",   label="📝 レポート",       icon="summarize")
 
     with ui.tab_panels(res_tabs, value=tab_best).classes("full-width"):
-
-        # ════════ ベスト推定器（集約サマリー）════════
         with ui.tab_panel(tab_best):
             _render_best_estimator_tab(ar, state)
 
@@ -306,11 +715,24 @@ def _render_cross_set_comparison(success_results: dict, state: dict) -> None:
             row = [scores.get(mk, float("nan")) for mk in model_keys]
             z_matrix.append(row)
 
+        # 外れ値を除外したカラーバー範囲を計算
+        flat_z = np.array(z_matrix).flatten()
+        valid_z = flat_z[~np.isnan(flat_z) & (flat_z > -100)]
+        if len(valid_z) > 0:
+            zmin_val = float(np.percentile(valid_z, 5))
+            zmax_val = float(np.percentile(valid_z, 95))
+            zmid_val = float(np.median(valid_z))
+        else:
+            zmin_val, zmax_val, zmid_val = None, None, None
+
         fig_hm = go.Figure(go.Heatmap(
             z=z_matrix,
             x=[mk[:20] for mk in model_keys],
             y=[sn[:25] for sn in set_names],
-            colorscale="Viridis",
+            colorscale="RdBu_r",  # coolwarm に近い青白赤の配色
+            zmin=zmin_val,
+            zmax=zmax_val,
+            zmid=zmid_val,
             text=[[f"{v:.4f}" if not np.isnan(v) else "—" for v in row] for row in z_matrix],
             texttemplate="%{text}",
             textfont=dict(size=10),

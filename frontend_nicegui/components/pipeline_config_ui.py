@@ -966,7 +966,7 @@ def _render_preprocess_section(state: dict, defaults: list) -> None:
 
 
             # JL-RP（次元削減）
-            _tab_random_projection(state)
+            _tab_jl_rp(state)
 
             ui.separator().classes("q-my-xs")
             _render_combo_summary(state)

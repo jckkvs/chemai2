@@ -163,18 +163,22 @@ def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict) -> None:
 
     with ui.tab_panels(eda_tabs, value="t_data").classes("full-width bg-transparent"):
         with ui.tab_panel("t_data"):
-            with ui.row().classes("full-width q-mb-md q-col-gutter-lg"):
-                # 統計サマリー (半分の幅)
-                with ui.column().classes("col-12 col-md-5"):
-                    ui.label("📋 統計サマリー").classes("text-subtitle2 text-bold")
-                    _render_stats(df, target_col)
-                # 相関行列 (半分の幅)
-                with ui.column().classes("col-12 col-md-6"):
-                    ui.label("🔥 相関行列 (VIFフィルタ済)").classes("text-subtitle2 text-bold text-amber")
-                    _render_correlation(df, target_col)
+            # ① Pairplot（最初に表示）
+            ui.label("🔵 Pairplot（散布図マトリックス）").classes("text-subtitle2 text-bold")
+            _render_pairplot(df, target_col)
 
             ui.separator().classes("q-my-md")
-            with ui.row().classes("full-width q-col-gutter-lg"):
+            # ② 相関行列
+            ui.label("🔥 相関行列 (VIFフィルタ済)").classes("text-subtitle2 text-bold text-amber")
+            _render_correlation(df, target_col)
+
+            ui.separator().classes("q-my-md")
+            # ③ 統計サマリー
+            ui.label("📋 統計サマリー").classes("text-subtitle2 text-bold")
+            _render_stats(df, target_col)
+
+        with ui.tab_panel("t_advanced"):
+            with ui.row().classes("full-width q-mb-md q-col-gutter-lg"):
                 with ui.column().classes("col-12 col-md-6"):
                     ui.label("🎯 目的変数 vs 特徴量 (相関上位)").classes("text-subtitle2 text-bold")
                     _render_target_vs_features(df, target_col)
@@ -182,7 +186,7 @@ def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict) -> None:
                     ui.label("📊 特徴量の分布 (相関上位)").classes("text-subtitle2 text-bold")
                     _render_distribution(df, target_col)
 
-        with ui.tab_panel("t_advanced"):
+            ui.separator().classes("q-my-md")
             with ui.row().classes("full-width q-mb-md q-col-gutter-lg"):
                  with ui.column().classes("col-12 col-md-6"):
                      ui.label("⭐ 特徴量重要度").classes("text-subtitle2 text-bold")
@@ -190,7 +194,7 @@ def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict) -> None:
                  with ui.column().classes("col-12 col-md-5"):
                      ui.label("🌀 次元削減").classes("text-subtitle2 text-bold")
                      _render_dim_reduction(df, target_col, state)
-                     
+
             ui.separator().classes("q-my-md")
             with ui.row().classes("full-width q-col-gutter-lg"):
                  with ui.column().classes("col-12 col-md-6"):
@@ -359,30 +363,58 @@ def _render_target_vs_features(df: pd.DataFrame, target_col: str) -> None:
         top_cols = num_cols[:6]
 
     if not top_cols: return
-    
+
     rows, cols = (len(top_cols)+1)//2, 2 if len(top_cols)>=2 else 1
     # 相関係数をタイトルに含む
     titles = []
     for c in top_cols:
         r_val = df[c].corr(df[target_col])
         titles.append(f"{c} (r={r_val:.2f})")
-        
-    fig = make_subplots(rows=rows, cols=cols, subplot_titles=titles)
-    
+
+    # 各サブプロットを正方形にするためにwidth/heightを均等に計算
+    _CELL = 320          # 1セルあたりのピクセル（正方形）
+    _GAP  = 30           # セル間マージン
+    total_w = cols * _CELL + (cols - 1) * _GAP + 60   # 左右余白込み
+    total_h = rows * _CELL + (rows - 1) * _GAP + 60   # 上下余白込み
+
+    fig = make_subplots(
+        rows=rows, cols=cols,
+        subplot_titles=titles,
+        horizontal_spacing=_GAP / total_w,
+        vertical_spacing=_GAP / total_h,
+    )
+
     for i, c in enumerate(top_cols):
         r = i//cols + 1
         c_idx = i%cols + 1
         plot_df = df[[c, target_col]].dropna()
         if not plot_df.empty:
             fig.add_trace(
-                go.Scatter(x=plot_df[c], y=plot_df[target_col], mode="markers", name=c, showlegend=False,
-                           marker=dict(color="#00d4ff", size=4, opacity=0.6)),
-                row=r, col=c_idx
+                go.Scatter(
+                    x=plot_df[c], y=plot_df[target_col],
+                    mode="markers", name=c, showlegend=False,
+                    marker=dict(color="#00d4ff", size=4, opacity=0.6),
+                ),
+                row=r, col=c_idx,
             )
-            
-    _dark_fig(fig, height=max(200, 180*rows))
-    fig.update_layout(margin=dict(l=30, r=20, t=30, b=20))
-    ui.plotly(fig).classes("full-width")
+
+    fig.update_layout(
+        **_LAYOUT_DARK,
+        width=total_w,
+        height=total_h,
+        margin=dict(l=40, r=20, t=40, b=40),
+    )
+    # 全軸を正方形にロック
+    for i in range(1, rows * cols + 1):
+        xkey = "xaxis" if i == 1 else f"xaxis{i}"
+        ykey = "yaxis" if i == 1 else f"yaxis{i}"
+        fig.update_layout(**{
+            xkey: dict(scaleanchor=ykey, scaleratio=1,
+                       gridcolor="rgba(255,255,255,0.08)"),
+            ykey: dict(gridcolor="rgba(255,255,255,0.08)"),
+        })
+
+    ui.plotly(fig)
 
 
 # ═══════════════════════════════════════════════════════════

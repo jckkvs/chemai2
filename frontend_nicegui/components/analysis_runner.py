@@ -145,7 +145,7 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         with ui.card().classes("full-width glass-card q-pa-md q-mb-sm"):
             progress_header = ui.row().classes("items-center full-width justify-between")
             with progress_header:
-                progress_label = ui.label("⏳ 解析を開始しています...").classes("text-lg")
+                progress_label = ui.label("⏳ 解析を開始しています...").classes("text-body2")
                 with ui.row().classes("items-center q-gutter-sm"):
                     progress_pct = ui.label("").classes("text-h6 text-bold hero-gradient")
                     cancel_btn = ui.button(

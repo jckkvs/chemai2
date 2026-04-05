@@ -31,9 +31,9 @@ _SECTIONS: Dict[str, dict] = {
             {
                 "key": "token",
                 "type": "password",
-                "label": "APIトークン",
+                "label": "APIトークン（LLMモデルのダウンロード用）",
                 "placeholder": "hf_xxxxxxxxxxxxxxxxxxxx",
-                "help": "https://huggingface.co/settings/tokens で取得",
+                "help": "化学特化LLM等のダウンロードに使用します (https://huggingface.co/settings/tokens)",
             },
             {
                 "key": "cache_dir",
