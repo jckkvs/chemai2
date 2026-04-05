@@ -411,6 +411,19 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                     cm[col] = {"monotonic": 0}
                 cm[col]["resolved_monotonic"] = val
 
+            # ── バックグラウンドでプロット（Plotly + matplotlib）を自動保存 ──
+            try:
+                from backend.utils.plot_export_hooks import export_all_plots_from_result
+                import time as _time
+                _session_id = f"session_{int(_time.time())}"
+                state["_plot_session_id"] = _session_id
+                export_all_plots_from_result(
+                    best_result, state, session_id=_session_id, run_async=True
+                )
+                logger.info("[PlotExport] バックグラウンドでプロット保存開始: %s", _session_id)
+            except Exception as _pe:
+                logger.warning("[PlotExport] プロット保存フック失敗: %s", _pe)
+
         # 成功表示
         elapsed_total = time.time() - _start_time
         progress_bar.value = 1.0

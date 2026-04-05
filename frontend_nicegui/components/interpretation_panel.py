@@ -15,6 +15,18 @@ from nicegui import ui, run
 logger = logging.getLogger(__name__)
 
 
+def _plotly_and_save(fig, name: str, session_id: str | None = None, **kwargs):
+    """ui.plotly() で表示しつつバックグラウンドで保存するヘルパー。"""
+    try:
+        from backend.utils.plot_exporter import save_plot_versions
+        save_plot_versions(fig, name=name, session_id=session_id, run_async=True)
+    except Exception as _e:
+        logger.debug(f"[Interp PlotSave] {name}: {_e}")
+    return ui.plotly(fig, **kwargs)
+
+
+
+
 # ═══════════════════════════════════════════════════════════════
 # メインエントリポイント
 # ═══════════════════════════════════════════════════════════════
@@ -169,7 +181,7 @@ def _render_pred_actual(ar, y_true, y_pred, feat_names, X_arr) -> None:
         title=f"予測値 vs 実測値 (OOF, n={n_pts})",
         legend=dict(orientation="h", y=1.05),
     )
-    ui.plotly(fig).classes("full-width")
+    _plotly_and_save(fig, "interp_parity_plot").classes("full-width")
 
     # 残差 vs 予測値
     fig2 = go.Figure()
@@ -187,7 +199,7 @@ def _render_pred_actual(ar, y_true, y_pred, feat_names, X_arr) -> None:
         xaxis_title="予測値", yaxis_title="残差 (実測 - 予測)",
         title="残差プロット",
     )
-    ui.plotly(fig2).classes("full-width q-mt-md")
+    _plotly_and_save(fig2, "interp_residual_plot").classes("full-width q-mt-md")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -329,7 +341,7 @@ def _render_coefficients(ar, model, X, feat_names: list[str]) -> None:
                 xaxis_title="Feature Importance (不純度減少の平均)",
                 title=f"Feature Importance ({ar.best_model_key})",
             )
-            ui.plotly(fig).classes("full-width")
+            _plotly_and_save(fig, "interp_feature_importance").classes("full-width")
 
             # 表
             rows = [
@@ -372,7 +384,7 @@ def _render_coefficients(ar, model, X, feat_names: list[str]) -> None:
                 xaxis_title="回帰係数",
                 title=f"回帰係数 ({ar.best_model_key})",
             )
-            ui.plotly(fig).classes("full-width")
+            _plotly_and_save(fig, "interp_regression_coef").classes("full-width")
             ui.label("🟢 正の係数 = 目的変数を増加させる方向  🔴 負の係数 = 減少させる方向").classes(
                 "text-caption text-grey-5 q-mt-xs"
             )
@@ -458,7 +470,7 @@ def _render_shap_panel(ar, model, X, X_arr, feat_names, y) -> None:
                     xaxis_title="平均|SHAP値|",
                     title="SHAP Feature Importance",
                 )
-                ui.plotly(fig_bar).classes("full-width")
+                _plotly_and_save(fig_bar, "shap_bar_importance").classes("full-width")
 
                 # 2. Beeswarm (Top 10)
                 ui.separator()
@@ -487,7 +499,7 @@ def _render_shap_panel(ar, model, X, X_arr, feat_names, y) -> None:
                     margin=dict(l=10, r=10, t=30, b=10),
                     xaxis_title="SHAP値", title="Beeswarm Plot",
                 )
-                ui.plotly(fig_bee).classes("full-width")
+                _plotly_and_save(fig_bee, "shap_beeswarm").classes("full-width")
 
                 # 3. Waterfall (サンプル 0)
                 ui.separator()
@@ -511,7 +523,7 @@ def _render_shap_panel(ar, model, X, X_arr, feat_names, y) -> None:
                     xaxis_title="予測への寄与",
                     title=f"Waterfall (ベースライン: {exp_val:.4f})",
                 )
-                ui.plotly(fig_wf).classes("full-width")
+                _plotly_and_save(fig_wf, "shap_waterfall").classes("full-width")
 
                 # 4. Dependence (Top 1)
                 if len(top10_feats) > 0:
@@ -532,7 +544,7 @@ def _render_shap_panel(ar, model, X, X_arr, feat_names, y) -> None:
                         xaxis_title=t1, yaxis_title=f"SHAP値 ({t1})",
                         title=f"Dependence Plot: {t1}",
                     )
-                    ui.plotly(fig_dep).classes("full-width")
+                    _plotly_and_save(fig_dep, f"shap_dependence_{t1}").classes("full-width")
 
                 ui.notify("✅ SHAP解析完了", type="positive")
 
@@ -637,7 +649,7 @@ def _render_sage_panel(ar, model, X, X_arr, feat_names, y) -> None:
                     xaxis_title="SAGE値 (予測誤差への寄与)",
                     title="SAGE Feature Importance",
                 )
-                ui.plotly(fig).classes("full-width")
+                _plotly_and_save(fig, "sage_importance").classes("full-width")
 
                 rows = [
                     {"順位": r + 1,
@@ -735,7 +747,7 @@ def _render_sage_fallback(ar, model, X, X_arr, feat_names, y) -> None:
                     xaxis_title=f"性能低下 ({scoring})",
                     title=f"Permutation Importance (±std, n_repeats=5)",
                 )
-                ui.plotly(fig).classes("full-width")
+                _plotly_and_save(fig, "sage_permutation_importance").classes("full-width")
                 ui.notify("✅ Permutation Importance 完了", type="positive")
 
         except Exception as ex:
@@ -848,7 +860,7 @@ def _render_sri_panel(ar, model, X, X_arr, feat_names) -> None:
                     title="SHAP SRI分解 (Independence / Synergy / Redundancy)",
                     legend=dict(orientation="h", y=1.05),
                 )
-                ui.plotly(fig_sri).classes("full-width")
+                _plotly_and_save(fig_sri, "sri_bar_chart").classes("full-width")
 
                 # Synergy ヒートマップ (Top 12)
                 ui.separator()
@@ -873,7 +885,7 @@ def _render_sri_panel(ar, model, X, X_arr, feat_names) -> None:
                     title="Synergy Matrix (Top 12特徴量)",
                     xaxis=dict(tickangle=-30),
                 )
-                ui.plotly(fig_heat).classes("full-width")
+                _plotly_and_save(fig_heat, "sri_synergy_heatmap").classes("full-width")
 
                 # 数値テーブル
                 with ui.expansion("📋 SRI 数値テーブル", icon="table_chart").classes(

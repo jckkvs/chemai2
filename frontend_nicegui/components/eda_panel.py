@@ -45,6 +45,24 @@ def _dark_fig(fig, height: int = 400, **kwargs):
     return fig
 
 
+def _plotly_and_save(fig, name: str, session_id: str | None = None, **plotly_kwargs):
+    """
+    ui.plotly() でフロントエンドに表示しつつ、バックグラウンドで保存も実行するヘルパー。
+
+    Args:
+        fig:          plotly.graph_objects.Figure
+        name:         保存ファイル名のベース（例: "eda_pairplot"）
+        session_id:   保存先サブディレクトリ名
+        **plotly_kwargs: ui.plotly() に渡す追加引数
+    """
+    try:
+        from backend.utils.plot_exporter import save_plot_versions
+        save_plot_versions(fig, name=name, session_id=session_id, run_async=True)
+    except Exception as _e:
+        logger.debug(f"[EDA PlotSave] {name} 保存失敗: {_e}")
+    return ui.plotly(fig, **plotly_kwargs)
+
+
 # ═══════════════════════════════════════════════════════════
 # メインエントリーポイント（統合版）
 # ═══════════════════════════════════════════════════════════
@@ -269,7 +287,7 @@ def _render_distribution(df: pd.DataFrame, target_col: str) -> None:
         
     _dark_fig(fig, height=max(200, 180*rows))
     fig.update_layout(margin=dict(l=30, r=20, t=30, b=20))
-    ui.plotly(fig).classes("full-width")
+    _plotly_and_save(fig, "eda_distribution").classes("full-width")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -324,7 +342,7 @@ def _render_correlation(df: pd.DataFrame, target_col: str) -> None:
             fig = px.imshow(corr, text_auto=".2f", color_continuous_scale="RdBu_r",
                             zmin=-1, zmax=1, title=f"相関行列（{method}）")
             _dark_fig(fig, max(400, min(800, work_df.shape[1] * 25)), margin=dict(l=60, r=20, t=40, b=60))
-            ui.plotly(fig).classes("full-width")
+            _plotly_and_save(fig, f"eda_correlation_{method}").classes("full-width")
 
             # 目的変数との相関TOP表示
             if target_col in corr.columns:
@@ -338,7 +356,7 @@ def _render_correlation(df: pd.DataFrame, target_col: str) -> None:
                 ))
                 fig2.update_layout(xaxis_title=f"|r| ({method})", yaxis=dict(autorange="reversed"))
                 _dark_fig(fig2, max(250, len(top10) * 25))
-                ui.plotly(fig2).classes("full-width")
+                _plotly_and_save(fig2, f"eda_target_corr_top10_{method}").classes("full-width")
 
     method_sel.on_value_change(lambda: _draw())
     _draw()
@@ -414,7 +432,7 @@ def _render_target_vs_features(df: pd.DataFrame, target_col: str) -> None:
             ykey: dict(gridcolor="rgba(255,255,255,0.08)"),
         })
 
-    ui.plotly(fig)
+    _plotly_and_save(fig, "eda_target_vs_features")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -456,7 +474,7 @@ def _render_pairplot(df: pd.DataFrame, target_col: str) -> None:
                                     template="plotly_dark", color_continuous_scale="Viridis")
             fig.update_traces(diagonal_visible=False)
             _dark_fig(fig, max(450, len(cols) * 120))
-            ui.plotly(fig).classes("full-width")
+            _plotly_and_save(fig, "eda_pairplot").classes("full-width")
 
     ui.button("描画更新", on_click=_draw).props("outline color=cyan size=sm no-caps")
     _draw()
@@ -492,7 +510,7 @@ def _render_box_violin(df: pd.DataFrame, target_col: str) -> None:
                 fig = px.violin(df, y=col, box=True, points="all", title=f"{col} バイオリンプロット",
                                 template="plotly_dark")
             _dark_fig(fig, 400)
-            ui.plotly(fig).classes("full-width")
+            _plotly_and_save(fig, f"eda_box_violin_{col_select.value}").classes("full-width")
 
     col_select.on("update:model-value", lambda: _draw())
     plot_type.on_value_change(lambda: _draw())
@@ -536,7 +554,7 @@ def _render_qqplot(df: pd.DataFrame, target_col: str) -> None:
             fig.update_layout(title=f"{col} QQプロット（正規性チェック）",
                               xaxis_title="理論分位数", yaxis_title="サンプル分位数")
             _dark_fig(fig, 400)
-            ui.plotly(fig).classes("full-width")
+            _plotly_and_save(fig, f"eda_qqplot_{col_select.value}").classes("full-width")
             # Shapiro-Wilk検定
             if len(series) <= 5000:
                 stat, p = sp_stats.shapiro(series[:5000])
@@ -643,7 +661,7 @@ def _render_outliers(df: pd.DataFrame, target_col: str) -> None:
                 ui.label(f"下限: {lower:.4g} | 上限: {upper:.4g}").classes("text-caption text-cyan")
             fig = px.box(df, y=col, points="outliers", title=f"{col} ({method.upper()})", template="plotly_dark")
             _dark_fig(fig, 350)
-            ui.plotly(fig).classes("full-width")
+            _plotly_and_save(fig, f"eda_outlier_{col}_{method}").classes("full-width")
 
     col_select.on("update:model-value", lambda: _draw())
     method_sel.on_value_change(lambda: _draw())
@@ -672,7 +690,7 @@ def _render_missing(df: pd.DataFrame) -> None:
                  title="列ごとの欠損値数", labels={"x": "欠損数", "y": "列名"},
                  template="plotly_dark", color_discrete_sequence=["#fbbf24"], text_auto=True)
     _dark_fig(fig, max(300, len(missing_counts) * 25))
-    ui.plotly(fig).classes("full-width")
+    _plotly_and_save(fig, "eda_missing_values").classes("full-width")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -747,7 +765,7 @@ def _render_dim_reduction(df: pd.DataFrame, target_col: str, state: dict) -> Non
             )
             with pca_col:
                 ui.label("📐 PCA（主成分分析）").classes("text-subtitle2 text-bold q-mb-xs")
-                ui.plotly(fig).classes("full-width")
+                _plotly_and_save(fig, "eda_pca_scatter").classes("full-width")
 
                 # 寄与率（コンパクト）
                 fig2 = go.Figure()
@@ -767,7 +785,7 @@ def _render_dim_reduction(df: pd.DataFrame, target_col: str, state: dict) -> Non
                     title=dict(text="寄与率", font=dict(size=13)),
                     yaxis_title="寄与率",
                 )
-                ui.plotly(fig2).classes("full-width")
+                _plotly_and_save(fig2, "eda_pca_variance").classes("full-width")
 
         except Exception as e:
             with pca_col:
@@ -810,7 +828,7 @@ def _render_dim_reduction(df: pd.DataFrame, target_col: str, state: dict) -> Non
             )
             with tsne_col:
                 ui.label("🎯 t-SNE").classes("text-subtitle2 text-bold q-mb-xs")
-                ui.plotly(fig_t).classes("full-width")
+                _plotly_and_save(fig_t, "eda_tsne_scatter").classes("full-width")
                 if n_samples < num_df.shape[0]:
                     ui.label(
                         f"※ 速度のため {n_samples} サンプルを使用"
@@ -867,7 +885,7 @@ def _render_feature_importance(df: pd.DataFrame, target_col: str) -> None:
                 fig.update_layout(title="特徴量重要度（相互情報量）TOP20",
                                   xaxis_title="Mutual Information", yaxis=dict(autorange="reversed"))
                 _dark_fig(fig, max(300, len(top) * 25))
-                ui.plotly(fig).classes("full-width")
+                _plotly_and_save(fig, "eda_mutual_information").classes("full-width")
         except Exception as e:
             chart_container.clear()
             with chart_container:
