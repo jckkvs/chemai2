@@ -25,6 +25,15 @@ from nicegui import ui, app
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
+# アプリ起動時: 設定を環境変数に適用
+# ─────────────────────────────────────────────
+try:
+    from backend.config.settings_manager import SettingsManager as _SM
+    _SM.get_instance().apply_to_environment()
+except Exception as _e:
+    logger.warning("設定の自動適用に失敗しました: %s", _e)
+
+# ─────────────────────────────────────────────
 # プレミアム ダークテーマ CSS
 # ─────────────────────────────────────────────
 CUSTOM_CSS = """
@@ -396,7 +405,15 @@ def main_page():
             ui.label("ChemAI ML Studio").classes("text-h5 text-bold hero-gradient")
             ui.badge("NiceGUI", color="purple").props("floating")
 
+        # ── ヘッダー右端: ギアアイコン（控えめ配置）────────────────────
+        with ui.row().classes("items-center q-gutter-xs"):
+            def _open_settings():
+                from frontend_nicegui.pages.settings_page import open_settings_dialog
+                open_settings_dialog()
 
+            ui.button(icon="settings", on_click=_open_settings).props(
+                'flat round size=sm color=grey aria-label="設定" id="header-settings-btn"'
+            ).tooltip("⚙️ 設定（HuggingFaceトークン・プロキシ・SSL）")
 
         with ui.button(icon="help_outline").props("flat round size=sm color=grey").tooltip(
             "ショートカット: Ctrl+Enter=解析開始 | ?=ヘルプ"
