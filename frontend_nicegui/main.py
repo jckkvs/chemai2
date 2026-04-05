@@ -228,8 +228,35 @@ code, pre, .text-monospace, .q-field__native {
     font-family: var(--font-mono) !important;
 }
 /* 日本語テキストの最小フォントサイズ保証 (F-02: 文字の大きさ) */
-.text-caption { font-size: max(11px, 0.75rem) !important; }
-.text-body2 { font-size: max(13px, 0.85rem) !important; }
+.text-caption { font-size: max(13px, 0.82rem) !important; }
+.text-body2  { font-size: max(14px, 0.88rem) !important; }
+.text-body1  { font-size: max(15px, 0.94rem) !important; }
+
+/* ── フォントサイズ全体的な引き上げ（ユーザー要望） ── */
+body, .nicegui-content, .q-page {
+    font-size: 16px !important;
+}
+.q-item__label, .q-field__label, .q-field__native {
+    font-size: 15px !important;
+}
+.q-btn:not(.q-btn--size-xs):not(.q-btn--size-sm) {
+    font-size: 15px !important;
+}
+.q-table tbody td, .q-table thead th {
+    font-size: 14px !important;
+}
+.q-tab__label {
+    font-size: 14px !important;
+    font-weight: 600;
+}
+/* サイドバーステップラベル */
+.q-drawer .q-item__label {
+    font-size: 15px !important;
+}
+/* キャプション下限 13px で日本語可読性保証 */
+.text-caption, .text-overline {
+    font-size: 13px !important;
+}
 
 /* F-14: Material Icon統一ルール */
 /* アイコンサイズの一貫性: ボタン=20px, ラベル=16px, タイトル=24px */

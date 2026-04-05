@@ -647,6 +647,7 @@ def _render_missing(df: pd.DataFrame) -> None:
 # 11. 次元削減（PCA / t-SNE + 寄与率・ローディング）
 # ═══════════════════════════════════════════════════════════
 def _render_dim_reduction(df: pd.DataFrame, target_col: str, state: dict) -> None:
+    """PCA + t-SNE を左右並列表示（プルダウン廃止・正方形・大きめフォント）。"""
     import plotly.express as px
     import plotly.graph_objects as go
 
@@ -656,81 +657,140 @@ def _render_dim_reduction(df: pd.DataFrame, target_col: str, state: dict) -> Non
         ui.label("特徴量が2列未満またはデータが少なすぎます").classes("text-caption text-grey")
         return
 
-    method_sel = ui.select(["PCA", "t-SNE"], value="PCA", label="手法").props("outlined dense").classes("col-3")
-    chart_container = ui.column().classes("full-width")
+    # 並列表示コンテナ
+    with ui.row().classes("full-width q-gutter-sm q-mb-sm"):
+        pca_col = ui.column().classes("col")
+        tsne_col = ui.column().classes("col")
+    chart_container = ui.column().classes("full-width")  # ローディング / エラー表示用
+
+    _BASE = dict(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e0e0f0", size=11),
+        width=440, height=440,
+        margin=dict(l=55, r=15, t=50, b=55),
+        hovermode="closest",
+    )
 
     async def _run():
-        chart_container.clear()
-        method = method_sel.value
+        pca_col.clear()
+        tsne_col.clear()
         X = num_df[feature_cols].values
         y = num_df[target_col].values if target_col in num_df.columns else None
         from sklearn.preprocessing import StandardScaler
         X_scaled = StandardScaler().fit_transform(X)
 
-        with chart_container:
-            try:
-                if method == "PCA":
-                    from sklearn.decomposition import PCA
-                    n_comp = min(len(feature_cols), 10)
-                    pca = PCA(n_components=n_comp)
-                    X_pca = pca.fit_transform(X_scaled)
-                    ev = pca.explained_variance_ratio_
+        # ── PCA ──────────────────────────────────────────────
+        try:
+            from sklearn.decomposition import PCA
+            n_comp = min(len(feature_cols), 10)
+            pca = PCA(n_components=n_comp)
+            X_pca = pca.fit_transform(X_scaled)
+            ev = pca.explained_variance_ratio_
 
-                    # 2D散布図
-                    plot_df = pd.DataFrame({"PC1": X_pca[:, 0], "PC2": X_pca[:, 1]})
-                    if y is not None:
-                        plot_df[target_col] = y[:len(X_pca)]
-                    fig = px.scatter(plot_df, x="PC1", y="PC2",
-                                    color=target_col if y is not None else None,
-                                    color_continuous_scale="Viridis", template="plotly_dark",
-                                    title=f"PCA 2D (PC1: {ev[0]:.1%}, PC2: {ev[1]:.1%})")
-                    _dark_fig(fig, 450)
-                    ui.plotly(fig).classes("full-width")
+            plot_df = pd.DataFrame({"PC1": X_pca[:, 0], "PC2": X_pca[:, 1]})
+            if y is not None:
+                plot_df[target_col] = y[:len(X_pca)]
 
-                    # 累積寄与率
-                    cum = np.cumsum(ev)
-                    fig2 = go.Figure()
-                    fig2.add_bar(x=[f"PC{i+1}" for i in range(n_comp)], y=ev, name="寄与率",
-                                 marker_color="#00d4ff")
-                    fig2.add_scatter(x=[f"PC{i+1}" for i in range(n_comp)], y=cum,
-                                    name="累積寄与率", line=dict(color="#fbbf24", width=2))
-                    fig2.update_layout(title="PCA 寄与率", yaxis_title="寄与率")
-                    _dark_fig(fig2, 300)
-                    ui.plotly(fig2).classes("full-width")
+            fig = px.scatter(
+                plot_df, x="PC1", y="PC2",
+                color=target_col if y is not None else None,
+                color_continuous_scale="Viridis", template="plotly_dark",
+                title=f"PCA  PC1: {ev[0]:.1%} / PC2: {ev[1]:.1%}",
+            )
+            fig.update_layout(
+                **_BASE,
+                title=dict(font=dict(size=14)),
+                xaxis=dict(
+                    title=dict(text=f"PC1 ({ev[0]:.1%})", font=dict(size=13)),
+                    tickfont=dict(size=11),
+                    gridcolor="rgba(255,255,255,0.10)",
+                    scaleanchor="y", scaleratio=1,  # 正方形
+                ),
+                yaxis=dict(
+                    title=dict(text=f"PC2 ({ev[1]:.1%})", font=dict(size=13)),
+                    tickfont=dict(size=11),
+                    gridcolor="rgba(255,255,255,0.10)",
+                ),
+            )
+            with pca_col:
+                ui.label("📐 PCA（主成分分析）").classes("text-subtitle2 text-bold q-mb-xs")
+                ui.plotly(fig).classes("full-width")
 
-                    # ローディング（上位10）
-                    loadings = pd.DataFrame(pca.components_[:2].T, columns=["PC1", "PC2"], index=feature_cols)
-                    loadings["abs_PC1"] = loadings["PC1"].abs()
-                    top_load = loadings.nlargest(min(10, len(loadings)), "abs_PC1")
-                    fig3 = go.Figure()
-                    fig3.add_bar(x=top_load["PC1"].values, y=top_load.index, orientation="h",
-                                 name="PC1", marker_color="#00d4ff")
-                    fig3.update_layout(title="PCA ローディング TOP10", xaxis_title="PC1 Loading",
-                                       yaxis=dict(autorange="reversed"))
-                    _dark_fig(fig3, max(250, len(top_load) * 25))
-                    ui.plotly(fig3).classes("full-width")
+                # 寄与率（コンパクト）
+                fig2 = go.Figure()
+                fig2.add_bar(
+                    x=[f"PC{i+1}" for i in range(n_comp)],
+                    y=ev, name="寄与率", marker_color="#00d4ff",
+                )
+                fig2.add_scatter(
+                    x=[f"PC{i+1}" for i in range(n_comp)],
+                    y=np.cumsum(ev), name="累積",
+                    line=dict(color="#fbbf24", width=2),
+                )
+                fig2.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e0e0f0", size=10),
+                    height=180, margin=dict(l=45, r=10, t=28, b=35),
+                    title=dict(text="寄与率", font=dict(size=13)),
+                    yaxis_title="寄与率",
+                )
+                ui.plotly(fig2).classes("full-width")
 
-                else:  # t-SNE
-                    from sklearn.manifold import TSNE
-                    n_samples = min(X_scaled.shape[0], 5000)
-                    perp = min(30, n_samples - 1)
-                    X_2d = TSNE(n_components=2, perplexity=perp, random_state=42).fit_transform(X_scaled[:n_samples])
-                    y_sub = y[:n_samples] if y is not None else None
+        except Exception as e:
+            with pca_col:
+                ui.label(f"PCA エラー: {e}").classes("text-caption text-red")
 
-                    plot_df = pd.DataFrame({"t-SNE 1": X_2d[:, 0], "t-SNE 2": X_2d[:, 1]})
-                    if y_sub is not None:
-                        plot_df[target_col] = y_sub[:len(X_2d)]
-                    fig = px.scatter(plot_df, x="t-SNE 1", y="t-SNE 2",
-                                    color=target_col if y_sub is not None else None,
-                                    color_continuous_scale="Viridis", template="plotly_dark",
-                                    title="t-SNE 2D散布図")
-                    _dark_fig(fig, 450)
-                    ui.plotly(fig).classes("full-width")
+        # ── t-SNE ─────────────────────────────────────────────
+        try:
+            from sklearn.manifold import TSNE
+            n_samples = min(X_scaled.shape[0], 3000)
+            perp = min(30, n_samples - 1)
+            X_2d = TSNE(
+                n_components=2, perplexity=perp, random_state=42,
+            ).fit_transform(X_scaled[:n_samples])
+            y_sub = y[:n_samples] if y is not None else None
 
-            except Exception as e:
-                ui.label(f"エラー: {e}").classes("text-caption text-red")
+            plot_df2 = pd.DataFrame({"t-SNE 1": X_2d[:, 0], "t-SNE 2": X_2d[:, 1]})
+            if y_sub is not None:
+                plot_df2[target_col] = y_sub[:len(X_2d)]
 
-    ui.button("🌀 次元削減を実行", on_click=_run).props("color=cyan no-caps size=sm").classes("q-mb-sm")
+            fig_t = px.scatter(
+                plot_df2, x="t-SNE 1", y="t-SNE 2",
+                color=target_col if y_sub is not None else None,
+                color_continuous_scale="Viridis", template="plotly_dark",
+                title="t-SNE 2D",
+            )
+            fig_t.update_layout(
+                **_BASE,
+                title=dict(font=dict(size=14)),
+                xaxis=dict(
+                    title=dict(text="t-SNE 1", font=dict(size=13)),
+                    tickfont=dict(size=11),
+                    gridcolor="rgba(255,255,255,0.10)",
+                    scaleanchor="y", scaleratio=1,  # 正方形
+                ),
+                yaxis=dict(
+                    title=dict(text="t-SNE 2", font=dict(size=13)),
+                    tickfont=dict(size=11),
+                    gridcolor="rgba(255,255,255,0.10)",
+                ),
+            )
+            with tsne_col:
+                ui.label("🎯 t-SNE").classes("text-subtitle2 text-bold q-mb-xs")
+                ui.plotly(fig_t).classes("full-width")
+                if n_samples < num_df.shape[0]:
+                    ui.label(
+                        f"※ 速度のため {n_samples} サンプルを使用"
+                    ).classes("text-caption text-grey q-mt-xs")
+
+        except Exception as e:
+            with tsne_col:
+                ui.label(f"t-SNE エラー: {e}").classes("text-caption text-red")
+
+    ui.button("🌀 PCA + t-SNE を同時実行", on_click=_run).props(
+        "color=cyan no-caps size=sm"
+    ).classes("q-mb-sm")
 
 
 # ═══════════════════════════════════════════════════════════
