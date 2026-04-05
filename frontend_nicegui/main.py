@@ -424,80 +424,41 @@ def main_page():
     ui.add_head_html(f"<style>{CUSTOM_CSS}</style>")
 
     # ═══════════════════════════════════════════════════════════
-    # ヘッダー（コンパクト化: analysis_status_container を外に移動）
+    # ヘッダー完全削除 — analysis_status_container のみ定義
     # ═══════════════════════════════════════════════════════════
-    # analysis_status_container はヘッダー外に定義（ヘッダー膨張を防ぐ）
     analysis_status_container = ui.column().classes("full-width")
 
-    with ui.header().classes("items-center justify-between q-px-md q-py-none").props("dense"):
-        with ui.row().classes("items-center q-gutter-sm"):
-            ui.label("⚗️").classes("text-h5")
-            ui.label("ChemAI ML Studio").classes("text-h5 text-bold hero-gradient")
-            ui.badge("NiceGUI", color="purple").props("floating")
+    # ── 解析実行ロジック（ヘッダー削除後もサイドバーから呼び出す）──
+    def _open_settings():
+        from frontend_nicegui.pages.settings_page import open_settings_dialog
+        open_settings_dialog()
 
-        # ── ヘッダー右端: ギアアイコン（控えめ配置）────────────────────
-        with ui.row().classes("items-center q-gutter-xs"):
-            def _open_settings():
-                from frontend_nicegui.pages.settings_page import open_settings_dialog
-                open_settings_dialog()
+    async def _run_analysis():
+        # ── プリフライトチェック ──
+        issues = _preflight_check(state)
+        if issues:
+            for issue in issues:
+                ui.notify(issue, type="warning", timeout=5000)
+            return
 
-            ui.button(icon="settings", on_click=_open_settings).props(
-                'flat round size=sm color=grey aria-label="設定" id="header-settings-btn"'
-            ).tooltip("⚙️ 設定（HuggingFaceトークン・プロキシ・SSL）")
+        # ボタン無効化（二重実行防止）
+        run_btn.disable()
+        run_btn.text = "⏳ 解析中..."
+        run_btn._classes = [c for c in run_btn._classes if c != "btn-run-analysis"]
+        try:
+            from frontend_nicegui.components.analysis_runner import run_analysis
+            await run_analysis(
+                state,
+                analysis_status_container,
+                on_complete=lambda: main_tabs.set_value("results"),
+            )
+        finally:
+            run_btn.enable()
+            run_btn.text = "🚀 解析開始"
+            run_btn.classes("btn-run-analysis")
 
-        with ui.button(icon="help_outline").props("flat round size=sm color=grey").tooltip(
-            "ショートカット: Ctrl+Enter=解析開始 | ?=ヘルプ"
-        ):
-            with ui.menu().props("anchor='bottom right' self='top right'"):
-                with ui.card().classes("q-pa-sm").style("min-width: 280px;"):
-                    ui.label("⌨️ キーボードショートカット").classes("text-subtitle2 text-bold")
-                    for key, desc in [
-                        ("Ctrl + Enter", "解析開始"),
-                        ("Ctrl + 1", "データ設定タブ"),
-                        ("Ctrl + 2", "結果確認タブ"),
-                        ("Ctrl + 3", "逆解析タブ"),
-                    ]:
-                        with ui.row().classes("items-center q-gutter-xs"):
-                            ui.badge(key, color="grey-8").props("dense")
-                            ui.label(desc).classes("text-caption")
-
-
-        async def _run_analysis():
-            # ── プリフライトチェック ──
-            issues = _preflight_check(state)
-            if issues:
-                for issue in issues:
-                    ui.notify(issue, type="warning", timeout=5000)
-                return
-
-            # ボタン無効化（二重実行防止） + F-04 ローディングUI
-            run_btn.disable()
-            run_btn.text = "⏳ 解析中..."
-            run_btn._classes = [c for c in run_btn._classes if c != "btn-run-analysis"]
-            try:
-                from frontend_nicegui.components.analysis_runner import run_analysis
-                await run_analysis(
-                    state,
-                    analysis_status_container,
-                    on_complete=lambda: main_tabs.set_value("results"),
-                )
-            finally:
-                run_btn.enable()
-                run_btn.text = "🚀 解析開始"
-                run_btn.classes("btn-run-analysis")
-
-        # F-08: 解析開始ボタン（コンパクトヘッダーに合わせて md サイズ）
-        run_btn = ui.button(
-            "🚀 解析開始", on_click=_run_analysis,
-        ).classes("btn-primary btn-run-analysis").props(
-            "size=md icon=rocket_launch no-caps unelevated"
-        )
-        run_btn.tooltip(
-            "ワンクリックで全自動ML: データ前処理 → 特徴選択 → "
-            "複数モデル比較 → 最良モデル評価 → SHAP解析まで一括実行"
-        )
-        # _run_analysis を state に格納 → descriptor_plugins_ui から呼べるようにする
-        state["_run_analysis"] = _run_analysis
+    # state に格納 → descriptor_plugins_ui から呼べるようにする
+    state["_run_analysis"] = _run_analysis
 
     # F-11: キーボードショートカット登録
     ui.keyboard(
@@ -556,7 +517,24 @@ def main_page():
     # サイドバー — ステップインジケーター + ジャンプ + 次のステップ
     # ═══════════════════════════════════════════════════════════
     with ui.left_drawer(value=True).classes("bg-dark q-pa-md").props("width=240"):
-        ui.label("⚗️ ChemAI").classes("text-h6 q-mb-sm hero-gradient")
+        # ── タイトル + 設定ボタン ──
+        with ui.row().classes("items-center justify-between full-width q-mb-xs"):
+            ui.label("⚗️ ChemAI").classes("text-h6 hero-gradient")
+            ui.button(icon="settings", on_click=_open_settings).props(
+                'flat round size=sm color=grey aria-label="設定" id="sidebar-settings-btn"'
+            ).tooltip("⚙️ 設定")
+
+        # ── 🚀 解析開始ボタン（サイドバー最上部・目立つ配置）──
+        run_btn = ui.button(
+            "🚀 解析開始", on_click=_run_analysis,
+        ).classes("btn-primary btn-run-analysis full-width q-mb-sm").props(
+            "size=md icon=rocket_launch no-caps unelevated"
+        )
+        run_btn.tooltip(
+            "ワンクリックで全自動ML: データ前処理 → 特徴選択 → "
+            "複数モデル比較 → 最良モデル評価 → SHAP解析まで一括実行"
+        )
+
         ui.separator()
 
         # ステップインジケーター
