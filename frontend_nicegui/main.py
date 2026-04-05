@@ -305,6 +305,25 @@ body, .nicegui-content, .q-page {
 .animate-shake {
     animation: shake-warning 0.6s cubic-bezier(.36,.07,.19,.97) both;
 }
+
+/* ── ヘッダー完全削除後の Quasar 自動パディング除去 ── */
+/* ui.header() を削除してもQuasarがpadding-topを残すため強制リセット */
+.q-header {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+}
+.q-page-container {
+    padding-top: 0 !important;
+}
+body {
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+}
+/* 解析ステータスコンテナ（空の時はスペース不要） */
+.full-width:empty {
+    display: none !important;
+}
 """
 
 
@@ -424,9 +443,9 @@ def main_page():
     ui.add_head_html(f"<style>{CUSTOM_CSS}</style>")
 
     # ═══════════════════════════════════════════════════════════
-    # ヘッダー完全削除 — analysis_status_container のみ定義
+    # ヘッダー完全削除 — 解析ロジックのみ定義
     # ═══════════════════════════════════════════════════════════
-    analysis_status_container = ui.column().classes("full-width")
+    # analysis_status_container はサイドバー内で定義（下記）
 
     # ── 解析実行ロジック（ヘッダー削除後もサイドバーから呼び出す）──
     def _open_settings():
@@ -534,6 +553,11 @@ def main_page():
             "ワンクリックで全自動ML: データ前処理 → 特徴選択 → "
             "複数モデル比較 → 最良モデル評価 → SHAP解析まで一括実行"
         )
+
+        # ── 解析進捗（サイドバー内表示）──
+        analysis_status_container = ui.column().classes("full-width q-mb-xs")
+        with analysis_status_container:
+            pass  # analysis_runner が動的に書き込む
 
         ui.separator()
 
@@ -683,9 +707,6 @@ def main_page():
     # メインコンテンツ — 2タブ構造
     # ═══════════════════════════════════════════════════════════
 
-    # 解析状態表示エリア（ヘッダー外・サイドバー下部に相当する位置）
-    with analysis_status_container:
-        pass  # analysis_runnerが動的に書き込む
 
     # 記述子セット表示バー・フローステッパーは削除（UI簡素化）
     # _refresh_stepper は他コードから参照されるためノーオペレーションで保持
