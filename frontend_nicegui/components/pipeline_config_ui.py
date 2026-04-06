@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 from nicegui import ui
+from frontend_nicegui.components.monotonicity_config import render_monotonicity_panel
 
 
 # ═══════════════════════════════════════════════════════════
@@ -744,158 +745,173 @@ def render_pipeline_config(state: dict) -> None:
     # ═══════════════════════════════════════════════════════
     # 🤖 推定器セレクター（トップレベル・最大面積・常時表示）
     # ═══════════════════════════════════════════════════════
-    with ui.card().classes("full-width q-pa-md q-mb-sm").style(
-        "border: 2px solid rgba(0,188,212,0.4); border-radius: 12px;"
-        "background: linear-gradient(135deg, rgba(0,30,60,0.4), rgba(0,20,50,0.3));"
-    ):
-        # ヘッダー行
-        with ui.row().classes("items-center justify-between full-width q-mb-sm"):
-            with ui.row().classes("items-center q-gutter-sm"):
-                ui.icon("smart_toy", color="cyan", size="md")
-                ui.label(f"🤖 推定器セレクター（{'回帰' if is_reg else '分類'}）").classes(
-                    "text-h6 text-bold"
-                )
-            with ui.row().classes("q-gutter-xs"):
-                n_sel = len(selected_models)
-                n_all = len(available)
-                ui.badge(f"{n_sel}/{n_all} 選択中", color="cyan").props("dense")
-
-        # 一括操作ボタン
-        with ui.row().classes("q-gutter-xs q-mb-md"):
-            def _select_all():
-                all_keys = [m["key"] for m in available]
-                state["selected_models"] = all_keys
-                ui.notify(f"✅ 全{len(all_keys)}モデルを選択しました", type="positive", timeout=2000)
-            def _select_defaults():
-                state["selected_models"] = list(defaults)
-                ui.notify(f"⭐ 推奨{len(defaults)}モデルを選択しました", type="info", timeout=2000)
-            def _select_none():
-                state["selected_models"] = []
-                ui.notify("🚫 全モデルを解除しました", type="warning", timeout=2000)
-
-            ui.button("✅ 全選択", on_click=_select_all).props(
-                "outline color=cyan size=sm no-caps"
-            ).style("border-radius: 20px;")
-            ui.button("⭐ 推奨のみ", on_click=_select_defaults).props(
-                "outline color=teal size=sm no-caps"
-            ).style("border-radius: 20px;")
-            ui.button("🚫 全解除", on_click=_select_none).props(
-                "outline color=grey size=sm no-caps"
-            ).style("border-radius: 20px;")
-
-        # カテゴリごとのチップグリッド（展開不要・即クリック）
-        for cat_name, models in categories.items():
-            if not models:
-                continue
-            n_cat_sel = sum(1 for m in models if m["key"] in selected_models)
-            icon = cat_icons.get(cat_name, "")
-
-            with ui.row().classes("items-center q-gutter-xs q-mb-xs"):
-                ui.icon(icon, color="cyan-4", size="xs")
-                ui.label(cat_name).classes("text-body2 text-bold text-cyan-3")
-                ui.badge(f"{n_cat_sel}/{len(models)}").props("dense").style(
-                    "font-size:0.7rem;"
-                )
-
-            with ui.row().classes("q-gutter-xs q-mb-sm flex-wrap"):
-                for m in models:
-                    mkey = m["key"]
-                    mname = m["name"]  # フルネーム（tooltip用）
-                    mcls = m.get("class")
-                    is_on = mkey in selected_models
-                    is_default = mkey in defaults
-                    has_config = mkey in state.get("model_configs", {})
-                    short, complexity, lib = _get_model_meta(mkey)
-
-                    # チップスタイル決定
-                    if is_on:
-                        chip_style = (
-                            "background: rgba(0,188,212,0.25); border: 1.5px solid rgba(0,188,212,0.6);"
-                            "color: #e0f7fa; border-radius: 20px; cursor: pointer;"
-                        )
-                    else:
-                        chip_style = (
-                            "background: rgba(60,60,80,0.3); border: 1px solid rgba(100,100,120,0.3);"
-                            "color: #888; border-radius: 20px; cursor: pointer;"
-                        )
-
-                    def _toggle_model(key=mkey):
-                        sm = list(state.get("selected_models", []))
-                        if key in sm:
-                            sm.remove(key)
-                        else:
-                            sm.append(key)
-                        state["selected_models"] = sm
-
-                    # 短縮ラベル（スペース節約）
-                    chip_label = f"{'✓' if is_on else ''}{short}"
-                    if is_default:
-                        chip_label += "⭐"
-                    if has_config:
-                        chip_label += "⚙"
-
-                    # リッチツールチップ: 正式名 / 計算量 / ライブラリ
-                    tip = f"{mname}\n計算量: {complexity}\nlib: {lib}"
-                    if is_on:
-                        tip += "\n（クリックで除外）"
-                    else:
-                        tip += "\n（クリックで追加）"
-
-                    btn = ui.button(
-                        chip_label,
-                        on_click=_toggle_model,
-                    ).props("flat dense no-caps size=sm").style(
-                        chip_style + "padding: 1px 8px; font-size: 0.78rem; min-height: 26px;"
+    @ui.refreshable
+    def _render_estimator_selector():
+        selected_models = state.get("selected_models", [])
+        
+        with ui.card().classes("full-width q-pa-md q-mb-sm").style(
+            "border: 2px solid rgba(0,188,212,0.4); border-radius: 12px;"
+            "background: linear-gradient(135deg, rgba(0,30,60,0.4), rgba(0,20,50,0.3));"
+        ):
+            # ヘッダー行
+            with ui.row().classes("items-center justify-between full-width q-mb-sm"):
+                with ui.row().classes("items-center q-gutter-sm"):
+                    ui.icon("smart_toy", color="cyan", size="md")
+                    ui.label(f"🤖 推定器セレクター（{'回帰' if is_reg else '分類'}）").classes(
+                        "text-h6 text-bold"
                     )
-                    btn.tooltip(tip)
+                with ui.row().classes("q-gutter-xs"):
+                    n_sel = len(selected_models)
+                    n_all = len(available)
+                    ui.badge(f"{n_sel}/{n_all} 選択中", color="cyan").props("dense")
 
-        # 選択済みモデルの詳細パネル（⚙️設定ボタン付き）
-        sel_models = [m for m in available if m["key"] in selected_models]
-        if sel_models:
-            ui.separator().classes("q-my-sm")
-            ui.label("🔧 選択済みモデルの設定").classes("text-body2 text-bold text-grey-4 q-mb-xs")
-            with ui.element("div").classes("full-width").style(
-                "display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px;"
-            ):
-                for m in sel_models:
-                    mkey = m["key"]
-                    mname = m["name"]
-                    mcls = m.get("class")
-                    has_config = mkey in state.get("model_configs", {})
+            # 一括操作ボタン
+            with ui.row().classes("q-gutter-xs q-mb-md"):
+                def _select_all():
+                    all_keys = [m["key"] for m in available]
+                    state["selected_models"] = all_keys
+                    ui.notify(f"✅ 全{len(all_keys)}モデルを選択しました", type="positive", timeout=2000)
+                    _render_estimator_selector.refresh()
+                
+                def _select_defaults():
+                    state["selected_models"] = list(defaults)
+                    ui.notify(f"⭐ 推奨{len(defaults)}モデルを選択しました", type="info", timeout=2000)
+                    _render_estimator_selector.refresh()
+                
+                def _select_none():
+                    state["selected_models"] = []
+                    ui.notify("🚫 全モデルを解除しました", type="warning", timeout=2000)
+                    _render_estimator_selector.refresh()
 
-                    with ui.card().classes("q-pa-xs").style(
-                        "border: 1px solid rgba(0,188,212,0.15); border-radius: 8px;"
-                        "background: rgba(0,20,40,0.2); min-height: 40px;"
-                    ):
-                        with ui.row().classes("items-center justify-between no-wrap"):
-                            ui.label(mname).classes("text-caption text-grey-3 ellipsis").style(
-                                "max-width: 140px;"
+                ui.button("✅ 全選択", on_click=_select_all).props(
+                    "outline color=cyan size=sm no-caps"
+                ).style("border-radius: 20px;")
+                ui.button("⭐ 推奨のみ", on_click=_select_defaults).props(
+                    "outline color=teal size=sm no-caps"
+                ).style("border-radius: 20px;")
+                ui.button("🚫 全解除", on_click=_select_none).props(
+                    "outline color=grey size=sm no-caps"
+                ).style("border-radius: 20px;")
+
+            # カテゴリごとのチップグリッド（展開不要・即クリック）
+            for cat_name, models in categories.items():
+                if not models:
+                    continue
+                n_cat_sel = sum(1 for m in models if m["key"] in selected_models)
+                icon = cat_icons.get(cat_name, "")
+
+                with ui.row().classes("items-center q-gutter-xs q-mb-xs"):
+                    ui.icon(icon, color="cyan-4", size="xs")
+                    ui.label(cat_name).classes("text-body2 text-bold text-cyan-3")
+                    ui.badge(f"{n_cat_sel}/{len(models)}").props("dense").style(
+                        "font-size:0.7rem;"
+                    )
+
+                with ui.row().classes("q-gutter-xs q-mb-sm flex-wrap"):
+                    for m in models:
+                        mkey = m["key"]
+                        mname = m["name"]  # フルネーム（tooltip用）
+                        mcls = m.get("class")
+                        is_on = mkey in selected_models
+                        is_default = mkey in defaults
+                        has_config = mkey in state.get("model_configs", {})
+                        short, complexity, lib = _get_model_meta(mkey)
+
+                        # チップスタイル決定
+                        if is_on:
+                            chip_style = (
+                                "background: rgba(0,188,212,0.25); border: 1.5px solid rgba(0,188,212,0.6);"
+                                "color: #e0f7fa; border-radius: 20px; cursor: pointer;"
                             )
-                            with ui.row().classes("items-center q-gutter-xs no-wrap"):
-                                if has_config:
-                                    ui.badge("⚙設定済", color="amber").props(
-                                        "outline dense"
-                                    ).style("font-size:0.6rem;")
-                                if mcls is not None:
-                                    def _open_config(key=mkey, name=mname, cls=mcls):
-                                        from frontend_nicegui.components.estimator_config_dialog import (
-                                            EstimatorConfigDialog,
-                                        )
-                                        existing = state["model_configs"].get(key)
-                                        dialog = EstimatorConfigDialog(
-                                            model_key=key,
-                                            model_cls=cls,
-                                            model_name=name,
-                                            initial_config=existing,
-                                            on_save=lambda cfg, k=key: state["model_configs"].update({k: cfg}),
-                                        )
-                                        dialog.open()
+                        else:
+                            chip_style = (
+                                "background: rgba(60,60,80,0.3); border: 1px solid rgba(100,100,120,0.3);"
+                                "color: #888; border-radius: 20px; cursor: pointer;"
+                            )
 
-                                    ui.button(
-                                        icon="tune", on_click=_open_config,
-                                    ).props("flat dense round size=xs color=cyan").tooltip(
-                                        f"{mname}: デフォルト値 / Grid / Optuna"
-                                    )
+                        def _toggle_model(key=mkey):
+                            sm = list(state.get("selected_models", []))
+                            if key in sm:
+                                sm.remove(key)
+                            else:
+                                sm.append(key)
+                            state["selected_models"] = sm
+                            _render_estimator_selector.refresh()
+
+                        # 短縮ラベル（スペース節約）
+                        chip_label = f"{'✓' if is_on else ''}{short}"
+                        if is_default:
+                            chip_label += "⭐"
+                        if has_config:
+                            chip_label += "⚙"
+
+                        # リッチツールチップ: 正式名 / 計算量 / ライブラリ
+                        tip = f"{mname}\n計算量: {complexity}\nlib: {lib}"
+                        if is_on:
+                            tip += "\n（クリックで除外）"
+                        else:
+                            tip += "\n（クリックで追加）"
+
+                        btn = ui.button(
+                            chip_label,
+                            on_click=_toggle_model,
+                        ).props("flat dense no-caps size=sm").style(
+                            chip_style + "padding: 1px 8px; font-size: 0.78rem; min-height: 26px;"
+                        )
+                        btn.tooltip(tip)
+
+            # 選択済みモデルの詳細パネル（⚙️設定ボタン付き）
+            sel_models = [m for m in available if m["key"] in selected_models]
+            if sel_models:
+                ui.separator().classes("q-my-sm")
+                ui.label("🔧 選択済みモデルの設定").classes("text-body2 text-bold text-grey-4 q-mb-xs")
+                with ui.element("div").classes("full-width").style(
+                    "display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px;"
+                ):
+                    for m in sel_models:
+                        mkey = m["key"]
+                        mname = m["name"]
+                        mcls = m.get("class")
+                        has_config = mkey in state.get("model_configs", {})
+
+                        with ui.card().classes("q-pa-xs").style(
+                            "border: 1px solid rgba(0,188,212,0.15); border-radius: 8px;"
+                            "background: rgba(0,20,40,0.2); min-height: 40px;"
+                        ):
+                            with ui.row().classes("items-center justify-between no-wrap"):
+                                ui.label(mname).classes("text-caption text-grey-3 ellipsis").style(
+                                    "max-width: 140px;"
+                                )
+                                with ui.row().classes("items-center q-gutter-xs no-wrap"):
+                                    if has_config:
+                                        ui.badge("⚙設定済", color="amber").props(
+                                            "outline dense"
+                                        ).style("font-size:0.6rem;")
+                                    if mcls is not None:
+                                        def _open_config(key=mkey, name=mname, cls=mcls):
+                                            from frontend_nicegui.components.estimator_config_dialog import (
+                                                EstimatorConfigDialog,
+                                            )
+                                            existing = state["model_configs"].get(key)
+                                            dialog = EstimatorConfigDialog(
+                                                model_key=key,
+                                                model_cls=cls,
+                                                model_name=name,
+                                                initial_config=existing,
+                                                on_save=lambda cfg, k=key: state["model_configs"].update({k: cfg}),
+                                            )
+                                            dialog.open()
+
+                                        ui.button(
+                                            icon="tune", on_click=_open_config,
+                                        ).props("flat dense round size=xs color=cyan").tooltip(
+                                            f"{mname}: デフォルト値 / Grid / Optuna"
+                                        )
+
+    _render_estimator_selector()
+
+    from frontend_nicegui.components.monotonicity_config import render_monotonicity_panel
+    render_monotonicity_panel(state)
 
     # ═══════════════════════════════════════════════════════
     # 🔧 前処理設定（折りたたみ・コンパクト・目立たない）

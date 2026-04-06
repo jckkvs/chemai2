@@ -1271,6 +1271,44 @@ def _auto_detect_columns(state: dict) -> None:
             smart_fn()
         except Exception:
             pass
+            
+    # ------ Item 13: 特徴量の分類と統計量計算 (単調性制約用) ------
+    try:
+        from frontend_nicegui.utils.feature_classifier import FeatureClassifier
+        from backend.models.monotonic_constraints import ConstraintRangeCalculator
+        from backend.chem.feature_metadata import feature_metadata
+        
+        known_sources = feature_metadata.export_for_frontend()
+        feature_cols = [c for c in df.columns if c not in {state["target_col"], state["smiles_col"]}]
+        
+        # 統計量の計算
+        state["feature_stats"] = ConstraintRangeCalculator.compute_feature_stats(df, feature_cols)
+        
+        # クラス分類
+        state["feature_classification"] = {}
+        for feat in feature_cols:
+            state["feature_classification"][feat] = FeatureClassifier.classify_feature(feat, known_sources)
+            
+        # UI設定のリセット（安全のため）
+        if "monotonicity_constraints" in state:
+            state["monotonicity_constraints"]["_by_feature"].clear()
+            state["monotonicity_constraints"]["_by_set"].clear()
+            
+    except Exception as e:
+        logger.warning(f"特徴量メタデータの登録に失敗しました: {e}")
+
+    # ------ Item 15: EDA(次元削減)のキャッシュをクリア ------
+    state.pop("dim_red_results", None)
+    if "data" in getattr(state, "__dict__", {}):
+        pass # Handle case where state has .data dictionary. If not, just use state dict
+    try:
+        if hasattr(state, "data"):
+            state.data.pop("dim_red_results", None)
+            state.data["dim_red_computing"] = False
+        else:
+            state["dim_red_computing"] = False
+    except Exception:
+        pass
 
 
 def _show_preview(df: pd.DataFrame, container) -> None:

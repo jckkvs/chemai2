@@ -26,6 +26,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from nicegui import ui
+from frontend_nicegui.components.eda_dim_reduction import render_dim_reduction_panel
 
 logger = logging.getLogger(__name__)
 
@@ -206,12 +207,9 @@ def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict) -> None:
 
             ui.separator().classes("q-my-md")
             with ui.row().classes("full-width q-mb-md q-col-gutter-lg"):
-                 with ui.column().classes("col-12 col-md-6"):
-                     ui.label("⭐ 特徴量重要度").classes("text-subtitle2 text-bold")
-                     _render_feature_importance(df, target_col)
-                 with ui.column().classes("col-12 col-md-5"):
-                     ui.label("🌀 次元削減").classes("text-subtitle2 text-bold")
-                     _render_dim_reduction(df, target_col, state)
+                 with ui.column().classes("col-12"):
+                     ui.label("🌀 次元の削減と特徴量重要度").classes("text-subtitle2 text-bold")
+                     render_dim_reduction_panel(state)
 
             ui.separator().classes("q-my-md")
             with ui.row().classes("full-width q-col-gutter-lg"):

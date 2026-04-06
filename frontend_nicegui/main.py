@@ -428,6 +428,19 @@ def main_page():
         # パイプライン: モデル
         "selected_models": [],
         "model_params": {},
+        # 単調性制約とメタデータ (Item 13)
+        "monotonicity_constraints": {
+            "_global": {
+                "default_direction": "none",
+                "default_strength": 0.5,
+                "default_sigma": 3.0,
+                "apply_to_new_features": True
+            },
+            "_by_feature": {},
+            "_by_set": {}
+        },
+        "feature_classification": {},
+        "feature_stats": {},
         "monotonic_constraints": {},
         # パイプライン: フラグ
         "do_eda": True,
