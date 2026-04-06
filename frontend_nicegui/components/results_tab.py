@@ -18,6 +18,7 @@ from frontend_nicegui.components.results_tab_extras import (
     _render_sample_table_inline,
     _render_extra_visualizations,
 )
+from frontend_nicegui.utils.plot_utils import render_plot_with_expand
 
 
 
@@ -130,246 +131,121 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
 
     model    = getattr(ar, "best_pipeline", None)
     proc_X   = getattr(ar, "processed_X", None)
-    y_true   = getattr(ar, "oof_true", None)
-    y_pred   = getattr(ar, "oof_predictions", None)
-
+    
+    cv_true  = getattr(ar, "oof_true", None)
+    cv_pred  = getattr(ar, "oof_predictions", None)
+    train_true = getattr(ar, "y_train", None)
+    train_pred = getattr(ar, "train_predictions", None)
+    
     # ── 指標カード行 ──
-    if y_true is not None and y_pred is not None:
-        y_t = np.asarray(y_true).ravel()
-        y_p = np.asarray(y_pred).ravel()
-        residuals = y_t - y_p
+    if cv_true is not None and cv_pred is not None:
+        y_cv_t = np.asarray(cv_true).ravel()
+        y_cv_p = np.asarray(cv_pred).ravel()
+        cv_residuals = y_cv_t - y_cv_p
 
         if ar.task == "regression":
             from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
             try:
-                r2   = r2_score(y_t, y_p)
-                rmse = float(np.sqrt(mean_squared_error(y_t, y_p)))
-                mae  = float(mean_absolute_error(y_t, y_p))
+                cv_r2   = r2_score(y_cv_t, y_cv_p)
+                cv_rmse = float(np.sqrt(mean_squared_error(y_cv_t, y_cv_p)))
             except Exception:
-                r2 = rmse = mae = float("nan")
+                cv_r2 = cv_rmse = float("nan")
 
-            with ui.row().classes("q-gutter-sm q-mb-md"):
-                for val, lbl, col in [
-                    (f"CVスコア: {ar.best_score:.4f}", ar.scoring,         "cyan"),
-                    (f"{r2:.4f}",                       "R² (OOF)",        "teal"),
-                    (f"{rmse:.4f}",                     "RMSE (OOF)",      "amber"),
-                    (f"{mae:.4f}",                      "MAE (OOF)",       "green"),
-                    (f"{len(y_t)}",                     "サンプル数",       "grey-5"),
-                ]:
-                    with ui.card().classes("q-pa-xs").style(
-                        f"min-width:90px; background:rgba(0,0,0,0.2); border-radius:8px;"
-                        f"border:1px solid rgba(0,212,255,0.15);"
-                    ):
-                        ui.label(val).classes(f"text-subtitle1 text-bold text-{col}")
-                        ui.label(lbl).classes("text-caption text-grey-5")
-
-            # ── Train（学習データ）メトリクス ──
-            train_r2 = train_rmse = train_mae = float("nan")
-            y_train_pred = None
-            if model is not None and proc_X is not None:
+            train_r2 = float("nan")
+            y_tr_t = None
+            y_tr_p = None
+            if train_true is not None and train_pred is not None:
                 try:
-                    y_train_true = getattr(ar, "y_train", None)
-                    if y_train_true is None:
-                        # fallback: proc_X と同じ長さの目的変数を取得
-                        target_col = state.get("target_col", "")
-                        df_orig_for_train = state.get("df")
-                        if df_orig_for_train is not None and target_col in df_orig_for_train.columns:
-                            y_train_true = df_orig_for_train[target_col].iloc[:proc_X.shape[0]].values
-                    if y_train_true is not None:
-                        y_train_true = np.asarray(y_train_true).ravel()
-                        y_train_pred = model.predict(proc_X)
-                        y_train_pred = np.asarray(y_train_pred).ravel()
-                        # 長さ合わせ
-                        min_len = min(len(y_train_true), len(y_train_pred))
-                        y_train_true = y_train_true[:min_len]
-                        y_train_pred = y_train_pred[:min_len]
-                        # NaN除外
-                        valid = ~(np.isnan(y_train_true) | np.isnan(y_train_pred))
-                        if valid.sum() > 5:
-                            y_tt = y_train_true[valid]
-                            y_tp = y_train_pred[valid]
-                            train_r2 = r2_score(y_tt, y_tp)
-                            train_rmse = float(np.sqrt(mean_squared_error(y_tt, y_tp)))
-                            train_mae = float(mean_absolute_error(y_tt, y_tp))
+                    y_tr_t = np.asarray(train_true).ravel()
+                    y_tr_p = np.asarray(train_pred).ravel()
+                    # NaN除外
+                    valid = ~(np.isnan(y_tr_t) | np.isnan(y_tr_p))
+                    if valid.sum() > 5:
+                        y_tr_t = y_tr_t[valid]
+                        y_tr_p = y_tr_p[valid]
+                        train_r2 = r2_score(y_tr_t, y_tr_p)
                 except Exception as _train_err:
                     import logging
                     logging.getLogger(__name__).debug(f"Train metrics計算失敗: {_train_err}")
+            
+            # --- 🔍 モデル診断パネル (Train と CV の R² および 過学習度) ---
+            ui.label("🔍 モデル適合度診断").classes("text-h6 q-mt-md")
+            with ui.row().classes("full-width q-gutter-md q-mb-md"):
+                # 全データ R²
+                with ui.card().classes("col q-pa-sm").style("background:rgba(40,0,60,0.2); border:1px solid rgba(123,47,247,0.2);"):
+                    ui.label("全データ R²").classes("text-caption text-grey-4")
+                    ui.label(f"{train_r2:.4f}" if not np.isnan(train_r2) else "N/A").classes("text-h5 text-purple")
+                    ui.label("（モデルの表現力）").classes("text-xs text-grey-6")
+                
+                # CV R²
+                with ui.card().classes("col q-pa-sm").style("background:rgba(0,40,40,0.2); border:1px solid rgba(0,212,255,0.2);"):
+                    ui.label("CV R²（平均）").classes("text-caption text-grey-4")
+                    ui.label(f"{cv_r2:.4f}").classes("text-h5 text-cyan")
+                    ui.label("（汎化性能の見積もり）").classes("text-xs text-grey-6")
 
-            if not np.isnan(train_r2):
-                overfit_gap = train_r2 - r2
-                gap_color = "green" if overfit_gap < 0.05 else ("amber" if overfit_gap < 0.15 else "red")
-                gap_label = "低" if overfit_gap < 0.05 else ("中" if overfit_gap < 0.15 else "高")
-                with ui.row().classes("q-gutter-sm q-mb-md"):
-                    for val, lbl, col in [
-                        (f"{train_r2:.4f}",   "R² (Train)",   "purple"),
-                        (f"{train_rmse:.4f}", "RMSE (Train)", "purple"),
-                        (f"{train_mae:.4f}",  "MAE (Train)",  "purple"),
-                    ]:
-                        with ui.card().classes("q-pa-xs").style(
-                            "min-width:90px; background:rgba(40,0,60,0.2); border-radius:8px;"
-                            "border:1px solid rgba(123,47,247,0.2);"
-                        ):
-                            ui.label(val).classes(f"text-subtitle1 text-bold text-{col}")
-                            ui.label(lbl).classes("text-caption text-grey-5")
+                # 過学習度（差）
+                if not np.isnan(train_r2) and not np.isnan(cv_r2):
+                    gap = train_r2 - cv_r2
+                    gap_color = "green" if gap < 0.05 else ("amber" if gap < 0.15 else "red")
+                    with ui.card().classes("col q-pa-sm").style(f"background:rgba(0,0,0,0.2); border:1px solid var(--q-{gap_color});"):
+                        ui.label("過学習度（差）").classes("text-caption text-grey-4")
+                        ui.label(f"{gap:+.4f}").classes(f"text-h5 text-{gap_color}")
+                        ui.label("（+は過学習傾向）").classes("text-xs text-grey-6")
+            
+            # 自動通知
+            if not np.isnan(train_r2) and not np.isnan(cv_r2) and gap > 0.15:
+                 ui.notify(f"⚠️ 過学習の疑い: Train-CV差={gap:.4f}", type="warning", position="bottom-right")
 
-                    # 過学習度インジケーター
-                    with ui.card().classes("q-pa-xs").style(
-                        f"min-width:120px; background:rgba(0,0,0,0.2); border-radius:8px;"
-                        f"border:2px solid var(--q-{gap_color});"
-                    ):
-                        ui.label(f"Δ{overfit_gap:+.4f}").classes(f"text-subtitle1 text-bold text-{gap_color}")
-                        ui.label(f"過学習度: {gap_label}").classes("text-caption text-grey-5")
-                        ui.label("Train R² − OOF R²").classes("text-caption text-grey-7").style("font-size:0.65rem;")
+            # --- プロット生成用ヘルパー ---
+            def _create_scatter(y_t_arr, y_p_arr, title, is_train=False):
+                fig = go.Figure()
+                rng_lo = float(min(y_t_arr.min(), y_p_arr.min()))
+                rng_hi = float(max(y_t_arr.max(), y_p_arr.max()))
+                pad = (rng_hi - rng_lo) * 0.05
+                axis_range = [rng_lo - pad, rng_hi + pad]
 
+                fig.add_trace(go.Scatter(
+                    x=axis_range, y=axis_range, mode="lines",
+                    line=dict(color="rgba(255,255,255,0.25)", dash="dash", width=1.5),
+                    name="y = x", hoverinfo="skip",
+                ))
+                
+                color_scale = "Purples" if is_train else "RdBu_r"
+                marker_color = y_t_arr - y_p_arr if not is_train else "#a78bfa"
+                fig.add_trace(go.Scatter(
+                    x=y_t_arr, y=y_p_arr, mode="markers",
+                    marker=dict(size=6, color=marker_color, opacity=0.7, colorscale=color_scale if not is_train else None),
+                    name="データ点",
+                ))
+                fig.update_layout(
+                    template="plotly_dark",
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.15)",
+                    margin=dict(l=40, r=20, t=40, b=40),
+                    xaxis=dict(title="実測値", range=axis_range, gridcolor="rgba(255,255,255,0.08)"),
+                    yaxis=dict(title="予測値", range=axis_range, scaleanchor="x", scaleratio=1, gridcolor="rgba(255,255,255,0.08)"),
+                    title=dict(text=title, font=dict(size=14)),
+                )
+                return fig
 
-            # ── 正方形プロット＋SMILES サイドパネル ──
-            smiles_list: list[str] = []
-            df_orig = state.get("df")
-            smiles_col = _detect_smiles_col(df_orig) if df_orig is not None else None
-            if smiles_col and df_orig is not None and len(df_orig) >= len(y_t):
-                smiles_list = df_orig[smiles_col].iloc[:len(y_t)].astype(str).tolist()
+            # --- プロット並列表示 ---
+            ui.label("📊 予測実測プロット").classes("text-subtitle2 q-mt-md")
+            ui.markdown("*学習に使用した全データに対する傾向と、未知データ(CV)に対する傾向を比較します。学習データで点が直線に近く、CVでばらつく場合は過学習です。*").classes("text-caption text-grey-5 q-mb-sm")
+            
+            with ui.row().classes("full-width q-col-gutter-md q-mb-md"):
+                # 左: Train
+                with ui.column().classes("col-12 col-md-6"):
+                    if y_tr_t is not None and y_tr_p is not None:
+                        fig_train = _create_scatter(y_tr_t, y_tr_p, f"学習データ (Train) [n={len(y_tr_t)}]", is_train=True)
+                        render_plot_with_expand(fig_train, title="Train Plot", height="350px")
+                
+                # 右: CV
+                with ui.column().classes("col-12 col-md-6"):
+                    fig_cv = _create_scatter(y_cv_t, y_cv_p, f"検証データ (CV) [n={len(y_cv_t)}]", is_train=False)
+                    render_plot_with_expand(fig_cv, title="CV Plot", height="350px")
 
-            rng_lo = float(min(y_t.min(), y_p.min()))
-            rng_hi = float(max(y_t.max(), y_p.max()))
-            pad = (rng_hi - rng_lo) * 0.05
-            axis_range = [rng_lo - pad, rng_hi + pad]
-
-            fig_scatter = go.Figure()
-            # 参照線
-            fig_scatter.add_trace(go.Scatter(
-                x=axis_range, y=axis_range, mode="lines",
-                line=dict(color="rgba(255,255,255,0.25)", dash="dash", width=1.5),
-                name="y = x", hoverinfo="skip",
-            ))
-            # データ点
-            hover_template = (
-                "<b>実測値:</b> %{x:.4f}<br>"
-                "<b>予測値:</b> %{y:.4f}<br>"
-                "<b>残差:</b> %{customdata[0]:.4f}"
-                + ("<br><b>SMILES:</b> %{customdata[1]}" if smiles_list else "")
-                + "<extra></extra>"
-            )
-            custom_data = [
-                [float(r), s] if smiles_list else [float(r), ""]
-                for r, s in zip(residuals, smiles_list or [""] * len(residuals))
-            ]
-            fig_scatter.add_trace(go.Scatter(
-                x=y_t, y=y_p, mode="markers",
-                marker=dict(size=7, color=residuals, colorscale="RdBu_r",
-                            showscale=True, colorbar=dict(title="残差"), opacity=0.75),
-                name="データ点",
-                customdata=custom_data,
-                hovertemplate=hover_template,
-            ))
-            fig_scatter.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.15)",
-                width=500, height=500,
-                margin=dict(l=55, r=20, t=50, b=55),
-                xaxis=dict(
-                    title="実測値 (Actual)", range=axis_range,
-                    gridcolor="rgba(255,255,255,0.08)",
-                ),
-                yaxis=dict(
-                    title="予測値 (Predicted)", range=axis_range,
-                    scaleanchor="x", scaleratio=1,
-                    gridcolor="rgba(255,255,255,0.08)",
-                ),
-                title=dict(
-                    text=f"予測 vs 実測 (OOF, n={len(y_t)})",
-                    font=dict(size=14),
-                ),
-            )
-
-            with ui.row().classes("full-width q-gutter-md items-start"):
-                # 左: プロット
-                plot_col = ui.column()
-                with plot_col:
-                    scatter_plot = ui.plotly(fig_scatter)
-
-                # 右: ホバー情報パネル（SMILES がある場合のみ表示）
-                if smiles_list:
-                    with ui.card().classes("q-pa-md").style(
-                        "min-width:260px; max-width:280px;"
-                        "border:1px solid rgba(0,212,255,0.2); border-radius:10px;"
-                        "background:rgba(0,20,40,0.4);"
-                    ):
-                        ui.label("🔬 化学構造").classes("text-subtitle2 text-bold text-cyan q-mb-xs")
-                        hint_lbl = ui.label("プロット上の点にカーソルを合わせてください").classes(
-                            "text-caption text-grey-5 q-mb-xs"
-                        )
-                        mol_img  = ui.image("").style(
-                            "width:220px; height:220px; border-radius:8px;"
-                            "background:rgba(255,255,255,0.05);"
-                        )
-                        smiles_lbl = ui.label("").classes("text-caption text-grey-4 q-mt-xs").style(
-                            "word-break:break-all; max-width:240px;"
-                        )
-                        resid_lbl  = ui.label("").classes("text-caption text-amber q-mt-xs")
-
-                        def _on_hover(e):
-                            pts = e.args.get("points", [])
-                            if not pts:
-                                return
-                            pt = pts[0]
-                            cd = pt.get("customdata") or []
-                            resid_val = cd[0] if len(cd) > 0 else None
-                            smi       = cd[1] if len(cd) > 1 else ""
-                            hint_lbl.set_visibility(False)
-                            if smi:
-                                b64 = _smiles_to_b64(smi, size=(220, 220))
-                                if b64:
-                                    mol_img.set_source(f"data:image/png;base64,{b64}")
-                                smiles_lbl.text = f"SMILES: {smi}"
-                            if resid_val is not None:
-                                resid_lbl.text = f"残差: {resid_val:+.4f}"
-
-                        scatter_plot.on("plotly_hover", _on_hover)
-
-            # 残差分析（折りたたみ）
-            with ui.expansion("📉 残差分析", icon="scatter_plot").classes("full-width q-mt-sm"):
+            # 既存の残差分析
+            with ui.expansion("📉 残差分析 (CV)", icon="scatter_plot").classes("full-width q-mt-sm"):
                 _render_residual_analysis(ar)
-
-            # ── Train 予測 vs 実測プロット（過学習確認用） ──
-            if y_train_pred is not None and not np.isnan(train_r2):
-                with ui.expansion(
-                    f"📈 Train 予測 vs 実測 (R²={train_r2:.4f})", icon="model_training"
-                ).classes("full-width q-mt-sm"):
-                    try:
-                        fig_train = go.Figure()
-                        t_lo = float(min(y_tt.min(), y_tp.min()))
-                        t_hi = float(max(y_tt.max(), y_tp.max()))
-                        t_pad = (t_hi - t_lo) * 0.05
-                        t_range = [t_lo - t_pad, t_hi + t_pad]
-                        fig_train.add_trace(go.Scatter(
-                            x=t_range, y=t_range, mode="lines",
-                            line=dict(color="rgba(255,255,255,0.25)", dash="dash", width=1.5),
-                            name="y = x", hoverinfo="skip",
-                        ))
-                        fig_train.add_trace(go.Scatter(
-                            x=y_tt, y=y_tp, mode="markers",
-                            marker=dict(size=6, color="#a78bfa", opacity=0.6),
-                            name="Train データ",
-                        ))
-                        fig_train.update_layout(
-                            template="plotly_dark",
-                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.15)",
-                            width=500, height=500,
-                            margin=dict(l=55, r=20, t=50, b=55),
-                            xaxis=dict(title="実測値 (Actual)", range=t_range,
-                                       gridcolor="rgba(255,255,255,0.08)"),
-                            yaxis=dict(title="予測値 (Predicted)", range=t_range,
-                                       scaleanchor="x", scaleratio=1,
-                                       gridcolor="rgba(255,255,255,0.08)"),
-                            title=dict(text=f"Train 予測 vs 実測 (n={len(y_tt)}, R²={train_r2:.4f})",
-                                       font=dict(size=14)),
-                        )
-                        ui.plotly(fig_train).classes("full-width")
-                        ui.label(
-                            "💡 OOFプロットと比較して、Train側だけ精度が極端に高い場合は過学習の兆候です。"
-                        ).classes("text-caption text-grey-5 q-mt-xs")
-                    except Exception as _te:
-                        ui.label(f"Train プロット生成エラー: {_te}").classes("text-caption text-red")
 
         else:
             # 分類タスク
@@ -917,14 +793,35 @@ def _render_cross_set_comparison(success_results: dict, state: dict) -> None:
             colorbar=dict(title="CVスコア"),
         ))
         fig_hm.update_layout(
+            title="セット×推定器 スコアヒートマップ",
             template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            height=max(200, 50 * len(set_names) + 60),
-            margin=dict(l=10, r=10, t=30, b=80),
-            title="セット×推定器 スコアヒートマップ",
-            xaxis_tickangle=-30,
+            autosize=True,
+            margin=dict(l=100, r=50, t=50, b=100),
+            xaxis={
+                "tickangle": -45,
+                "tickfont": {"size": 10},
+                "automargin": True,
+            },
+            yaxis={
+                "tickfont": {"size": 10},
+                "automargin": True,
+            },
+            height=max(400, 50 * len(set_names) + 160),
         )
-        ui.plotly(fig_hm).classes("full-width")
+        
+        # 凡例の調整
+        fig_hm.update_layout(
+            coloraxis_colorbar=dict(
+                title="CV Score",
+                thicknessmode="pixels", thickness=20,
+                lenmode="pixels", len=250,
+                yanchor="top", y=1,
+                ticks="outside",
+            )
+        )
+
+        render_plot_with_expand(fig_hm, title="セット×推定機 スコアヒートマップ", height=f"{max(400, 50 * len(set_names) + 160)}px")
 
         # ── 3. 統合ランキングテーブル ──
         ui.separator().classes("q-my-sm")

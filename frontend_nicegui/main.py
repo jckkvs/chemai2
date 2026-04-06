@@ -22,6 +22,8 @@ import logging
 import pandas as pd
 from nicegui import ui, app
 
+from frontend_nicegui.utils.plot_utils import GLOBAL_PLOTS
+
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
@@ -1202,6 +1204,23 @@ def help_descriptors_page():
     with ui.column().classes("full-width q-pa-lg"):
         from frontend_nicegui.components.descriptor_help_page import render_descriptor_help
         render_descriptor_help()
+
+
+@ui.page('/view_plot/{plot_id}')
+def external_plot_viewer(plot_id: str):
+    """外部表示専用ページ"""
+    fig = GLOBAL_PLOTS.get(plot_id)
+    
+    if fig is None:
+        ui.label("データが見つかりません。元の画面から開き直してください。").classes("text-red-500 text-xl q-pa-md")
+        return
+
+    # 最大化されたビューで描画
+    ui.plotly(fig).classes("full-width").style("height: 90vh;")
+    
+    # 閉じるボタン
+    ui.button("ウィンドウを閉じる", on_click=lambda: ui.run_javascript("window.close()")).classes("absolute-bottom-right q-ma-md").props("color=cyan")
+
 
 
 # ─────────────────────────────────────────────

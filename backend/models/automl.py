@@ -55,6 +55,8 @@ class AutoMLResult:
     oof_true: np.ndarray | None = None
     # Holdout (train/test split) の予測
     holdout_true: np.ndarray | None = None
+    # Trainデータの予測 (全データでの学習後の予測値)
+    train_predictions: np.ndarray | None = None
     # SMILES相関係数とTransformerの保持
     smiles_correlations: dict[str, float] = field(default_factory=dict)
     smiles_transformer: Any | None = None
@@ -447,21 +449,34 @@ class AutoMLEngine:
             logger.warning(f"前処理後データの取得に失敗: {e}")
             processed_X_final = X_for_eda  # フォールバック: 変換済データ
 
-        # OOF (Out-Of-Fold) 予測を計算（最良モデルで cross_val_predict）
+        # OOF予測と全データ(Train)予測の計算
         oof_preds: np.ndarray | None = None
+        train_preds: np.ndarray | None = None
         try:
             from sklearn.model_selection import cross_val_predict
             from backend.models.cv_manager import get_cv
             _cv_splitter = get_cv(CVConfig(cv_key=cv_key, n_splits=self.cv_folds, extra_params=cv_extra_params))
             _cv_method = "predict_proba" if task == "classification" and hasattr(best_pipeline, "predict_proba") else "predict"
+            
+            # 1. CV (OOF) 予測
             oof_preds = cross_val_predict(
                 best_pipeline, X_for_eda if _smiles_transformer_for_cv is None else X, y,
                 cv=_cv_splitter, method=_cv_method, n_jobs=1,
                 groups=groups,
             )
-            # predict_proba の場合はスコア（クラス1の確率）のみ or argmax
             if _cv_method == "predict_proba" and oof_preds.ndim == 2:
                 oof_preds = oof_preds.argmax(axis=1)
+
+            # 2. 全データ (Train) 予測
+            try:
+                # すでに全データで学習済み(fit)の best_pipeline を使用
+                predict_func = getattr(best_pipeline, _cv_method)
+                train_preds = predict_func(X_for_eda if _smiles_transformer_for_cv is None else X)
+                if _cv_method == "predict_proba" and train_preds.ndim == 2:
+                    train_preds = train_preds.argmax(axis=1)
+            except Exception as e:
+                logger.warning(f"全データ予測の計算に失敗: {e}")
+
         except Exception as e:
             logger.warning(f"OOF予測の計算に失敗: {e}")
             oof_preds = None
@@ -516,6 +531,7 @@ class AutoMLEngine:
             y_train=y,
             oof_predictions=oof_preds,
             oof_true=y if oof_preds is not None else None,
+            train_predictions=train_preds,
             smiles_transformer=_smiles_transformer_for_cv,
             smiles_correlations=_smiles_correlations,
             resolved_constraints=resolved_constraints,
