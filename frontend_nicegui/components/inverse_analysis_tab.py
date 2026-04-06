@@ -94,6 +94,21 @@ OPTIMIZATION_METHODS = [
             {"name": "seed", "label": "乱数シード", "type": "int", "default": 42, "min": 0, "max": 99999},
         ],
     },
+    {
+        "key": "molai_pca",
+        "label": "🧬 MOLAI + PCA 逆変換（SMILES専用）",
+        "desc": (
+            "SMILES→MolAI(CNN)で潜在ベクトル→PCA次元削減→低次元空間で最適化→"
+            "最近傍候補分子を抽出。大規模分子プールからの高効率探索に最適。"
+        ),
+        "speed": "🔴低速",
+        "params": [
+            {"name": "pca_components", "label": "PCA成分数", "type": "int", "default": 50, "min": 2, "max": 200},
+            {"name": "n_candidates", "label": "出力候補数", "type": "int", "default": 10, "min": 1, "max": 100},
+            {"name": "n_trials", "label": "最適化試行回数", "type": "int", "default": 100, "min": 10, "max": 1000},
+            {"name": "seed", "label": "乱数シード", "type": "int", "default": 42, "min": 0, "max": 99999},
+        ],
+    },
 ]
 
 

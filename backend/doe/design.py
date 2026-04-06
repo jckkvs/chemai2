@@ -46,7 +46,7 @@ class DoEOptimizer:
     ----------
     factors       : 因子リスト
     n_new         : 新規追加する実験数
-    criterion     : "D" / "E" / "I"
+    criterion     : "D" / "E" / "I" / "MAXIMIN" / "MINIMAX"
     max_candidates: 候補集合の最大サイズ（超過時はランダムサンプリング）
     random_seed   : 乱数シード
     n_starts      : マルチスタート数（局所最適を避ける）
@@ -177,6 +177,26 @@ class DoEOptimizer:
         """基準スコア（最大化方向）。"""
         if len(X) == 0:
             return -np.inf
+
+        # ── 空間充填基準 ──
+        if self.criterion == "MAXIMIN":
+            # 最小点間距離を最大化
+            from scipy.spatial.distance import pdist
+            if len(X) < 2:
+                return -np.inf
+            dists = pdist(X, metric="euclidean")
+            return float(np.min(dists)) if len(dists) > 0 else -np.inf
+
+        elif self.criterion == "MINIMAX":
+            # 全候補点から最近傍設計点への最大距離を最小化（負値で最大化に変換）
+            from scipy.spatial.distance import cdist
+            if len(X) < 1:
+                return -np.inf
+            d = cdist(self.cand_X, X, metric="euclidean")
+            max_min_dist = float(np.max(np.min(d, axis=1)))
+            return -max_min_dist  # 最小化 → 負値で最大化
+
+        # ── 情報行列ベース基準 ──
         XtX = X.T @ X
         try:
             if self.criterion == "D":
@@ -207,8 +227,22 @@ class DoEOptimizer:
 
     def _criterion_human(self, X: np.ndarray) -> tuple[float, float]:
         """(criterion_value, d_efficiency) を返す。"""
-        XtX = X.T @ X
         d_eff = self._d_efficiency(X)
+
+        if self.criterion == "MAXIMIN":
+            from scipy.spatial.distance import pdist
+            if len(X) < 2:
+                return (0.0, round(d_eff, 4))
+            dists = pdist(X, metric="euclidean")
+            return (round(float(np.min(dists)), 4), round(d_eff, 4))
+
+        elif self.criterion == "MINIMAX":
+            from scipy.spatial.distance import cdist
+            d = cdist(self.cand_X, X, metric="euclidean")
+            max_min_dist = float(np.max(np.min(d, axis=1)))
+            return (round(max_min_dist, 4), round(d_eff, 4))
+
+        XtX = X.T @ X
         try:
             if self.criterion == "D":
                 sign, logdet = np.linalg.slogdet(XtX)

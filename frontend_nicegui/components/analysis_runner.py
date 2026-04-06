@@ -453,6 +453,25 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             progress_label.text = "❌ 全セットの解析に失敗しました"
             progress_detail.text = "設定を確認して再実行してください"
 
+        # ── 失敗セットの詳細表示 ──
+        failed_sets = {k: v for k, v in all_results.items() if v is None}
+        if failed_sets and best_result:
+            with status_container:
+                with ui.card().classes("full-width q-pa-sm q-mt-sm").style(
+                    "border: 1px solid rgba(251,191,36,0.3); border-radius: 8px;"
+                    "background: rgba(60,40,0,0.15);"
+                ):
+                    ui.label(f"⚠️ {len(failed_sets)}セットで解析失敗（スキップ済み）").classes(
+                        "text-subtitle2 text-bold text-amber"
+                    )
+                    with ui.expansion("失敗セットの詳細を確認", icon="warning").classes("full-width q-mt-xs"):
+                        for sname in failed_sets:
+                            ui.label(f"❌ {sname}").classes("text-caption text-red q-ml-sm")
+                        ui.label(
+                            "💡 失敗したセットはスキップされ、成功したセットの結果が表示されています。"
+                            "記述子の設定やデータを確認してください。"
+                        ).classes("text-caption text-grey q-mt-xs")
+
         # ── 結果タブへ自動切り替え＋再描画 ──
         # 重要: on_complete（タブ遷移）の前に _switch_to_results（再描画含む）を呼ぶ。
         # これにより「空の結果タブ」バグを防止する。

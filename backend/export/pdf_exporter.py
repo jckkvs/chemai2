@@ -10,22 +10,26 @@ import io
 from pathlib import Path
 from typing import Any
 
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.platypus import (
-    HRFlowable,
-    Image,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        HRFlowable,
+        Image,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    _HAS_REPORTLAB = True
+except ImportError:
+    _HAS_REPORTLAB = False
 
 from .base import BaseExporter
 
@@ -44,8 +48,8 @@ class PDFExporter(BaseExporter):
     標準 Helvetica にフォールバックする。
     """
 
-    ACCENT = colors.HexColor("#1a3a5c")
-    LIGHT_BG = colors.HexColor("#f0f4f8")
+    ACCENT = colors.HexColor("#1a3a5c") if _HAS_REPORTLAB else None
+    LIGHT_BG = colors.HexColor("#f0f4f8") if _HAS_REPORTLAB else None
 
     def __init__(self, output_dir: str | Path = "exports") -> None:
         super().__init__(output_dir)
@@ -178,7 +182,17 @@ class PDFExporter(BaseExporter):
         -------
         Path
             書き出した PDF ファイルの絶対パス。
+
+        Raises
+        ------
+        ImportError
+            reportlab が未インストールの場合。
         """
+        if not _HAS_REPORTLAB:
+            raise ImportError(
+                "PDF出力には reportlab パッケージが必要です。\n"
+                "インストール: pip install reportlab>=4.0"
+            )
         out_path = self.output_dir / f"{filename}.pdf"
         doc = SimpleDocTemplate(
             str(out_path),

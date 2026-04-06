@@ -765,13 +765,13 @@ def render_pipeline_config(state: dict) -> None:
             def _select_all():
                 all_keys = [m["key"] for m in available]
                 state["selected_models"] = all_keys
-                ui.navigate.reload()
+                ui.notify(f"✅ 全{len(all_keys)}モデルを選択しました", type="positive", timeout=2000)
             def _select_defaults():
                 state["selected_models"] = list(defaults)
-                ui.navigate.reload()
+                ui.notify(f"⭐ 推奨{len(defaults)}モデルを選択しました", type="info", timeout=2000)
             def _select_none():
                 state["selected_models"] = []
-                ui.navigate.reload()
+                ui.notify("🚫 全モデルを解除しました", type="warning", timeout=2000)
 
             ui.button("✅ 全選択", on_click=_select_all).props(
                 "outline color=cyan size=sm no-caps"
@@ -826,7 +826,6 @@ def render_pipeline_config(state: dict) -> None:
                         else:
                             sm.append(key)
                         state["selected_models"] = sm
-                        ui.navigate.reload()
 
                     # 短縮ラベル（スペース節約）
                     chip_label = f"{'✓' if is_on else ''}{short}"
@@ -904,10 +903,20 @@ def render_pipeline_config(state: dict) -> None:
     _render_preprocess_section(state, defaults)
 
     # ═══════════════════════════════════════════════════════
-    # 逆解析連携
+    # 逆解析連携（設定は post_analysis_config に一元化済み）
     # ═══════════════════════════════════════════════════════
     ui.separator().classes("q-my-sm")
-    _render_inverse_link(state)
+    with ui.card().classes("full-width q-pa-sm").style(
+        "border: 1px solid rgba(156,39,176,0.2); border-radius: 8px;"
+        "background: rgba(30,0,40,0.15);"
+    ):
+        ui.html(
+            '<div style="font-size:0.82rem; color:#aaa;">'
+            '💡 <b>自動実行設定について</b><br>'
+            '「順解析完了後に逆解析を自動実行」の設定は、'
+            'このタブの下部「🔮 解析後の自動処理」セクションに集約されています。'
+            '</div>'
+        )
 
 
 def _render_preprocess_section(state: dict, defaults: list) -> None:
@@ -972,47 +981,5 @@ def _render_preprocess_section(state: dict, defaults: list) -> None:
             _render_combo_summary(state)
 
 
-def _render_inverse_link(state: dict) -> None:
-    """順解析実行時に逆解析も自動実行するオプション。"""
-    with ui.card().classes("full-width q-pa-sm").style(
-        "border: 1px solid rgba(156,39,176,0.3); border-radius: 8px;"
-        "background: rgba(30,0,40,0.25);"
-    ):
-        with ui.row().classes("items-center q-gutter-sm"):
-            ui.icon("find_replace", color="purple").classes("text-h6")
-            ui.label("逆解析との連携").classes("text-subtitle2 text-bold")
-
-        with ui.row().classes("items-center q-gutter-md q-mt-xs"):
-            auto_inv = ui.switch(
-                "順解析完了後に逆解析も自動実行",
-                value=state.get("auto_run_inverse", False),
-            ).props("color=purple")
-
-            def _on_auto_inv(e):
-                state["auto_run_inverse"] = e.value
-                if e.value:
-                    ui.notify("✅ 順解析完了後に逆解析タブの設定で自動実行します", type="info")
-
-            auto_inv.on_value_change(_on_auto_inv)
-
-        ui.label(
-            "有効にすると順解析完了後、逆解析タブで設定済みの条件で自動実行します。"
-            "先に「🔮 逆解析」タブで目標値と制約を設定してください。"
-        ).classes("text-caption text-grey q-mt-xs")
-
-        # 逆解析の設定状態サマリー
-        inv = state.get("_inv", {})
-        has_target = inv.get("target_min") is not None or inv.get("target_max") is not None
-        n_constraints = len([c for c in inv.get("constraints", {}).values() if c.get("active")])
-        method = inv.get("method", "random")
-
-        method_labels = {
-            "random": "🎲 ランダム", "grid": "📐 グリッド", "bayesian": "🧠 ベイズ",
-            "ga": "🧬 GA", "molai": "🧪 MOLAI", "dirichlet": "🎯 ディリクレ",
-        }
-
-        with ui.row().classes("q-gutter-sm text-caption text-grey q-mt-xs"):
-            ui.label(f"目標: {'✅ 設定済み' if has_target else '❌ 未設定'}")
-            ui.label(f"制約: {n_constraints}変数")
-            ui.label(f"手法: {method_labels.get(method, method)}")
+# _render_inverse_link は削除済み — 設定は post_analysis_config.py に一元化
 

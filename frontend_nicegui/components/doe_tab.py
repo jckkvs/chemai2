@@ -2,7 +2,7 @@
 frontend_nicegui/components/doe_tab.py
 
 実験計画法（DoE）タブ。
-D最適 / E最適 / I最適 / 直交表に対応。
+D最適 / E最適 / I最適 / Maximin / Minimax / 直交表に対応。
 ① ゼロから設計  ② 既存データを活用して追加実験を計画
 """
 from __future__ import annotations
@@ -25,6 +25,8 @@ _CRITERIA = {
     "D": "D最適（情報量最大化 / det(X'X) 最大）",
     "E": "E最適（最小固有値最大化）",
     "I": "I最適（平均予測分散最小化）",
+    "MAXIMIN": "Maximin（空間充填: 最小点間距離最大化）",
+    "MINIMAX": "Minimax（空間充填: 最大カバー率最適化）",
     "OA": "直交表（Orthogonal Array）",
 }
 
@@ -60,7 +62,7 @@ def render_doe_tab(app_state: dict | None = None) -> None:
         with ui.column().classes("q-gutter-none"):
             ui.label("実験計画法（DoE）").classes("text-h5 text-bold")
             ui.label(
-                "D最適 / E最適 / I最適 / 直交表で効率的な実験計画を生成します"
+                "D最適 / E最適 / I最適 / Maximin / Minimax / 直交表で効率的な実験計画を生成します"
             ).classes("text-grey-5 text-caption")
 
     # ── モード選択 ──────────────────────────────────────────────────────────

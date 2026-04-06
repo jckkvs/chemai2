@@ -163,6 +163,65 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                         ui.label(val).classes(f"text-subtitle1 text-bold text-{col}")
                         ui.label(lbl).classes("text-caption text-grey-5")
 
+            # ── Train（学習データ）メトリクス ──
+            train_r2 = train_rmse = train_mae = float("nan")
+            y_train_pred = None
+            if model is not None and proc_X is not None:
+                try:
+                    y_train_true = getattr(ar, "y_train", None)
+                    if y_train_true is None:
+                        # fallback: proc_X と同じ長さの目的変数を取得
+                        target_col = state.get("target_col", "")
+                        df_orig_for_train = state.get("df")
+                        if df_orig_for_train is not None and target_col in df_orig_for_train.columns:
+                            y_train_true = df_orig_for_train[target_col].iloc[:proc_X.shape[0]].values
+                    if y_train_true is not None:
+                        y_train_true = np.asarray(y_train_true).ravel()
+                        y_train_pred = model.predict(proc_X)
+                        y_train_pred = np.asarray(y_train_pred).ravel()
+                        # 長さ合わせ
+                        min_len = min(len(y_train_true), len(y_train_pred))
+                        y_train_true = y_train_true[:min_len]
+                        y_train_pred = y_train_pred[:min_len]
+                        # NaN除外
+                        valid = ~(np.isnan(y_train_true) | np.isnan(y_train_pred))
+                        if valid.sum() > 5:
+                            y_tt = y_train_true[valid]
+                            y_tp = y_train_pred[valid]
+                            train_r2 = r2_score(y_tt, y_tp)
+                            train_rmse = float(np.sqrt(mean_squared_error(y_tt, y_tp)))
+                            train_mae = float(mean_absolute_error(y_tt, y_tp))
+                except Exception as _train_err:
+                    import logging
+                    logging.getLogger(__name__).debug(f"Train metrics計算失敗: {_train_err}")
+
+            if not np.isnan(train_r2):
+                overfit_gap = train_r2 - r2
+                gap_color = "green" if overfit_gap < 0.05 else ("amber" if overfit_gap < 0.15 else "red")
+                gap_label = "低" if overfit_gap < 0.05 else ("中" if overfit_gap < 0.15 else "高")
+                with ui.row().classes("q-gutter-sm q-mb-md"):
+                    for val, lbl, col in [
+                        (f"{train_r2:.4f}",   "R² (Train)",   "purple"),
+                        (f"{train_rmse:.4f}", "RMSE (Train)", "purple"),
+                        (f"{train_mae:.4f}",  "MAE (Train)",  "purple"),
+                    ]:
+                        with ui.card().classes("q-pa-xs").style(
+                            "min-width:90px; background:rgba(40,0,60,0.2); border-radius:8px;"
+                            "border:1px solid rgba(123,47,247,0.2);"
+                        ):
+                            ui.label(val).classes(f"text-subtitle1 text-bold text-{col}")
+                            ui.label(lbl).classes("text-caption text-grey-5")
+
+                    # 過学習度インジケーター
+                    with ui.card().classes("q-pa-xs").style(
+                        f"min-width:120px; background:rgba(0,0,0,0.2); border-radius:8px;"
+                        f"border:2px solid var(--q-{gap_color});"
+                    ):
+                        ui.label(f"Δ{overfit_gap:+.4f}").classes(f"text-subtitle1 text-bold text-{gap_color}")
+                        ui.label(f"過学習度: {gap_label}").classes("text-caption text-grey-5")
+                        ui.label("Train R² − OOF R²").classes("text-caption text-grey-7").style("font-size:0.65rem;")
+
+
             # ── 正方形プロット＋SMILES サイドパネル ──
             smiles_list: list[str] = []
             df_orig = state.get("df")
@@ -270,6 +329,47 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
             # 残差分析（折りたたみ）
             with ui.expansion("📉 残差分析", icon="scatter_plot").classes("full-width q-mt-sm"):
                 _render_residual_analysis(ar)
+
+            # ── Train 予測 vs 実測プロット（過学習確認用） ──
+            if y_train_pred is not None and not np.isnan(train_r2):
+                with ui.expansion(
+                    f"📈 Train 予測 vs 実測 (R²={train_r2:.4f})", icon="model_training"
+                ).classes("full-width q-mt-sm"):
+                    try:
+                        fig_train = go.Figure()
+                        t_lo = float(min(y_tt.min(), y_tp.min()))
+                        t_hi = float(max(y_tt.max(), y_tp.max()))
+                        t_pad = (t_hi - t_lo) * 0.05
+                        t_range = [t_lo - t_pad, t_hi + t_pad]
+                        fig_train.add_trace(go.Scatter(
+                            x=t_range, y=t_range, mode="lines",
+                            line=dict(color="rgba(255,255,255,0.25)", dash="dash", width=1.5),
+                            name="y = x", hoverinfo="skip",
+                        ))
+                        fig_train.add_trace(go.Scatter(
+                            x=y_tt, y=y_tp, mode="markers",
+                            marker=dict(size=6, color="#a78bfa", opacity=0.6),
+                            name="Train データ",
+                        ))
+                        fig_train.update_layout(
+                            template="plotly_dark",
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.15)",
+                            width=500, height=500,
+                            margin=dict(l=55, r=20, t=50, b=55),
+                            xaxis=dict(title="実測値 (Actual)", range=t_range,
+                                       gridcolor="rgba(255,255,255,0.08)"),
+                            yaxis=dict(title="予測値 (Predicted)", range=t_range,
+                                       scaleanchor="x", scaleratio=1,
+                                       gridcolor="rgba(255,255,255,0.08)"),
+                            title=dict(text=f"Train 予測 vs 実測 (n={len(y_tt)}, R²={train_r2:.4f})",
+                                       font=dict(size=14)),
+                        )
+                        ui.plotly(fig_train).classes("full-width")
+                        ui.label(
+                            "💡 OOFプロットと比較して、Train側だけ精度が極端に高い場合は過学習の兆候です。"
+                        ).classes("text-caption text-grey-5 q-mt-xs")
+                    except Exception as _te:
+                        ui.label(f"Train プロット生成エラー: {_te}").classes("text-caption text-red")
 
         else:
             # 分類タスク
@@ -604,6 +704,83 @@ def _render_data_preview_tab(state: dict) -> None:
                 columns=dcols, rows=desc.to_dict("records"),
                 pagination={"rowsPerPage": 20},
             ).classes("full-width").props("dense flat bordered")
+
+    # ── Raw vs Encoded 比較 ──
+    all_results = state.get("automl_results", {})
+    single_ar = state.get("automl_result")
+    best_ar = None
+    for v in all_results.values():
+        if v is not None:
+            best_ar = v
+            break
+    if best_ar is None:
+        best_ar = single_ar
+
+    if best_ar is not None:
+        proc_X = getattr(best_ar, "processed_X", None)
+        if proc_X is not None and hasattr(proc_X, "shape"):
+            ui.separator().classes("q-my-md")
+            with ui.expansion("🔄 Raw → Encoded データ比較", icon="compare_arrows").classes("full-width"):
+                raw_cols = df.shape[1]
+                enc_cols = proc_X.shape[1]
+                raw_dtypes = df.dtypes.value_counts()
+                enc_dtypes = proc_X.dtypes.value_counts() if hasattr(proc_X, "dtypes") else {}
+
+                with ui.row().classes("q-gutter-md q-mb-md"):
+                    with ui.card().classes("q-pa-xs").style(
+                        "min-width:100px; background:rgba(0,0,0,0.2); border-radius:8px;"
+                        "border:1px solid rgba(0,212,255,0.15);"
+                    ):
+                        ui.label(f"{raw_cols}").classes("text-subtitle1 text-bold text-grey-4")
+                        ui.label("元データ列数").classes("text-caption text-grey-5")
+                    with ui.card().classes("q-pa-xs").style(
+                        "min-width:100px; background:rgba(0,0,0,0.2); border-radius:8px;"
+                        "border:1px solid rgba(0,212,255,0.15);"
+                    ):
+                        ui.label("→").classes("text-subtitle1 text-bold text-cyan")
+                    with ui.card().classes("q-pa-xs").style(
+                        "min-width:100px; background:rgba(0,0,0,0.2); border-radius:8px;"
+                        "border:1px solid rgba(74,222,128,0.3);"
+                    ):
+                        ui.label(f"{enc_cols}").classes("text-subtitle1 text-bold text-green")
+                        ui.label("エンコード後列数").classes("text-caption text-grey-5")
+                    # 差分
+                    diff = enc_cols - raw_cols
+                    diff_text = f"+{diff}" if diff > 0 else str(diff)
+                    diff_color = "green" if diff >= 0 else "amber"
+                    with ui.card().classes("q-pa-xs").style(
+                        "min-width:100px; background:rgba(0,0,0,0.2); border-radius:8px;"
+                    ):
+                        ui.label(diff_text).classes(f"text-subtitle1 text-bold text-{diff_color}")
+                        ui.label("列数変化").classes("text-caption text-grey-5")
+
+                # 型変化サマリー
+                ui.label("データ型の変化:").classes("text-caption text-grey-5 q-mt-xs")
+                with ui.row().classes("q-gutter-sm"):
+                    for dtype, count in raw_dtypes.items():
+                        ui.badge(f"Raw: {dtype} ({count}列)", color="grey").props("dense")
+                    for dtype, count in (enc_dtypes.items() if hasattr(enc_dtypes, "items") else []):
+                        ui.badge(f"Encoded: {dtype} ({count}列)", color="teal").props("dense")
+
+                # エンコード後プレビュー
+                ui.separator().classes("q-my-sm")
+                ui.label("📊 エンコード後データ（先頭20行）").classes("text-caption text-grey-4")
+                enc_preview = proc_X.head(20)
+                enc_display = list(enc_preview.columns[:15])
+                enc_cols_def = [
+                    {"name": c, "label": c, "field": c, "sortable": True, "align": "left"}
+                    for c in enc_display
+                ]
+                enc_rows = []
+                for _, row in enc_preview.iterrows():
+                    r = {}
+                    for c in enc_display:
+                        v = row[c]
+                        r[c] = "—" if pd.isna(v) else (f"{v:.4g}" if isinstance(v, float) else str(v))
+                    enc_rows.append(r)
+                ui.table(columns=enc_cols_def, rows=enc_rows).classes("full-width").props("dense flat bordered")
+                if proc_X.shape[1] > 15:
+                    ui.label(f"... 他 {proc_X.shape[1] - 15} 列").classes("text-caption text-grey-6")
 
 
 # ================================================================

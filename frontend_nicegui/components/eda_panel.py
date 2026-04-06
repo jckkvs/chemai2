@@ -222,6 +222,15 @@ def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict) -> None:
                      ui.label("🧩 欠損").classes("text-subtitle2 text-bold")
                      _render_missing(df)
 
+            # ── ⑤ ボックスプロット & QQプロット ──
+            ui.separator().classes("q-my-md")
+            with ui.row().classes("full-width q-col-gutter-lg"):
+                with ui.column().classes("col-12 col-md-6"):
+                    ui.label("📦 ボックスプロット（特徴量分布）").classes("text-subtitle2 text-bold")
+                    _render_box_plots(df, target_col)
+                with ui.column().classes("col-12 col-md-6"):
+                    ui.label("📈 QQプロット（正規性）").classes("text-subtitle2 text-bold")
+                    _render_qq_plots(df, target_col)
 # ═══════════════════════════════════════════════════════════
 # 1. 統計サマリー（歪度・尖度含む）
 # ═══════════════════════════════════════════════════════════
@@ -838,9 +847,12 @@ def _render_dim_reduction(df: pd.DataFrame, target_col: str, state: dict) -> Non
             with tsne_col:
                 ui.label(f"t-SNE エラー: {e}").classes("text-caption text-red")
 
-    ui.button("🌀 PCA + t-SNE を同時実行", on_click=_run).props(
-        "color=cyan no-caps size=sm"
+    ui.button("🌀 PCA + t-SNE を再実行", on_click=_run).props(
+        "color=cyan no-caps size=sm outline"
     ).classes("q-mb-sm")
+
+    # ── 初回表示時に自動実行 ──
+    ui.timer(0.3, _run, once=True)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -891,4 +903,107 @@ def _render_feature_importance(df: pd.DataFrame, target_col: str) -> None:
             with chart_container:
                 ui.label(f"エラー: {e}").classes("text-caption text-red")
 
-    ui.button("⭐ 重要度を計算", on_click=_calc).props("color=cyan no-caps size=sm").classes("q-mb-sm")
+    ui.button("⭐ 重要度を再計算", on_click=_calc).props("color=cyan no-caps size=sm outline").classes("q-mb-sm")
+
+    # ── 初回表示時に自動実行 ──
+    ui.timer(0.5, _calc, once=True)
+
+
+# ═══════════════════════════════════════════════════════════
+# 13. ボックスプロット（特徴量分布の可視化）
+# ═══════════════════════════════════════════════════════════
+def _render_box_plots(df: pd.DataFrame, target_col: str) -> None:
+    """数値特徴量のボックスプロット（目的変数との相関上位5つ）。"""
+    import plotly.graph_objects as go
+
+    num_cols = [c for c in df.select_dtypes(include="number").columns if c != target_col]
+    if not num_cols:
+        ui.label("数値特徴量がありません").classes("text-caption text-grey")
+        return
+
+    # 目的変数との相関上位5列を選択
+    if target_col and target_col in df.columns:
+        corr = df[num_cols].corrwith(df[target_col]).abs().sort_values(ascending=False)
+        top_cols = corr.head(min(5, len(corr))).index.tolist()
+    else:
+        top_cols = num_cols[:5]
+
+    fig = go.Figure()
+    colors = ["#00d4ff", "#fbbf24", "#4ade80", "#a78bfa", "#f472b6"]
+    for i, col in enumerate(top_cols):
+        fig.add_trace(go.Box(
+            y=df[col].dropna(), name=col,
+            marker_color=colors[i % len(colors)],
+            boxmean="sd",
+        ))
+
+    fig.update_layout(
+        title="特徴量のボックスプロット（相関上位5）",
+        yaxis_title="値",
+        showlegend=False,
+    )
+    _dark_fig(fig, 380)
+    _plotly_and_save(fig, "eda_boxplot").classes("full-width")
+
+
+# ═══════════════════════════════════════════════════════════
+# 14. QQプロット（正規性検定）
+# ═══════════════════════════════════════════════════════════
+def _render_qq_plots(df: pd.DataFrame, target_col: str) -> None:
+    """目的変数と上位特徴量のQQプロット。"""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    # QQ対象列: 目的変数 + 相関上位3特徴量
+    num_cols = [c for c in df.select_dtypes(include="number").columns if c != target_col]
+    qq_cols: list[str] = []
+    if target_col and target_col in df.columns:
+        qq_cols.append(target_col)
+        if num_cols:
+            corr = df[num_cols].corrwith(df[target_col]).abs().sort_values(ascending=False)
+            qq_cols.extend(corr.head(3).index.tolist())
+    else:
+        qq_cols = num_cols[:4]
+
+    if not qq_cols:
+        ui.label("QQプロット対象列がありません").classes("text-caption text-grey")
+        return
+
+    try:
+        from scipy import stats
+    except ImportError:
+        ui.label("QQプロットにはscipy が必要です").classes("text-caption text-red")
+        return
+
+    n_plots = len(qq_cols)
+    fig = make_subplots(
+        rows=1, cols=n_plots,
+        subplot_titles=[c[:20] for c in qq_cols],
+        horizontal_spacing=0.08,
+    )
+
+    colors = ["#00d4ff", "#fbbf24", "#4ade80", "#a78bfa"]
+    for i, col in enumerate(qq_cols):
+        data = df[col].dropna().values
+        if len(data) < 5:
+            continue
+        osm, osr = stats.probplot(data, dist="norm", fit=False)
+
+        fig.add_trace(go.Scatter(
+            x=osm, y=osr, mode="markers",
+            marker=dict(size=4, color=colors[i % len(colors)], opacity=0.6),
+            name=col,
+        ), row=1, col=i + 1)
+
+        # 参照線 (y=x scaled)
+        mn, mx = float(osm.min()), float(osm.max())
+        slope, intercept = np.polyfit(osm, osr, 1)
+        fig.add_trace(go.Scatter(
+            x=[mn, mx], y=[slope * mn + intercept, slope * mx + intercept],
+            mode="lines", line=dict(color="rgba(255,255,255,0.35)", dash="dash"),
+            showlegend=False,
+        ), row=1, col=i + 1)
+
+    fig.update_layout(title="QQプロット（正規性検定）", showlegend=False)
+    _dark_fig(fig, 350)
+    _plotly_and_save(fig, "eda_qqplot").classes("full-width")
