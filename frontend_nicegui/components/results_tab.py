@@ -227,21 +227,28 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                 )
                 return fig
 
-            # --- プロット並列表示 ---
+            # --- プロット表示 (タブ切り替え) ---
             ui.label("📊 予測実測プロット").classes("text-subtitle2 q-mt-md")
             ui.markdown("*学習に使用した全データに対する傾向と、未知データ(CV)に対する傾向を比較します。学習データで点が直線に近く、CVでばらつく場合は過学習です。*").classes("text-caption text-grey-5 q-mb-sm")
             
-            with ui.row().classes("full-width q-col-gutter-md q-mb-md"):
-                # 左: Train
-                with ui.column().classes("col-12 col-md-6"):
-                    if y_tr_t is not None and y_tr_p is not None:
-                        fig_train = _create_scatter(y_tr_t, y_tr_p, f"学習データ (Train) [n={len(y_tr_t)}]", is_train=True)
-                        render_plot_with_expand(fig_train, title="Train Plot", height="350px")
+            with ui.tabs().classes("w-full") as plot_tabs:
+                ui.tab("CV（検証）プロット")
+                ui.tab("Train（学習）プロット")
                 
-                # 右: CV
-                with ui.column().classes("col-12 col-md-6"):
+            with ui.tab_panels(plot_tabs, value="CV（検証）プロット").classes("w-full bg-transparent p-0"):
+                with ui.tab_panel("CV（検証）プロット"):
+                    ui.label("検証データでの汎化性能").classes("text-caption text-grey-5 mb-2")
                     fig_cv = _create_scatter(y_cv_t, y_cv_p, f"検証データ (CV) [n={len(y_cv_t)}]", is_train=False)
-                    render_plot_with_expand(fig_cv, title="CV Plot", height="350px")
+                    render_plot_with_expand(fig_cv, title="CV Plot", height="400px")
+                    
+                with ui.tab_panel("Train（学習）プロット"):
+                    if y_tr_t is not None and y_tr_p is not None:
+                        ui.label("学習データへの適合度（過学習チェック用）").classes("text-caption text-grey-5 mb-2")
+                        fig_train = _create_scatter(y_tr_t, y_tr_p, f"学習データ (Train) [n={len(y_tr_t)}]", is_train=True)
+                        render_plot_with_expand(fig_train, title="Train Plot", height="400px")
+                    else:
+                        ui.label("Trainデータプロットが利用できません。").classes("text-amber")
+
 
             # 既存の残差分析
             with ui.expansion("📉 残差分析 (CV)", icon="scatter_plot").classes("full-width q-mt-sm"):
