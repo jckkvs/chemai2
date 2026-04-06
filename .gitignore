@@ -84,3 +84,6 @@ error_trace.txt
 pytest_*.txt
 test_*.txt
 test.xyz
+
+# エクスポートされたファイル
+exports/
