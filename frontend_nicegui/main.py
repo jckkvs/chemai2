@@ -1,5 +1,5 @@
 """
-ChemAI ML Studio - NiceGUI Edition
+ChemAI Nexus - NiceGUI Edition
 ===================================
 Pure Python UI using NiceGUI framework.
 ステッパーUI → タブベース + サイドバーのレイアウト。
@@ -1127,10 +1127,10 @@ def help_page():
 
     with ui.header().classes("items-center"):
         ui.link("← 戻る", "/").classes("text-white q-mr-md")
-        ui.label("❓ ヘルプ - ChemAI ML Studio").classes("text-h6")
+        ui.label("❓ ヘルプ - ChemAI Nexus").classes("text-h6")
 
     with ui.column().classes("q-pa-lg q-gutter-md").style("max-width:900px;margin:0 auto;"):
-        ui.label("ChemAI ML Studio").classes("text-h4 hero-gradient")
+        ui.label("ChemAI Nexus").classes("text-h4 hero-gradient")
         ui.markdown("""
 ## 使い方
 
@@ -1195,7 +1195,7 @@ def help_descriptors_page():
     with ui.header().classes("items-center q-px-lg"):
         with ui.row().classes("items-center q-gutter-sm"):
             ui.label("⚗️").classes("text-h5")
-            ui.label("ChemAI ML Studio").classes("text-h5 text-bold hero-gradient")
+            ui.label("ChemAI Nexus").classes("text-h5 text-bold hero-gradient")
             ui.badge("ヘルプ", color="amber").props("floating")
         ui.button("← メインへ戻る", on_click=lambda: ui.navigate.to("/")).props(
             "flat no-caps color=cyan"
@@ -1228,7 +1228,7 @@ def external_plot_viewer(plot_id: str):
 # ─────────────────────────────────────────────
 if __name__ in {"__main__", "__mp_main__"}:
     ui.run(
-        title="ChemAI ML Studio",
+        title="ChemAI Nexus",
         dark=True,
         port=8085,
         reload=False,
