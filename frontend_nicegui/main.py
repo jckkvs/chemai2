@@ -867,6 +867,7 @@ def main_page():
     # 結果・エクスポート・実験比較タブは描画コストが高いため、
     # タブが実際にアクティブになった瞬間にのみ再描画する。
     _REBUILD_MAP = {
+        "eda":        "_refresh_eda_main",
         "results":    "_refresh_results",
         "export":     "_refresh_export",
         "comparison": "_refresh_experiment_comparison",

@@ -389,11 +389,7 @@ def _render_target_vs_features(df: pd.DataFrame, target_col: str) -> None:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     
-    ui.label(f"🔍 DEBUG: target_col='{target_col}', df.shape={df.shape}").classes('text-amber text-bold')
-    
-    # 数値列を取得
     num_cols = [c for c in df.select_dtypes(include="number").columns]
-    ui.label(f"🔍 DEBUG: len(num_cols)={len(num_cols)}").classes('text-amber text-bold')
     
     # 目的変数のチェックを緩和
     if not target_col or target_col not in df.columns:
@@ -474,8 +470,10 @@ def _render_target_vs_features(df: pd.DataFrame, target_col: str) -> None:
     for i in range(1, rows * cols + 1):
         xkey = "xaxis" if i == 1 else f"xaxis{i}"
         ykey = "yaxis" if i == 1 else f"yaxis{i}"
+        # Plotly scaleanchor は 'y', 'y2' などのIDを指定する
+        anchor_id = "y" if i == 1 else f"y{i}"
         fig.update_layout(**{
-            xkey: dict(scaleanchor=ykey, scaleratio=1,
+            xkey: dict(scaleanchor=anchor_id, scaleratio=1,
                       gridcolor="rgba(255,255,255,0.08)"),
             ykey: dict(gridcolor="rgba(255,255,255,0.08)"),
         })
@@ -748,19 +746,27 @@ def _render_dim_reduction(df: pd.DataFrame, target_col: str, state: dict) -> Non
     import plotly.express as px
     import plotly.graph_objects as go
 
-    num_df = df.select_dtypes(include="number").dropna()
+    num_df = df.select_dtypes(include="number")
+    # 欠損フィルタを緩和（50%以上の有効データがあれば保持）
+    thresh = max(1, int(len(num_df) * 0.5))  # ← ✅ 0.2 → 0.5 に緩和
+    num_df = num_df.dropna(axis=1, thresh=thresh)
+    
+    # 残った欠損を中央値で補完（行削除は最小限に）
+    if not num_df.empty:
+        num_df = num_df.fillna(num_df.median(numeric_only=True))
+        # 完全に欠損した行のみ削除
+        num_df = num_df.dropna(how='all')
+    
+    # 最低限のデータがなければフォールバック表示
     feature_cols = [c for c in num_df.columns if c != target_col]
-    if len(feature_cols) < 2 or num_df.shape[0] < 5:
-        with ui.expansion("⚠️ 詳細デバッグ情報", icon="bug_report"):
-            ui.label("特徴量が2列未満またはデータが少なすぎます").classes("text-caption text-amber text-bold")
-            ui.label(f"現在のDataFrameの列数: {len(df.columns)}").classes("text-caption text-grey")
-            ui.label(f"認識された数値列: {num_df.columns.tolist()}").classes("text-caption text-grey")
-            ui.label(f"除外された目的変数: {target_col}").classes("text-caption text-grey")
-            ui.label(f"解析対象の特徴量リスト: {feature_cols}").classes("text-caption text-grey")
-            
-            if len(feature_cols) == 0:
-                 ui.label("※ 特徴量が0件です。SMILESの記述子計算が完了していないか反映されていません。").classes("text-caption text-red text-bold")
+    if len(feature_cols) < 2 or num_df.shape[0] < 3:
+        logger.warning(f"⚠️ 次元削減に必要なデータ不足: features={len(feature_cols)}, rows={num_df.shape[0]}")
+        with ui.expansion("⚠️ 表示に必要なデータが不足しています", icon="warning"):
+            ui.label(f"• 有効な特徴量: {len(feature_cols)} 列（2列以上必要）").classes("text-caption")
+            ui.label(f"• 有効な行数: {num_df.shape[0]} 行（3行以上必要）").classes("text-caption")
+            ui.label("• 原因: 欠損値が多い、または数値型でない記述子が含まれています").classes("text-caption text-grey")
         return
+
 
     # 並列表示コンテナ
     with ui.row().classes("full-width q-gutter-sm q-mb-sm"):
