@@ -152,7 +152,7 @@ def render_eda_panel(state: dict) -> None:
             ui.badge(f"{len(eda_datasets)}データセット", color="teal").props("dense")
 
         if len(eda_datasets) == 1:
-            _render_full_eda(eda_datasets[0][1], target_col, state)
+            _render_full_eda(eda_datasets[0][1], target_col, state, uid="single")
         else:
             tab_keys = []
             with ui.tabs().classes("full-width").props(
@@ -166,22 +166,31 @@ def render_eda_panel(state: dict) -> None:
             with ui.tab_panels(ds_tabs, value=tab_keys[0]).classes("full-width bg-transparent"):
                 for i, (label, ds_df) in enumerate(eda_datasets):
                     with ui.tab_panel(tab_keys[i]):
-                        _render_full_eda(ds_df, target_col, state)
+                        _render_full_eda(ds_df, target_col, state, uid=f"ds{i}")
 
 
-def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict) -> None:
-    """単一データセットの包括的EDA — より少ないタブとカードベースのUI"""
+def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict, uid: str = "0") -> None:
+    """単一データセットの包括的EDA — より少ないタブとカードベースのUI
+
+    Args:
+        uid: ユニークID。ネストされたタブ名の衝突を防ぐため、
+             同一ページ内で複数回呼ばれる場合はそれぞれ異なる値を渡す。
+    """
+    # uid をタブ名に付加し、複数データセットでの名前衝突を回避
+    t_data_key = f"t_data_{uid}"
+    t_adv_key = f"t_advanced_{uid}"
+
     with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
         ui.badge(f"{df.shape[0]}行 × {df.shape[1]}列", color="grey-7").props("dense")
 
     with ui.tabs().classes("full-width").props(
         "dense no-caps active-color=cyan indicator-color=cyan scrollable"
     ) as eda_tabs:
-        ui.tab("t_data", label="📊 データ品質・分布・関係性")
-        ui.tab("t_advanced", label="🌀 次元の削減と重要度")
+        ui.tab(t_data_key, label="📊 データ品質・分布・関係性")
+        ui.tab(t_adv_key, label="🌀 次元の削減と重要度")
 
-    with ui.tab_panels(eda_tabs, value="t_data").classes("full-width bg-transparent"):
-        with ui.tab_panel("t_data"):
+    with ui.tab_panels(eda_tabs, value=t_data_key).classes("full-width bg-transparent"):
+        with ui.tab_panel(t_data_key):
             # ① Pairplot（最初に表示）
             ui.label("🔵 Pairplot（散布図マトリックス）").classes("text-subtitle2 text-bold")
             _render_pairplot(df, target_col)
@@ -196,7 +205,7 @@ def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict) -> None:
             ui.label("📋 統計サマリー").classes("text-subtitle2 text-bold")
             _render_stats(df, target_col)
 
-        with ui.tab_panel("t_advanced"):
+        with ui.tab_panel(t_adv_key):
             with ui.row().classes("full-width q-mb-md q-col-gutter-lg"):
                 with ui.column().classes("col-12 col-md-6"):
                     ui.label("🎯 目的変数 vs 特徴量 (相関上位)").classes("text-subtitle2 text-bold")
@@ -373,46 +382,70 @@ def _render_correlation(df: pd.DataFrame, target_col: str) -> None:
 # 4. 目的変数 vs 説明変数（散布図 + 回帰線）
 # ═══════════════════════════════════════════════════════════
 def _render_target_vs_features(df: pd.DataFrame, target_col: str) -> None:
+    """目的変数 vs 説明変数の散布図（相関上位）— 修正版"""
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
-
-    num_cols = [c for c in df.select_dtypes(include="number").columns if c != target_col]
-    if not num_cols or target_col not in df.columns:
-        ui.label("目的変数または説明変数が不足しています").classes("text-caption text-grey")
+    
+    # 数値列を取得
+    num_cols = [c for c in df.select_dtypes(include="number").columns]
+    
+    # 目的変数のチェックを緩和
+    if not target_col or target_col not in df.columns:
+        ui.label("⚠️ 目的変数が設定されていないか、数値列ではありません").classes("text-caption text-grey")
         return
-
+    
+    # 説明変数（目的変数を除く）
+    feature_cols = [c for c in num_cols if c != target_col]
+    
+    if not feature_cols:
+        ui.label("⚠️ 説明変数（特徴量）がありません").classes("text-caption text-grey")
+        return
+    
     try:
-        corr = df[num_cols].corrwith(df[target_col]).abs().sort_values(ascending=False)
+        # 相関計算（絶対値）
+        corr = df[feature_cols].corrwith(df[target_col]).abs().sort_values(ascending=False)
         top_cols = corr.head(6).index.tolist()
-    except Exception:
-        top_cols = num_cols[:6]
-
-    if not top_cols: return
-
-    rows, cols = (len(top_cols)+1)//2, 2 if len(top_cols)>=2 else 1
+    except Exception as e:
+        logger.warning(f"相関計算エラー: {e}")
+        # フォールバック: 先頭6列
+        top_cols = feature_cols[:6]
+    
+    if not top_cols:
+        ui.label("⚠️ 表示する特徴量がありません").classes("text-caption text-grey")
+        return
+    
+    # サブプロットの行数・列数を計算
+    rows, cols = (len(top_cols) + 1) // 2, 2 if len(top_cols) >= 2 else 1
+    
+    # 各サブプロットを正方形にするためにwidth/heightを均等に計算
+    _CELL = 320  # 1セルあたりのピクセル（正方形）
+    _GAP = 30    # セル間マージン
+    total_w = cols * _CELL + (cols - 1) * _GAP + 60   # 左右余白込み
+    total_h = rows * _CELL + (rows - 1) * _GAP + 60   # 上下余白込み
+    
     # 相関係数をタイトルに含む
     titles = []
     for c in top_cols:
-        r_val = df[c].corr(df[target_col])
-        titles.append(f"{c} (r={r_val:.2f})")
-
-    # 各サブプロットを正方形にするためにwidth/heightを均等に計算
-    _CELL = 320          # 1セルあたりのピクセル（正方形）
-    _GAP  = 30           # セル間マージン
-    total_w = cols * _CELL + (cols - 1) * _GAP + 60   # 左右余白込み
-    total_h = rows * _CELL + (rows - 1) * _GAP + 60   # 上下余白込み
-
+        try:
+            r_val = df[c].corr(df[target_col])
+            titles.append(f"{c} (r={r_val:.2f})")
+        except:
+            titles.append(c)
+    
     fig = make_subplots(
         rows=rows, cols=cols,
         subplot_titles=titles,
-        horizontal_spacing=_GAP / total_w,
-        vertical_spacing=_GAP / total_h,
+        horizontal_spacing=_GAP/total_w,
+        vertical_spacing=_GAP/total_h,
     )
-
+    
+    # 各特徴量に対して散布図を作成
     for i, c in enumerate(top_cols):
-        r = i//cols + 1
-        c_idx = i%cols + 1
+        r = i // cols + 1
+        c_idx = i % cols + 1
+        
         plot_df = df[[c, target_col]].dropna()
+        
         if not plot_df.empty:
             fig.add_trace(
                 go.Scatter(
@@ -422,23 +455,25 @@ def _render_target_vs_features(df: pd.DataFrame, target_col: str) -> None:
                 ),
                 row=r, col=c_idx,
             )
-
+    
+    # レイアウト設定
     fig.update_layout(
         **_LAYOUT_DARK,
         width=total_w,
         height=total_h,
         margin=dict(l=40, r=20, t=40, b=40),
     )
+    
     # 全軸を正方形にロック
     for i in range(1, rows * cols + 1):
         xkey = "xaxis" if i == 1 else f"xaxis{i}"
         ykey = "yaxis" if i == 1 else f"yaxis{i}"
         fig.update_layout(**{
             xkey: dict(scaleanchor=ykey, scaleratio=1,
-                       gridcolor="rgba(255,255,255,0.08)"),
+                      gridcolor="rgba(255,255,255,0.08)"),
             ykey: dict(gridcolor="rgba(255,255,255,0.08)"),
         })
-
+    
     _plotly_and_save(fig, "eda_target_vs_features")
 
 
