@@ -133,8 +133,11 @@ def render_eda_panel(state: dict) -> None:
         eda_datasets.append(("📊 全記述子", all_df))
 
     # 元データ（説明変数）を常に追加
-    num_df = df.select_dtypes(include="number")
+    num_df = df.select_dtypes(include="number").copy()
     if not num_df.empty:
+        # 目的変数が数値列以外の場合もEDAで扱えるよう追加
+        if target_col and target_col in df.columns and target_col not in num_df.columns:
+            num_df[target_col] = df[target_col]
         eda_datasets.append(("📋 元データ", num_df))
 
     if not eda_datasets:
@@ -218,7 +221,7 @@ def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict, uid: str = 
             with ui.row().classes("full-width q-mb-md q-col-gutter-lg"):
                  with ui.column().classes("col-12"):
                      ui.label("🌀 次元の削減と特徴量重要度").classes("text-subtitle2 text-bold")
-                     render_dim_reduction_panel(state)
+                     _render_dim_reduction(df, target_col, state)
 
             ui.separator().classes("q-my-md")
             with ui.row().classes("full-width q-col-gutter-lg"):
@@ -386,8 +389,11 @@ def _render_target_vs_features(df: pd.DataFrame, target_col: str) -> None:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     
+    ui.label(f"🔍 DEBUG: target_col='{target_col}', df.shape={df.shape}").classes('text-amber text-bold')
+    
     # 数値列を取得
     num_cols = [c for c in df.select_dtypes(include="number").columns]
+    ui.label(f"🔍 DEBUG: len(num_cols)={len(num_cols)}").classes('text-amber text-bold')
     
     # 目的変数のチェックを緩和
     if not target_col or target_col not in df.columns:
@@ -473,8 +479,7 @@ def _render_target_vs_features(df: pd.DataFrame, target_col: str) -> None:
                       gridcolor="rgba(255,255,255,0.08)"),
             ykey: dict(gridcolor="rgba(255,255,255,0.08)"),
         })
-    
-    _plotly_and_save(fig, "eda_target_vs_features")
+    _plotly_and_save(fig, "eda_target_vs_features").classes("full-width")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -746,7 +751,15 @@ def _render_dim_reduction(df: pd.DataFrame, target_col: str, state: dict) -> Non
     num_df = df.select_dtypes(include="number").dropna()
     feature_cols = [c for c in num_df.columns if c != target_col]
     if len(feature_cols) < 2 or num_df.shape[0] < 5:
-        ui.label("特徴量が2列未満またはデータが少なすぎます").classes("text-caption text-grey")
+        with ui.expansion("⚠️ 詳細デバッグ情報", icon="bug_report"):
+            ui.label("特徴量が2列未満またはデータが少なすぎます").classes("text-caption text-amber text-bold")
+            ui.label(f"現在のDataFrameの列数: {len(df.columns)}").classes("text-caption text-grey")
+            ui.label(f"認識された数値列: {num_df.columns.tolist()}").classes("text-caption text-grey")
+            ui.label(f"除外された目的変数: {target_col}").classes("text-caption text-grey")
+            ui.label(f"解析対象の特徴量リスト: {feature_cols}").classes("text-caption text-grey")
+            
+            if len(feature_cols) == 0:
+                 ui.label("※ 特徴量が0件です。SMILESの記述子計算が完了していないか反映されていません。").classes("text-caption text-red text-bold")
         return
 
     # 並列表示コンテナ
