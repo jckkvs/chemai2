@@ -742,6 +742,8 @@ def main_page():
         model_tab = ui.tab("models", label="🤗 外部モデル", icon="download").props('hint="外部学習済みMLモデルの選択・評価・比較"')
         export_tab = ui.tab("export", label="📤 レポート", icon="file_download")
         comparison_tab = ui.tab("comparison", label="🔬 実験ダッシュ", icon="dashboard")
+        mixture_tab = ui.tab("mixture", label="🧪 混合物", icon="science")
+        computation_tab = ui.tab("computation", label="⚡ 計算管理", icon="speed")
 
     with ui.tab_panels(main_tabs, value=data_tab).classes("full-width"):
 
@@ -841,6 +843,28 @@ def main_page():
             _build_comparison()
             state["_refresh_experiment_comparison"] = _build_comparison
 
+        # ── 混合物特徴量タブ（コンテナ方式）──
+        with ui.tab_panel(mixture_tab):
+            _mixture_container = ui.column().classes("full-width")
+            def _build_mixture():
+                _mixture_container.clear()
+                with _mixture_container:
+                    from frontend_nicegui.components.mixture_input_panel import render_mixture_panel
+                    render_mixture_panel(state)
+            _build_mixture()
+            state["_refresh_mixture"] = _build_mixture
+
+        # ── 計算管理タブ（コンテナ方式）──
+        with ui.tab_panel(computation_tab):
+            _computation_container = ui.column().classes("full-width")
+            def _build_computation():
+                _computation_container.clear()
+                with _computation_container:
+                    from frontend_nicegui.components.computation_progress import render_computation_progress
+                    render_computation_progress(state)
+            _build_computation()
+            state["_refresh_computation"] = _build_computation
+
     # ── タブ遷移コールバック登録 ──
     def _switch_to_inverse():
         """結果タブ等から逆解析タブへ自動遷移する。"""
@@ -871,6 +895,8 @@ def main_page():
         "results":    "_refresh_results",
         "export":     "_refresh_export",
         "comparison": "_refresh_experiment_comparison",
+        "mixture":    "_refresh_mixture",
+        "computation": "_refresh_computation",
     }
 
     def _on_tab_change(e):

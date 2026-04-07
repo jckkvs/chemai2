@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from nicegui import ui
-from frontend_nicegui.components.eda_dim_reduction import render_dim_reduction_panel
+# from frontend_nicegui.components.eda_dim_reduction import render_dim_reduction_panel
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,25 @@ def _render_full_eda(df: pd.DataFrame, target_col: str, state: dict, uid: str = 
             with ui.row().classes("full-width q-mb-md q-col-gutter-lg"):
                  with ui.column().classes("col-12"):
                      ui.label("🌀 次元の削減と特徴量重要度").classes("text-subtitle2 text-bold")
-                     _render_dim_reduction(df, target_col, state)
+                     from frontend_nicegui.components.eda_dim_panel import dim_reduction_settings, dim_reduction_panel
+                     
+                     if "_dim_config" not in state:
+                         state["_dim_config"] = {"scale": True}
+                     
+                     def on_apply_settings(scale: bool):
+                         state["_dim_config"]["scale"] = scale
+                         dim_reduction_panel.refresh()
+                     
+                     dim_reduction_settings(
+                         on_apply=on_apply_settings,
+                         default_scale=state["_dim_config"]["scale"]
+                     )
+                     
+                     dim_reduction_panel(
+                         df=df,
+                         target_col=target_col,
+                         scale=state["_dim_config"]["scale"]
+                     )
 
             ui.separator().classes("q-my-md")
             with ui.row().classes("full-width q-col-gutter-lg"):

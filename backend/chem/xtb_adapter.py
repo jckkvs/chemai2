@@ -189,6 +189,52 @@ def _parse_xtb_output(output: str) -> dict[str, float]:
     return result
 
 
+def _read_xyz_coords(xyz_path: str) -> dict | None:
+    """
+    XYZファイルから座標と原子番号を読み取る（ML派生特徴量用）。
+
+    Returns:
+        {"coords": np.ndarray (N,3), "atomic_numbers": list[int], "symbols": list[str]}
+        または読み取り失敗時に None。
+    """
+    _SYMBOL_TO_Z = {
+        "H": 1, "He": 2, "Li": 3, "Be": 4, "B": 5, "C": 6, "N": 7, "O": 8,
+        "F": 9, "Ne": 10, "Na": 11, "Mg": 12, "Al": 13, "Si": 14, "P": 15,
+        "S": 16, "Cl": 17, "Ar": 18, "K": 19, "Ca": 20, "Ti": 22, "V": 23,
+        "Cr": 24, "Mn": 25, "Fe": 26, "Co": 27, "Ni": 28, "Cu": 29, "Zn": 30,
+        "Ga": 31, "Ge": 32, "As": 33, "Se": 34, "Br": 35, "Kr": 36, "Rb": 37,
+        "Sr": 38, "Y": 39, "Zr": 40, "Mo": 42, "Ru": 44, "Rh": 45, "Pd": 46,
+        "Ag": 47, "Cd": 48, "In": 49, "Sn": 50, "Sb": 51, "Te": 52, "I": 53,
+        "Xe": 54, "Cs": 55, "Ba": 56, "La": 57, "Pt": 78, "Au": 79, "Hg": 80,
+        "Tl": 81, "Pb": 82, "Bi": 83,
+    }
+    try:
+        with open(xyz_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        if len(lines) < 3:
+            return None
+        n_atoms = int(lines[0].strip())
+        symbols: list[str] = []
+        coords: list[list[float]] = []
+        for line in lines[2: 2 + n_atoms]:
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            sym = parts[0].strip().capitalize()
+            symbols.append(sym)
+            coords.append([float(parts[1]), float(parts[2]), float(parts[3])])
+        if len(coords) != n_atoms:
+            return None
+        atomic_numbers = [_SYMBOL_TO_Z.get(s, 0) for s in symbols]
+        return {
+            "coords": np.array(coords),
+            "atomic_numbers": atomic_numbers,
+            "symbols": symbols,
+        }
+    except Exception:
+        return None
+
+
 class XTBAdapter(BaseChemAdapter):
     """
     XTB (GFN2-xTB) による量子化学計算記述子アダプター。
@@ -353,6 +399,7 @@ class XTBAdapter(BaseChemAdapter):
 
         rows: list[dict] = []
         failed_indices: list[int] = []
+        optimized_coords: list[dict | None] = []  # 最適化後座標（ML特徴量抽出用）
 
         # リトライ時の収束基準フォールバック順序
         _CONVERGENCE_FALLBACK = ["normal", "loose", "sloppy", "crude"]
@@ -482,9 +529,20 @@ class XTBAdapter(BaseChemAdapter):
                         if k in parsed:
                             row[k] = parsed[k]
 
+                    # 最適化後座標の読み取り試行（ML派生特徴量用）
+                    opt_xyz_path = os.path.join(tmpdir, "xtbopt.xyz")
+                    coord_info = None
+                    if os.path.exists(opt_xyz_path):
+                        try:
+                            coord_info = _read_xyz_coords(opt_xyz_path)
+                        except Exception:
+                            pass
+                    optimized_coords.append(coord_info)
+
                 except Exception as e:
                     logger.warning("XTB 計算失敗: idx=%d err=%s", i, e)
                     failed_indices.append(i)
+                    optimized_coords.append(None)
                 rows.append(row)
 
         df = pd.DataFrame(rows, columns=col_names)
@@ -498,6 +556,7 @@ class XTBAdapter(BaseChemAdapter):
                 "calc_type": self.calc_type,
                 "convergence": self.convergence,
                 "solvent": self.solvent,
+                "optimized_coords": optimized_coords,
             },
         )
 

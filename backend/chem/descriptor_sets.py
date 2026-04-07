@@ -97,6 +97,10 @@ DEFAULT_SETS: list[DescriptorSet] = [
         name="⚛️ 量子化学込み",
         engine_flags={"use_xtb": True, "use_cosmo": True},
     ),
+    DescriptorSet(
+        name="⚛️+ML 量子化学+派生特徴量",
+        engine_flags={"use_xtb": True},
+    ),
 ]
 
 

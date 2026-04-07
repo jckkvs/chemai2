@@ -30,6 +30,13 @@ from sklearn.ensemble import (
     VotingRegressor, VotingClassifier,
 )
 from sklearn.gaussian_process import GaussianProcessRegressor, GaussianProcessClassifier
+from sklearn.gaussian_process.kernels import (
+    RBF,
+    Matern,
+    ConstantKernel,
+    DotProduct,
+    WhiteKernel,
+)
 from sklearn.naive_bayes import GaussianNB, BernoulliNB
 from sklearn.neural_network import MLPRegressor, MLPClassifier
 from sklearn.cross_decomposition import PLSRegression
@@ -189,6 +196,112 @@ def _linear_boost_classifier(**kw: Any) -> Any:
     from sklearn.linear_model import LogisticRegression
     base = kw.pop("base_estimator", LogisticRegression(max_iter=500))
     return LinearBoostClassifier(base_estimator=base, **kw)
+
+
+# ============================================================
+# ★★★ NEW: GPR / GPC カーネル別ファクトリー関数 ★★★
+# ============================================================
+# 設計方針:
+#   カーネルの種類はハイパーパラメータではなく、異なるモデルとして扱う。
+#   各カーネルに対して個別のファクトリー関数とレジストリエントリを用意する。
+#   全カーネルに WhiteKernel を加算して観測ノイズを自動推定する。
+
+def _gpr_rbf(**kw: Any) -> GaussianProcessRegressor:
+    """GPR with RBF kernel (+ WhiteKernel for noise estimation)."""
+    kernel = ConstantKernel(1.0) * RBF(length_scale=1.0) + WhiteKernel(noise_level=1.0)
+    kw.setdefault("random_state", RANDOM_STATE)
+    kw.setdefault("n_restarts_optimizer", 3)
+    kw.setdefault("normalize_y", True)
+    return GaussianProcessRegressor(kernel=kernel, **kw)
+
+
+def _gpr_matern(**kw: Any) -> GaussianProcessRegressor:
+    """GPR with Matérn kernel (nu=2.5, + WhiteKernel)."""
+    nu = kw.pop("nu", 2.5)
+    kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=nu) + WhiteKernel(noise_level=1.0)
+    kw.setdefault("random_state", RANDOM_STATE)
+    kw.setdefault("n_restarts_optimizer", 3)
+    kw.setdefault("normalize_y", True)
+    return GaussianProcessRegressor(kernel=kernel, **kw)
+
+
+def _gpr_ard(**kw: Any) -> GaussianProcessRegressor:
+    """
+    GPR with ARD (Automatic Relevance Determination) kernel.
+    ARD は RBF の length_scale を特徴量ごとに独立に持たせることで実現する。
+    n_features が未知の場合は length_scale=1.0 (スカラー) で初期化し、
+    fit 時に sklearn が自動で ARD 化する。
+    """
+    n_features = kw.pop("n_features", 1)
+    length_scale_init = kw.pop("length_scale", [1.0] * n_features)
+    kernel = ConstantKernel(1.0) * RBF(length_scale=length_scale_init) + WhiteKernel(noise_level=1.0)
+    kw.setdefault("random_state", RANDOM_STATE)
+    kw.setdefault("n_restarts_optimizer", 3)
+    kw.setdefault("normalize_y", True)
+    return GaussianProcessRegressor(kernel=kernel, **kw)
+
+
+def _gpr_constant_rbf(**kw: Any) -> GaussianProcessRegressor:
+    """GPR with ConstantKernel + RBF (amplitude + length_scale, + WhiteKernel)."""
+    kernel = ConstantKernel(1.0, constant_value_bounds=(1e-3, 1e3)) * RBF(length_scale=1.0) + WhiteKernel(noise_level=1.0)
+    kw.setdefault("random_state", RANDOM_STATE)
+    kw.setdefault("n_restarts_optimizer", 3)
+    kw.setdefault("normalize_y", True)
+    return GaussianProcessRegressor(kernel=kernel, **kw)
+
+
+def _gpr_dotproduct(**kw: Any) -> GaussianProcessRegressor:
+    """GPR with DotProduct kernel (linear-like, + WhiteKernel)."""
+    sigma_0 = kw.pop("sigma_0", 1.0)
+    kernel = ConstantKernel(1.0) * DotProduct(sigma_0=sigma_0) + WhiteKernel(noise_level=1.0)
+    kw.setdefault("random_state", RANDOM_STATE)
+    kw.setdefault("n_restarts_optimizer", 3)
+    kw.setdefault("normalize_y", True)
+    return GaussianProcessRegressor(kernel=kernel, **kw)
+
+
+def _gpc_rbf(**kw: Any) -> GaussianProcessClassifier:
+    """GPC with RBF kernel."""
+    kernel = ConstantKernel(1.0) * RBF(length_scale=1.0)
+    kw.setdefault("random_state", RANDOM_STATE)
+    kw.setdefault("n_restarts_optimizer", 3)
+    return GaussianProcessClassifier(kernel=kernel, **kw)
+
+
+def _gpc_matern(**kw: Any) -> GaussianProcessClassifier:
+    """GPC with Matérn kernel (nu=2.5)."""
+    nu = kw.pop("nu", 2.5)
+    kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=nu)
+    kw.setdefault("random_state", RANDOM_STATE)
+    kw.setdefault("n_restarts_optimizer", 3)
+    return GaussianProcessClassifier(kernel=kernel, **kw)
+
+
+def _gpc_ard(**kw: Any) -> GaussianProcessClassifier:
+    """GPC with ARD kernel (feature-wise length_scale)."""
+    n_features = kw.pop("n_features", 1)
+    length_scale_init = kw.pop("length_scale", [1.0] * n_features)
+    kernel = ConstantKernel(1.0) * RBF(length_scale=length_scale_init)
+    kw.setdefault("random_state", RANDOM_STATE)
+    kw.setdefault("n_restarts_optimizer", 3)
+    return GaussianProcessClassifier(kernel=kernel, **kw)
+
+
+def _gpc_constant_rbf(**kw: Any) -> GaussianProcessClassifier:
+    """GPC with ConstantKernel + RBF."""
+    kernel = ConstantKernel(1.0, constant_value_bounds=(1e-3, 1e3)) * RBF(length_scale=1.0)
+    kw.setdefault("random_state", RANDOM_STATE)
+    kw.setdefault("n_restarts_optimizer", 3)
+    return GaussianProcessClassifier(kernel=kernel, **kw)
+
+
+def _gpc_dotproduct(**kw: Any) -> GaussianProcessClassifier:
+    """GPC with DotProduct kernel."""
+    sigma_0 = kw.pop("sigma_0", 1.0)
+    kernel = ConstantKernel(1.0) * DotProduct(sigma_0=sigma_0)
+    kw.setdefault("random_state", RANDOM_STATE)
+    kw.setdefault("n_restarts_optimizer", 3)
+    return GaussianProcessClassifier(kernel=kernel, **kw)
 
 
 # ============================================================
@@ -382,11 +495,46 @@ _REGRESSION_REGISTRY: dict[str, dict[str, Any]] = {
         "tags": ["neural_network"],
     },
     "gp": {
-        "name": "Gaussian Process",
-        "class": GaussianProcessRegressor,
-        "default_params": {"random_state": RANDOM_STATE},
+        "name": "GPR (RBF)",
+        "factory": _gpr_rbf,
+        "default_params": {},
         "available": True,
-        "tags": ["probabilistic"],
+        "tags": ["probabilistic", "gaussian_process", "kernel"],
+    },
+    "gpr_rbf": {
+        "name": "GPR (RBF)",
+        "factory": _gpr_rbf,
+        "default_params": {},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel"],
+    },
+    "gpr_matern": {
+        "name": "GPR (Matérn)",
+        "factory": _gpr_matern,
+        "default_params": {"nu": 2.5},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel"],
+    },
+    "gpr_ard": {
+        "name": "GPR (ARD)",
+        "factory": _gpr_ard,
+        "default_params": {},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel", "feature_selection"],
+    },
+    "gpr_constant_rbf": {
+        "name": "GPR (Constant+RBF)",
+        "factory": _gpr_constant_rbf,
+        "default_params": {},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel"],
+    },
+    "gpr_dotproduct": {
+        "name": "GPR (DotProduct)",
+        "factory": _gpr_dotproduct,
+        "default_params": {},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel", "linear"],
     },
     "pls": {
         "name": "PLS Regression",
@@ -612,11 +760,46 @@ _CLASSIFICATION_REGISTRY: dict[str, dict[str, Any]] = {
         "tags": ["probabilistic"],
     },
     "gp_c": {
-        "name": "Gaussian Process",
-        "class": GaussianProcessClassifier,
-        "default_params": {"random_state": RANDOM_STATE},
+        "name": "GPC (RBF)",
+        "factory": _gpc_rbf,
+        "default_params": {},
         "available": True,
-        "tags": ["probabilistic"],
+        "tags": ["probabilistic", "gaussian_process", "kernel"],
+    },
+    "gpc_rbf": {
+        "name": "GPC (RBF)",
+        "factory": _gpc_rbf,
+        "default_params": {},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel"],
+    },
+    "gpc_matern": {
+        "name": "GPC (Matérn)",
+        "factory": _gpc_matern,
+        "default_params": {"nu": 2.5},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel"],
+    },
+    "gpc_ard": {
+        "name": "GPC (ARD)",
+        "factory": _gpc_ard,
+        "default_params": {},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel", "feature_selection"],
+    },
+    "gpc_constant_rbf": {
+        "name": "GPC (Constant+RBF)",
+        "factory": _gpc_constant_rbf,
+        "default_params": {},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel"],
+    },
+    "gpc_dotproduct": {
+        "name": "GPC (DotProduct)",
+        "factory": _gpc_dotproduct,
+        "default_params": {},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel", "linear"],
     },
     "xgbrf_c": {
         "name": "XGBoost Random Forest (XGBRFClassifier)",
@@ -789,9 +972,9 @@ def get_default_automl_models(task: str = "regression") -> list[str]:
     使用可能なモデルから代表的なものを選択する。
     """
     regression_defaults = ["linear", "ridge_cv", "lasso_cv", "rf", "et", "gbm", "hgbm",
-                           "xgb", "lgbm", "svr_rbf"]
+                           "xgb", "lgbm", "svr_rbf", "gpr_rbf"]
     classification_defaults = ["logistic", "rf_c", "et_c", "gbm_c", "hgbm_c",
-                                "xgb_c", "lgbm_c", "svc_rbf", "knn_c", "dt_c"]
+                                "xgb_c", "lgbm_c", "svc_rbf", "knn_c", "dt_c", "gpc_rbf"]
 
     registry = _get_registry(task)
     defaults = regression_defaults if task == "regression" else classification_defaults
