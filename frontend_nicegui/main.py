@@ -744,6 +744,7 @@ def main_page():
         comparison_tab = ui.tab("comparison", label="🔬 実験ダッシュ", icon="dashboard")
         mixture_tab = ui.tab("mixture", label="🧪 混合物", icon="science")
         computation_tab = ui.tab("computation", label="⚡ 計算管理", icon="speed")
+        quantum_tab = ui.tab("quantum", label="🔬 量子特徴量", icon="hub")
 
     with ui.tab_panels(main_tabs, value=data_tab).classes("full-width"):
 
@@ -865,6 +866,17 @@ def main_page():
             _build_computation()
             state["_refresh_computation"] = _build_computation
 
+        # ── 量子化学特徴量エクスプローラータブ（コンテナ方式）──
+        with ui.tab_panel(quantum_tab):
+            _quantum_container = ui.column().classes("full-width")
+            def _build_quantum():
+                _quantum_container.clear()
+                with _quantum_container:
+                    from frontend_nicegui.components.quantum_feature_explorer import render_quantum_feature_explorer
+                    render_quantum_feature_explorer(state)
+            _build_quantum()
+            state["_refresh_quantum"] = _build_quantum
+
     # ── タブ遷移コールバック登録 ──
     def _switch_to_inverse():
         """結果タブ等から逆解析タブへ自動遷移する。"""
@@ -897,6 +909,7 @@ def main_page():
         "comparison": "_refresh_experiment_comparison",
         "mixture":    "_refresh_mixture",
         "computation": "_refresh_computation",
+        "quantum":     "_refresh_quantum",
     }
 
     def _on_tab_change(e):
