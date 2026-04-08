@@ -30,6 +30,22 @@ from backend.chem.base import BaseChemAdapter, DescriptorMetadata, DescriptorRes
 
 logger = logging.getLogger(__name__)
 
+# Windows での xtb クラッシュ時ポップアップ（アプリケーションエラー）を抑制する
+if os.name == 'nt':
+    try:
+        import ctypes
+        SEM_FAILCRITICALERRORS = 0x0001
+        SEM_NOGPFAULTERRORBOX = 0x0002
+        SEM_NOOPENFILEERRORBOX = 0x8000
+        ctypes.windll.kernel32.SetErrorMode(
+            SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
+        )
+    except Exception:
+        pass
+
+# クラッシュ検出時に2回目以降の実行をスキップするためのフラグ
+_XTB_BROKEN = False
+
 _XTB_DESCRIPTORS = {
     "xtb_HomoLumoGap":         "HOMO-LUMOエネルギーギャップ（光吸収・反応性） [eV]",
     "xtb_HomoEnergy":           "HOMO エネルギー [eV]",
@@ -404,9 +420,18 @@ class XTBAdapter(BaseChemAdapter):
         # リトライ時の収束基準フォールバック順序
         _CONVERGENCE_FALLBACK = ["normal", "loose", "sloppy", "crude"]
 
+        global _XTB_BROKEN
+
         with tempfile.TemporaryDirectory() as tmpdir:
             for i, smi in enumerate(smiles_list):
                 row = {k: np.nan for k in col_names}
+                
+                if _XTB_BROKEN:
+                    failed_indices.append(i)
+                    optimized_coords.append(None)
+                    rows.append(row)
+                    continue
+
                 try:
                     # 電荷・スピンを解決
                     if charge_config_store is not None:
@@ -450,6 +475,10 @@ class XTBAdapter(BaseChemAdapter):
                         )
 
                         try:
+                            kwargs_sub = {}
+                            if os.name == "nt":
+                                kwargs_sub["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
                             result = subprocess.run(
                                 cmd,
                                 cwd=tmpdir,
@@ -458,7 +487,15 @@ class XTBAdapter(BaseChemAdapter):
                                 encoding="utf-8",
                                 errors="replace",
                                 timeout=self.timeout,
+                                **kwargs_sub
                             )
+                            # 0xc0000142 = -1073741502 or 3221225794, 0xc0000135 = -1073741515 or 3221225749
+                            if result.returncode in (3221225794, -1073741502, 3221225749, -1073741515, 3221225477, -1073741819):
+                                logger.critical("XTBがシステムエラーでクラッシュしました。以降の分子はスキップします。(returncode: %s)", result.returncode)
+                                _XTB_BROKEN = True
+                                success = False
+                                break
+
                             if result.returncode == 0:
                                 parsed = _parse_xtb_output(result.stdout)
                                 success = True
@@ -510,6 +547,10 @@ class XTBAdapter(BaseChemAdapter):
                                 xyz_path, charge, uhf,
                                 calc_type="sp", convergence="normal", solvent=solvent,
                             )
+                            kwargs_sub = {}
+                            if os.name == "nt":
+                                kwargs_sub["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                            
                             result_sp = subprocess.run(
                                 cmd_sp, cwd=tmpdir,
                                 capture_output=True,
@@ -517,7 +558,12 @@ class XTBAdapter(BaseChemAdapter):
                                 encoding="utf-8",
                                 errors="replace",
                                 timeout=120,
+                                **kwargs_sub
                             )
+                            if result_sp.returncode in (3221225794, -1073741502, 3221225749, -1073741515, 3221225477, -1073741819):
+                                logger.critical("XTBがシステムエラーでクラッシュしました。以降の分子はスキップします。(returncode: %s)", result_sp.returncode)
+                                _XTB_BROKEN = True
+
                             if result_sp.returncode == 0:
                                 parsed = _parse_xtb_output(result_sp.stdout)
                             else:

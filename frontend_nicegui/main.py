@@ -22,8 +22,6 @@ import logging
 import pandas as pd
 from nicegui import ui, app
 
-from frontend_nicegui.utils.plot_utils import GLOBAL_PLOTS
-
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
@@ -453,6 +451,10 @@ def main_page():
         # 結果
         "automl_result": None,
         "pipeline_result": None,
+        # メトリック評価エンジン
+        "metric_evaluator": None,
+        "metric_cache": {},
+        "available_categories": [],
     }
 
     ui.add_head_html(f"<style>{CUSTOM_CSS}</style>")
@@ -729,6 +731,9 @@ def main_page():
         pass
     state["_refresh_stepper"] = _refresh_stepper
 
+    from frontend_nicegui.components.workflow_navigator import render_workflow_navigator
+    render_workflow_navigator(state, None) # will be updated later with main_tabs in _refresh logic
+    # To fix cyclic dependency or None reference, we will define a refreshable wrapper after main_tabs
 
     with ui.tabs().classes("full-width q-mt-xs").props(
         "active-color=cyan indicator-color=cyan align=left"
@@ -783,6 +788,10 @@ def main_page():
             from frontend_nicegui.components.post_analysis_config import render_post_analysis_config
             render_post_analysis_config(state)
 
+            from frontend_nicegui.components.monotonicity_config import render_monotonicity_config
+            ui.separator().classes("q-my-sm")
+            render_monotonicity_config(state)
+
 
         # ── 結果確認タブ（コンテナ方式）──
         with ui.tab_panel(results_tab):
@@ -801,8 +810,8 @@ def main_page():
             def _build_inverse():
                 _inverse_container.clear()
                 with _inverse_container:
-                    from frontend_nicegui.components.inverse_analysis_tab import render_inverse_analysis_tab
-                    render_inverse_analysis_tab(state)
+                    from frontend_nicegui.components.inverse_tab import render_inverse_panel
+                    render_inverse_panel(state)
             _build_inverse()
             state["_refresh_inverse"] = _build_inverse
 
@@ -913,6 +922,12 @@ def main_page():
     }
 
     def _on_tab_change(e):
+        from frontend_nicegui.components.workflow_navigator import render_workflow_navigator
+        try:
+            render_workflow_navigator.refresh(state, main_tabs)
+        except Exception:
+            pass
+
         tab_val = getattr(e, "value", None) or str(e)
         key = _REBUILD_MAP.get(str(tab_val))
         if key:
@@ -1245,24 +1260,7 @@ def help_descriptors_page():
         from frontend_nicegui.components.descriptor_help_page import render_descriptor_help
         render_descriptor_help()
 
-
-@ui.page('/view_plot/{plot_id}')
-def external_plot_viewer(plot_id: str):
-    """外部表示専用ページ"""
-    fig = GLOBAL_PLOTS.get(plot_id)
-    
-    if fig is None:
-        ui.label("データが見つかりません。元の画面から開き直してください。").classes("text-red-500 text-xl q-pa-md")
-        return
-
-    # 最大化されたビューで描画
-    ui.plotly(fig).classes("full-width").style("height: 90vh;")
-    
-    # 閉じるボタン
-    ui.button("ウィンドウを閉じる", on_click=lambda: ui.run_javascript("window.close()")).classes("absolute-bottom-right q-ma-md").props("color=cyan")
-
-
-
+# Plot viewer moved to plot_utils
 # ─────────────────────────────────────────────
 # エントリーポイント
 # ─────────────────────────────────────────────

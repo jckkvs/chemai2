@@ -17,6 +17,22 @@ from ....chem.utils import smiles_to_3d_mol  # Assuming there's a chem/utils mod
 
 logger = logging.getLogger(__name__)
 
+# Windows での xtb クラッシュ時ポップアップ（アプリケーションエラー）を抑制する
+if os.name == 'nt':
+    try:
+        import ctypes
+        SEM_FAILCRITICALERRORS = 0x0001
+        SEM_NOGPFAULTERRORBOX = 0x0002
+        SEM_NOOPENFILEERRORBOX = 0x8000
+        ctypes.windll.kernel32.SetErrorMode(
+            SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
+        )
+    except Exception:
+        pass
+
+# クラッシュ検出時に2回目以降の実行をスキップするためのフラグ
+_XTB_RUNNER_BROKEN = False
+
 class XTBRunner:
     def __init__(self, config: XTBConfig):
         self.config = config
@@ -41,9 +57,14 @@ class XTBRunner:
         raise RuntimeError("xtb binary not found.")
         
     def run_single(self, smiles: str, work_dir: Optional[Path] = None, molecule_id: Optional[str] = None) -> Tuple[bool, dict, List[str]]:
+        global _XTB_RUNNER_BROKEN
         warnings_list = []
         result: Dict = {}
         
+        if _XTB_RUNNER_BROKEN:
+            warnings_list.append("XTBが以前にクラッシュしたため、この分子の計算をスキップしました（システム環境/DLLエラーなど）")
+            return False, {}, warnings_list
+            
         try:
             if work_dir is None:
                 work_dir = Path(tempfile.mkdtemp(prefix="chemai_xtb_"))
@@ -101,18 +122,31 @@ class XTBRunner:
             # We mock the safe_subprocess_run using subprocess directly for the real implementation
             # if safe_subprocess_run from utils is not fully defined
             try:
+                kwargs_sub = {}
+                if os.name == "nt":
+                    kwargs_sub["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
                 proc_result = subprocess.run(
                     cmd, cwd=work_dir, timeout=self.config.timeout_seconds,
-                    capture_output=True, text=True, check=True
+                    capture_output=True, text=True, check=False,
+                    **kwargs_sub
                 )
+                
+                if proc_result.returncode in (3221225794, -1073741502, 3221225749, -1073741515, 3221225477, -1073741819):
+                    global _XTB_RUNNER_BROKEN
+                    _XTB_RUNNER_BROKEN = True
+                    warnings_list.append(f"XTBがシステムエラーでクラッシュしました。(returncode: {proc_result.returncode}) 以降の分子はスキップします。")
+                    return False, {}, warnings_list
+                
+                if proc_result.returncode != 0:
+                    warnings_list.append(f"XTB execution failed with return code {proc_result.returncode}: {proc_result.stderr}")
+                    if self.config.retry_on_failure and self.config.fallback_method:
+                        return self._run_with_fallback(smiles, work_dir, mol_id, warnings_list)
+                    return False, {}, warnings_list
+
                 output_text = proc_result.stdout
             except subprocess.TimeoutExpired:
                 warnings_list.append("XTB execution timeout")
-                return False, {}, warnings_list
-            except subprocess.CalledProcessError as e:
-                warnings_list.append(f"XTB execution failed with return code {e.returncode}: {e.stderr}")
-                if self.config.retry_on_failure and self.config.fallback_method:
-                    return self._run_with_fallback(smiles, work_dir, mol_id, warnings_list)
                 return False, {}, warnings_list
                 
             result = self._parse_xtb_output(work_dir, mol_id, output_text)
