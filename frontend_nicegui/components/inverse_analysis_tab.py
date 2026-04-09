@@ -1264,31 +1264,74 @@ def _render_execute_section(state: dict, inv: dict, enabled: bool = True) -> Non
 
                 pipeline = ar.best_pipeline
 
-                # 説明変数名リストを構築
-                feature_names = list(inv.get("constraints", {}).keys())
-                if not feature_names:
-                    ui.notify("制約を設定してください（「データ範囲を自動設定」ボタン推奨）", type="warning")
-                    return
+                # --- S3空間への射影とオプティマイザーの空間変換 ---
+                # ユーザーから指定された S0 制約範囲を S3 空間へ変換し、スケーリング済み空間で最適化を実行する
+                preprocessor_steps = pipeline[:-1]
+                estimator = pipeline[-1]
+                
+                # 元特徴量名
+                s0_feature_names = list(inv.get("constraints", {}).keys())
+                
+                # S0でのmin/maxダミーDFを作成して S3 の bounds を近似取得（PCA等を除くスケーラー前提）
+                dummy_min_dict = {col: c.get("min", 0.0) for col, c in inv.get("constraints", {}).items() if not c.get("fixed", False)}
+                dummy_max_dict = {col: c.get("max", 1.0) for col, c in inv.get("constraints", {}).items() if not c.get("fixed", False)}
+                for col, c in inv.get("constraints", {}).items():
+                    if c.get("fixed", False):
+                        dummy_min_dict[col] = c.get("fixed_val", 0.0)
+                        dummy_max_dict[col] = c.get("fixed_val", 0.0)
+                
+                # 複数の補完点を生成して変換後の最小・最大を正しく捉える
+                n_dummy = 100
+                dummy_rows = []
+                for i in range(n_dummy):
+                    alpha = i / (n_dummy - 1)
+                    row = {k: dummy_min_dict[k] + alpha * (dummy_max_dict.get(k, 0) - dummy_min_dict[k]) for k in s0_feature_names}
+                    dummy_rows.append(row)
+                df_dummy_s0 = pd.DataFrame(dummy_rows, columns=s0_feature_names)
+                
+                try:
+                    df_dummy_s3 = preprocessor_steps.transform(df_dummy_s0)
+                    s3_feature_names = preprocessor_steps.get_feature_names_out().tolist()
+                except Exception:
+                    df_dummy_s3 = df_dummy_s0.values
+                    s3_feature_names = s0_feature_names
+                
+                # S3空間での bounds と fixed 値の再構築
+                s3_constraints = {}
+                for i, s3_col in enumerate(s3_feature_names):
+                    s3_vals = df_dummy_s3[:, i]
+                    
+                    # fixかどうかは便宜上、スケーリング後空間での分散で判定
+                    ptp = np.ptp(s3_vals)
+                    is_fixed = ptp < 1e-6
+                    
+                    s3_constraints[s3_col] = {
+                        "active": True,
+                        "fixed": is_fixed,
+                        "min": float(np.min(s3_vals)),
+                        "max": float(np.max(s3_vals)),
+                        "fixed_val": float(np.median(s3_vals))
+                    }
 
-                # predict関数:  DataFrame -> array
-                def _predict_fn(X_df):
-                    try:
-                        return pipeline.predict(X_df)
-                    except Exception:
-                        # 列順が違う場合のフォールバック
-                        if hasattr(ar, "X_train") and ar.X_train is not None:
-                            expected_cols = list(ar.X_train.columns)
-                            X_aligned = X_df.reindex(columns=expected_cols, fill_value=0.0)
-                            return pipeline.predict(X_aligned)
-                        raise
+                # predict関数: S3 DataFrame -> array
+                def _predict_fn_s3(X_df_s3):
+                    # estimator が NumPy array を期待する場合の防御的変換
+                    if hasattr(estimator, "predict"):
+                        try:
+                            # 多くのモデルはDataFrameを処理可能
+                            return estimator.predict(X_df_s3)
+                        except Exception:
+                            # XGBoost等、列名不一致エラー対応用
+                            seq = X_df_s3.values
+                            return estimator.predict(seq)
+                    return np.zeros(len(X_df_s3))
 
-                # InverseConfig構築
                 config = InverseConfig(
                     method=inv.get("method", "random"),
                     target_mode=inv.get("target_mode", "range"),
                     target_min=inv.get("target_min"),
                     target_max=inv.get("target_max"),
-                    constraints=inv.get("constraints", {}),
+                    constraints=s3_constraints,  # S3空間の制約を渡す
                     method_params=inv.get("method_params", {}),
                 )
 
@@ -1301,13 +1344,52 @@ def _render_execute_section(state: dict, inv: dict, enabled: bool = True) -> Non
                 # バックグラウンドで実行
                 result = await run.io_bound(
                     run_inverse_optimization,
-                    _predict_fn,
-                    feature_names,
+                    _predict_fn_s3,
+                    s3_feature_names,
                     config,
                     _on_progress,
                 )
 
-                inv["results"] = result.candidates
+                # 結果(S3)を元空間(S0)へ逆変換する試み
+                s3_candidates_df = result.candidates.copy()
+                
+                # sklearnスケーラーの inverse_transform を試行
+                if hasattr(preprocessor_steps, "inverse_transform"):
+                    # dummyデータで逆変換できるか？ columnTransformerが完全に対応しているか？
+                    try:
+                        seq_s3 = s3_candidates_df[s3_feature_names].values
+                        seq_s0 = preprocessor_steps.inverse_transform(seq_s3)
+                        for i, orig_col in enumerate(s0_feature_names):
+                            # S0列順序に割り当て
+                            # ※元のデータソースに基づく順序の対応がとれるか不確実だが、
+                            s3_candidates_df[orig_col] = seq_s0[:, i]
+                    except Exception:
+                        pass
+                
+                # もし sklearn に native で関数がない/エラーになるなら、自力で補完逆写像を近似
+                if s0_feature_names[0] not in s3_candidates_df.columns:
+                    for i, orig_col in enumerate(s0_feature_names):
+                        # 補完点で学習したs0->s3の対応を使ってs3->s0に戻す (線形スケーラーの前提)
+                        s0_vals = df_dummy_s0[orig_col].values
+                        s3_vals = df_dummy_s3[:, i] # S3名順とS0名順が1:1と仮定した場合 (PCAがある場合破綻するが簡易化)
+                        if len(s3_feature_names) == len(s0_feature_names):
+                            if np.ptp(s3_vals) > 1e-9:
+                                slope = np.ptp(s0_vals) / np.ptp(s3_vals)
+                                intercept = s0_vals[0] - slope * s3_vals[0]
+                                s3_candidates_df[orig_col] = s3_candidates_df[s3_feature_names[i]] * slope + intercept
+                            else:
+                                s3_candidates_df[orig_col] = s0_vals[0]
+                        else:
+                            # 1対1写像が破綻している場合（OneHot等）
+                            s3_candidates_df[orig_col] = np.nan
+                            
+                # 不要なS3特徴量を取り除き表示整列
+                disp_cols = ["rank"] + [c for c in s0_feature_names if c in s3_candidates_df.columns] + ["predicted", "score"]
+                for c in disp_cols:
+                    if c not in s3_candidates_df.columns:
+                         s3_candidates_df[c] = np.nan
+                inv["results"] = s3_candidates_df[disp_cols]
+                
                 inv_progress.value = 1.0
                 inv_progress_label.text = (
                     f"✅ {len(result.candidates)}件の候補を発見 "

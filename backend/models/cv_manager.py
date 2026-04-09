@@ -282,6 +282,14 @@ _CV_REGISTRY: dict[str, dict[str, Any]] = {
         "requires_groups": True,
         "requires_classification": False,
     },
+    "scaffold": {
+        "name": "Scaffold Split",
+        "description": "分子骨格に基づく分割",
+        "class": GroupKFold,
+        "default_params": {"n_splits": 5},
+        "requires_groups": True, # Technically requires_smiles but handled differently, relies on group input for Scaffold
+        "requires_classification": False,
+    },
 }
 
 def _get_cv_class(class_name: str) -> Type[Any]:

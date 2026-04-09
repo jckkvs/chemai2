@@ -97,6 +97,14 @@ class DoEOptimizer:
                     ex_sub[fn] = f_.levels[0]
             self.existing_X = build_model_matrix(factors, ex_sub[factor_names])
 
+        # スケール依存性解消 (S3空間): 距離計算用に標準化器を用意
+        from sklearn.preprocessing import StandardScaler
+        self.scaler = StandardScaler()
+        if len(self.cand_X) > 0:
+            self.cand_X_scaled = self.scaler.fit_transform(self.cand_X)
+        else:
+            self.cand_X_scaled = self.cand_X
+
     # ─────────────────────────────────────────────────────
     # 公開メソッド
     # ─────────────────────────────────────────────────────
@@ -180,19 +188,21 @@ class DoEOptimizer:
 
         # ── 空間充填基準 ──
         if self.criterion == "MAXIMIN":
-            # 最小点間距離を最大化
+            # 最小点間距離を最大化 (S3空間で計算)
             from scipy.spatial.distance import pdist
             if len(X) < 2:
                 return -np.inf
-            dists = pdist(X, metric="euclidean")
+            X_scaled = self.scaler.transform(X)
+            dists = pdist(X_scaled, metric="euclidean")
             return float(np.min(dists)) if len(dists) > 0 else -np.inf
 
         elif self.criterion == "MINIMAX":
-            # 全候補点から最近傍設計点への最大距離を最小化（負値で最大化に変換）
+            # 全候補点から最近傍設計点への最大距離を最小化 (S3空間で計算)
             from scipy.spatial.distance import cdist
             if len(X) < 1:
                 return -np.inf
-            d = cdist(self.cand_X, X, metric="euclidean")
+            X_scaled = self.scaler.transform(X)
+            d = cdist(self.cand_X_scaled, X_scaled, metric="euclidean")
             max_min_dist = float(np.max(np.min(d, axis=1)))
             return -max_min_dist  # 最小化 → 負値で最大化
 
@@ -233,12 +243,14 @@ class DoEOptimizer:
             from scipy.spatial.distance import pdist
             if len(X) < 2:
                 return (0.0, round(d_eff, 4))
-            dists = pdist(X, metric="euclidean")
+            X_scaled = self.scaler.transform(X)
+            dists = pdist(X_scaled, metric="euclidean")
             return (round(float(np.min(dists)), 4), round(d_eff, 4))
 
         elif self.criterion == "MINIMAX":
             from scipy.spatial.distance import cdist
-            d = cdist(self.cand_X, X, metric="euclidean")
+            X_scaled = self.scaler.transform(X)
+            d = cdist(self.cand_X_scaled, X_scaled, metric="euclidean")
             max_min_dist = float(np.max(np.min(d, axis=1)))
             return (round(max_min_dist, 4), round(d_eff, 4))
 

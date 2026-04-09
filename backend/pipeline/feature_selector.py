@@ -196,7 +196,13 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
             logger.debug("FeatureSelector: method=none → パススルー")
             return self
 
-        selector = self._build_selector(cfg, X_arr, y_arr)
+        # 特徴量評価（特にLasso等の係数ベース手法）におけるスケール依存性を排除するため、
+        # fit 用に入力行列全体を標準化する。これにより、値のスケールが異なる変数間でも
+        # 公平に重要度が評価される。transform には影響を与えない。
+        from sklearn.preprocessing import StandardScaler
+        X_fit = StandardScaler().fit_transform(X_arr)
+
+        selector = self._build_selector(cfg, X_fit, y_arr)
 
         if selector is None:
             # フォールバック: SelectFromModel(RF)
@@ -206,7 +212,7 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
             )
             selector = self._build_sfm_rf(cfg)
 
-        selector.fit(X_arr, y_arr)
+        selector.fit(X_fit, y_arr)
         self._selector = selector
 
         # サポートマスクを取得

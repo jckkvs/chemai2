@@ -65,6 +65,9 @@ class LogTransformer(BaseEstimator, TransformerMixin):
         X_arr = np.asarray(X, dtype=float)
         return np.expm1(X_arr) - max(0, self.offset - 1)
 
+    def get_feature_names_out(self, input_features: Any = None) -> np.ndarray:
+        return input_features
+
 
 class SinCosTransformer(BaseEstimator, TransformerMixin):
     """

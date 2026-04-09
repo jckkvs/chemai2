@@ -367,6 +367,25 @@ EXPLICIT_DESCRIPTOR_MAP: dict[str, tuple[WeightingType, str]] = {
     "GasteigerChargeStd":  ("mole", "Gasteiger電荷標準偏差"),
 }
 
+# 4000件の手動マッピング（JSON）の動的ロード
+import json
+import os
+import logging
+
+_logger = logging.getLogger(__name__)
+
+def _load_4000_mappings():
+    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "chemai2_4000_manual_weighting.json")
+    try:
+        if os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for k, v in data.items():
+                EXPLICIT_DESCRIPTOR_MAP[k] = (v.get("weighting", "context"), v.get("rationale", "Loaded from JSON"))
+    except Exception as e:
+        _logger.warning(f"Failed to load user descriptor mappings from {json_path}: {e}")
+
+_load_4000_mappings()
 
 # ============================================================
 # 正規表現フォールバック（未知記述子用）

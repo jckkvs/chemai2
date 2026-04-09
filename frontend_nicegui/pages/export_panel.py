@@ -93,6 +93,7 @@ def render_export_panel(state: dict[str, Any]) -> None:
                     ("docx",  "📝", "Word (.docx)",     "編集可能なWordドキュメント"),
                     ("ipynb", "📓", "Jupyter Notebook", "実行可能な解析ノートブック"),
                     ("zip",   "🗜️", "チャートZIP",       "全チャート画像を一括ダウンロード"),
+                    ("py",    "✅", "再現スクリプト",       "モデルを利用したスタンドアロン予測スクリプト"),
                 ]:
                     is_sel = format_val["v"] == fmt
 
@@ -188,7 +189,6 @@ def render_export_panel(state: dict[str, Any]) -> None:
 
             prog.value = 0.3
             lbl.text = f"⏳ {fmt.upper()} を書き込み中..."
-
             def _run_export():
                 from backend.export import PDFExporter, WordExporter, NotebookExporter, ChartBundleExporter
                 if fmt == "pdf":
@@ -199,6 +199,46 @@ def render_export_panel(state: dict[str, Any]) -> None:
                     return NotebookExporter(output_dir).export(result_dict, filename)
                 elif fmt == "zip":
                     return ChartBundleExporter(output_dir).export(result_dict, filename)
+                elif fmt == "py":
+                    import os
+                    from backend.export.reproducibility import generate_reproduction_script
+                    import joblib
+                    
+                    out_dir = Path(output_dir)
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    base_name = filename
+                    if base_name.endswith(".py"):
+                        base_name = base_name[:-3]
+                        
+                    py_path = out_dir / f"{base_name}.py"
+                    model_path = out_dir / f"{base_name}_model.pkl"
+                    
+                    # 1. Dump best model pipeline
+                    joblib.dump(ar.best_pipeline, model_path)
+                    
+                    # 2. Get columns
+                    t_col = state.get("target_col", "target")
+                    s_col = state.get("smiles_cols", [])
+                    s_col_str = s_col[0] if isinstance(s_col, list) and len(s_col) > 0 else (s_col if isinstance(s_col, str) else None)
+                    if s_col_str is None:
+                        s_col_str = state.get("smiles_col")
+                        if isinstance(s_col_str, list) and len(s_col_str) > 0:
+                            s_col_str = s_col_str[0].get("smiles_col")
+
+                    # 3. Generate reproduction script
+                    script_content = generate_reproduction_script(
+                        model_path=model_path.name,
+                        data_path="your_data.csv",
+                        target_col=t_col,
+                        task=ar.task,
+                        smiles_col=s_col_str,
+                    )
+                    
+                    with open(py_path, "w", encoding="utf-8") as f:
+                        f.write(script_content)
+                    
+                    return py_path
                 else:
                     raise ValueError(f"未対応のフォーマット: {fmt}")
 

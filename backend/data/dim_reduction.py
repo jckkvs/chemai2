@@ -276,6 +276,11 @@ def compute_dim_reduction_and_importance(df: pd.DataFrame) -> dict:
         num_df = df.select_dtypes(include=["number"]).dropna(axis=1, thresh=len(df) * 0.2)
         num_df = num_df.dropna(axis=0)  # 行欠損も除去
         
+        # 零分散列の除去
+        if not num_df.empty:
+            variances = num_df.var()
+            num_df = num_df.loc[:, variances > 1e-9]
+            
         if num_df.shape[1] < 2:
             return {"status": "skip", "message": "有効な数値特徴量が2列未満です"}
         if len(num_df) < 5:
@@ -298,8 +303,7 @@ def compute_dim_reduction_and_importance(df: pd.DataFrame) -> dict:
 
         # t-SNE計算（データサイズに応じてperplexityを自動調整）
         from sklearn.manifold import TSNE
-        perp = max(5.0, min(30.0, len(num_df) - 1))
-        # max_iter as n_iter was deprecated
+        perp = float(max(2.0, min(30.0, (len(num_df) - 1) / 3.0))) # max_iter as n_iter was deprecated
         tsne = TSNE(n_components=2, perplexity=perp, random_state=42, init="pca", max_iter=1000)
         tsne_coords = tsne.fit_transform(X_scaled)
 

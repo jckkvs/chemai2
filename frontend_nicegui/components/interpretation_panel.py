@@ -147,6 +147,27 @@ def _render_pred_actual(ar, y_true, y_pred, feat_names, X_arr) -> None:
     n_pts = len(y_t)
     sample_idx = np.arange(n_pts)
 
+    # AD情報の取得
+    in_domain = getattr(ar, "in_domain_cv", None)
+    
+    # 散布図の色分け (AD内は残差カラー、AD外は赤色で強調)
+    if in_domain is not None and len(in_domain) == len(y_t):
+        marker_color = np.where(in_domain, residuals, "rgba(255, 50, 50, 0.9)")
+        marker_line_color = np.where(in_domain, "rgba(255,255,255,0.1)", "rgba(255, 255, 255, 0.8)")
+        marker_line_width = np.where(in_domain, 0.5, 1.5)
+        texts = [
+            f"Sample {i}<br>実測: {y_t[i]:.4f}<br>予測: {y_p[i]:.4f}<br>残差: {residuals[i]:.4f}<br>AD: {'内' if in_domain[i] else '外 (⚠️ 警告)'}"
+            for i in sample_idx
+        ]
+    else:
+        marker_color = residuals
+        marker_line_color = "rgba(255,255,255,0.1)"
+        marker_line_width = 0.5
+        texts = [
+            f"Sample {i}<br>実測: {y_t[i]:.4f}<br>予測: {y_p[i]:.4f}<br>残差: {residuals[i]:.4f}"
+            for i in sample_idx
+        ]
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=rng, y=rng, mode="lines",
@@ -158,15 +179,13 @@ def _render_pred_actual(ar, y_true, y_pred, feat_names, X_arr) -> None:
         mode="markers",
         marker=dict(
             size=7,
-            color=residuals,
-            colorscale="RdBu_r",
-            showscale=True,
-            colorbar=dict(title="残差"),
+            color=marker_color,
+            colorscale="RdBu_r" if isinstance(marker_color, np.ndarray) and marker_color.dtype.kind in 'bciof' else None,
+            showscale=False,  # Colorbar gets messy with mixed types, so we hide it and rely on hover
             opacity=0.75,
-            line=dict(color="rgba(255,255,255,0.1)", width=0.5),
+            line=dict(color=marker_line_color, width=marker_line_width),
         ),
-        text=[f"Sample {i}<br>実測: {y_t[i]:.4f}<br>予測: {y_p[i]:.4f}<br>残差: {residuals[i]:.4f}"
-              for i in sample_idx],
+        text=texts,
         hovertemplate="%{text}<extra></extra>",
         name="データ点",
     ))
@@ -178,7 +197,7 @@ def _render_pred_actual(ar, y_true, y_pred, feat_names, X_arr) -> None:
         margin=dict(l=10, r=10, t=30, b=10),
         xaxis_title="実測値",
         yaxis_title="予測値",
-        title=f"予測値 vs 実測値 (OOF, n={n_pts})",
+        title=f"予測値 vs 実測値 (OOF, n={n_pts}){' - 赤点はAD外' if in_domain is not None else ''}",
         legend=dict(orientation="h", y=1.05),
     )
     _plotly_and_save(fig, "interp_parity_plot").classes("full-width")
@@ -406,13 +425,103 @@ def _render_coefficients(ar, model, X, feat_names: list[str]) -> None:
 # ═══════════════════════════════════════════════════════════════
 # SHAP パネル
 # ═══════════════════════════════════════════════════════════════
-def _render_shap_panel(ar, model, X, X_arr, feat_names, y) -> None:
-    """SHAP Summary Bar・Beeswarm・Waterfall・Dependence を描画する。"""
-    import plotly.graph_objects as go
+@ui.refreshable
+def _render_shap_panel_inner(shap_result: dict, feat_names: list, view_mode: str = "compare", max_display: int = 15):
+    """(内部更新用) SHAP結果をリアクティブに再描画する"""
+    import matplotlib.pyplot as plt
+    import shap
+    import pandas as pd
+    import numpy as np
+    import io, base64
 
-    ui.label("🔍 SHAP解析").classes("text-subtitle1 text-bold q-mb-xs")
+    # 1. モードとパラメータ制御用UI
+    with ui.row().classes("w-full items-center gap-4 mb-2"):
+        ui.label("表示モード:").classes("text-subtitle2")
+        mode_select = ui.select(
+            options={"compare": "📊 変数間比較（標準化軸）", "interpret": "🔍 単変数解釈（生データ軸）"},
+            value=view_mode,
+            on_change=lambda e: _render_shap_panel_inner.refresh(shap_result, feat_names, e.value, max_disp.value)
+        ).props("dense outlined")
+        
+        ui.label("表示数:").classes("text-subtitle2 q-ml-md")
+        max_disp = ui.slider(min=5, max=30, step=1, value=max_display,
+                             on_change=lambda e: _render_shap_panel_inner.refresh(shap_result, feat_names, view_mode, e.value)
+                            ).style("width: 150px")
+                            
+        with ui.expansion("⚙️ 詳細設定", icon="settings").props("dense flat"):
+            color_feature = ui.checkbox("色で特徴量値を表現 (Summary)", value=True).props("dense")
+            show_baseline = ui.checkbox("ベースラインを表示", value=False).props("dense")
+
+    # データ構造の取得 (MultiViewResultから)
+    if hasattr(shap_result, "get_view"):
+        # MultiViewResultオブジェクトの場合
+        view_data = shap_result.get_view(view_mode)
+        display_data = view_data["data"]
+        shap_vals = view_data["shaps"]
+    else:
+        ui.label("⚠️ 古い形式のSHAP結果です。再計算してください。").classes("text-amber")
+        return
+
+    xaxis_label = "Feature value (standardized)" if view_mode == "compare" else "Feature value (raw)"
+    tooltip = "標準化スケール: 変数間の寄与度を公平に比較" if view_mode == "compare" else "生スケール: 物理的・化学的意味で解釈可能"
+    
+    with ui.column().classes("full-width items-center q-mt-md"):
+        # pltの準備
+        plt.clf()
+        fig = plt.figure(figsize=(10, 0.3 * min(max_display, len(feat_names)) + 1.5))
+        
+        try:
+            # SHAP Summary Plot 描画（Matplotlib表示）
+            shap.summary_plot(
+                shap_vals,
+                display_data,
+                feature_names=feat_names,
+                plot_type="dot" if color_feature.value else "bar",
+                show=False,
+                max_display=max_display,
+                color_bar_label="SHAP value (impact on model output)"
+            )
+            
+            # Matplotlib の軸調整
+            ax = plt.gca()
+            ax.set_xlabel(xaxis_label)
+            ax.set_title(f"SHAP Summary Plot — {tooltip}", fontsize=10, pad=10)
+            if show_baseline.value and "base_value" in getattr(shap_result, "metadata", {}):
+                bv = shap_result.metadata["base_value"]
+                # 複数クラスや複数出力の場合は適宜対処する実装
+                if isinstance(bv, np.ndarray):
+                    bv = bv[0]
+                ax.set_title(f"SHAP Summary Plot — {tooltip}\nBaseline: {bv:.4f}", fontsize=10, pad=10)
+                
+            # NiceGUIに画像として埋め込み
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png", bbox_inches='tight', dpi=120)
+            plt.close(fig)
+            buf.seek(0)
+            img_b64 = base64.b64encode(buf.read()).decode("utf-8")
+            
+            ui.image(f"data:image/png;base64,{img_b64}").classes("w-full max-w-4xl shadow rounded")
+            
+        except Exception as e:
+            ui.label(f"❌ プロット描画エラー: {e}").classes("text-red text-caption")
+            plt.close(fig)
+
+    # ガイダンス表示
+    if view_mode == "interpret":
+        ui.markdown(
+            "> 💡 **解釈のヒント**: 横軸の値は生データです。\n"
+            "> 例: `MolWt=300` の点が右上にあれば、分子量300の分子は予測値を**正に押し上げる**傾向があります。"
+        ).classes("text-caption text-grey-6 bg-grey-1 p-2 rounded full-width q-mt-md")
+
+
+def _render_shap_panel(ar, model, X, X_arr, feat_names, y) -> None:
+    """SHAP解析のエントリーポイント"""
+    from backend.interpret.shap_interpreter import calculate_shap_values
+    
+    ui.label("🔍 SHAP解析 (二重スケール対応版)").classes("text-subtitle1 text-bold q-mb-xs")
     ui.label(
-        "Shapley Additive exPlanations: 各特徴量の予測への平均的な寄与を測定します。"
+        "Shapley Additive exPlanations: 各特徴量の予測への寄与を正しく測定します。"
+        "生データと標準化データの両方でプロットを解釈できます。"
     ).classes("text-caption text-grey-5 q-mb-md")
 
     shap_container = ui.column().classes("full-width")
@@ -421,145 +530,37 @@ def _render_shap_panel(ar, model, X, X_arr, feat_names, y) -> None:
         shap_container.clear()
         with shap_container:
             with ui.card().classes("q-pa-sm glass-card full-width"):
-                prog = ui.linear_progress(value=0, show_value=False).props("color=cyan rounded")
-                lbl  = ui.label("⏳ SHAP値を計算中...").classes("text-grey-5 text-caption")
+                prog = ui.linear_progress(value=0.2, show_value=False).props("color=cyan rounded")
+                lbl  = ui.label("⏳ SHAP値を計算中... (TreeExplainerで高速化)").classes("text-grey-5 text-caption")
 
         try:
-            from backend.interpret.shap_explainer import ShapExplainer
-
+            # UI上から生の学習データ(ar.X_train_rawなどが存在すれば)を取得
+            # 存在しない場合はX(処理済み)を使うが、本来は生データを使いたい
+            X_raw_data = getattr(ar, "X_train_raw", X)
+            
             def _compute():
-                exp = ShapExplainer()
-                return exp.explain(model, X, feature_names=feat_names)
+                return calculate_shap_values(model, X_raw_data)
 
-            prog.value = 0.3
-            lbl.text = "⏳ SHAP Explainer を初期化中..."
+            prog.value = 0.5
+            lbl.text = "⏳ SHAP値と二重スケールビューを構築中..."
+            
+            # SHAP計算の非同期実行
             shap_result = await run.io_bound(_compute)
-            prog.value = 0.9
-
-            sv = shap_result.shap_values
-            if sv.ndim == 3:
-                sv = sv[:, :, 0]
-
-            fi_df = shap_result.feature_importance()
-            top20 = fi_df.head(20)
-            exp_val = float(shap_result.expected_value) if not hasattr(shap_result.expected_value, "__len__") \
-                else float(shap_result.expected_value[0])
-
+            
+            prog.value = 1.0
             shap_container.clear()
+            
             with shap_container:
-                # 1. Bar Plot
-                ui.label("📊 Feature Importance (平均|SHAP値| Top 20)").classes("text-subtitle2 q-mb-xs")
-                fig_bar = go.Figure(go.Bar(
-                    x=top20["importance"].values[::-1],
-                    y=top20["feature"].values[::-1],
-                    orientation="h",
-                    marker=dict(
-                        color=top20["importance"].values[::-1],
-                        colorscale="Blues",
-                        showscale=True,
-                        colorbar=dict(title="|SHAP|"),
-                    ),
-                    text=[f"{v:.4f}" for v in top20["importance"].values[::-1]],
-                    textposition="outside",
-                ))
-                fig_bar.update_layout(
-                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0.1)",
-                    height=max(300, 22 * len(top20)),
-                    margin=dict(l=10, r=10, t=30, b=10),
-                    xaxis_title="平均|SHAP値|",
-                    title="SHAP Feature Importance",
-                )
-                _plotly_and_save(fig_bar, "shap_bar_importance").classes("full-width")
-
-                # 2. Beeswarm (Top 10)
-                ui.separator()
-                ui.label("🐝 Beeswarm Plot (Top 10)").classes("text-subtitle2 q-mt-md q-mb-xs")
-                top10_feats = fi_df.head(10)["feature"].tolist()
-                fig_bee = go.Figure()
-                for feat in reversed(top10_feats):
-                    fi = feat_names.index(feat) if feat in feat_names else -1
-                    if fi < 0 or fi >= sv.shape[1]:
-                        continue
-                    sv_col = sv[:, fi]
-                    fv_col = X_arr[:, fi]
-                    fig_bee.add_trace(go.Scatter(
-                        x=sv_col, y=[feat] * len(sv_col), mode="markers",
-                        marker=dict(
-                            size=4, color=fv_col,
-                            colorscale="RdBu_r", opacity=0.55,
-                            showscale=False,
-                        ),
-                        name=feat, showlegend=False,
-                    ))
-                fig_bee.update_layout(
-                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0.1)",
-                    height=max(300, 35 * len(top10_feats)),
-                    margin=dict(l=10, r=10, t=30, b=10),
-                    xaxis_title="SHAP値", title="Beeswarm Plot",
-                )
-                _plotly_and_save(fig_bee, "shap_beeswarm").classes("full-width")
-
-                # 3. Waterfall (サンプル 0)
-                ui.separator()
-                ui.label("💧 Waterfall Plot (サンプル #0)").classes("text-subtitle2 q-mt-md q-mb-xs")
-                sv0 = sv[0]
-                top_w_idx = np.argsort(np.abs(sv0))[::-1][:15]
-                w_feats = [feat_names[i] if i < len(feat_names) else f"f{i}" for i in top_w_idx]
-                w_vals  = [sv0[i] for i in top_w_idx]
-                fig_wf = go.Figure(go.Waterfall(
-                    orientation="h", y=w_feats[::-1], x=w_vals[::-1],
-                    connector=dict(line=dict(color="rgba(255,255,255,0.15)")),
-                    increasing=dict(marker=dict(color="rgba(74,222,128,0.75)")),
-                    decreasing=dict(marker=dict(color="rgba(248,113,113,0.75)")),
-                    base=exp_val,
-                ))
-                fig_wf.update_layout(
-                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0.1)",
-                    height=max(300, 25 * len(w_feats)),
-                    margin=dict(l=10, r=10, t=30, b=10),
-                    xaxis_title="予測への寄与",
-                    title=f"Waterfall (ベースライン: {exp_val:.4f})",
-                )
-                _plotly_and_save(fig_wf, "shap_waterfall").classes("full-width")
-
-                # 4. Dependence (Top 1)
-                if len(top10_feats) > 0:
-                    ui.separator()
-                    t1 = top10_feats[0]
-                    ti = feat_names.index(t1) if t1 in feat_names else 0
-                    ui.label(f"📈 Dependence Plot: {t1}").classes("text-subtitle2 q-mt-md q-mb-xs")
-                    fig_dep = go.Figure(go.Scatter(
-                        x=X_arr[:, ti], y=sv[:, ti], mode="markers",
-                        marker=dict(size=5, color=sv[:, ti], colorscale="RdBu_r",
-                                    opacity=0.7, showscale=True,
-                                    colorbar=dict(title="SHAP値")),
-                    ))
-                    fig_dep.update_layout(
-                        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0.1)", height=300,
-                        margin=dict(l=10, r=10, t=30, b=10),
-                        xaxis_title=t1, yaxis_title=f"SHAP値 ({t1})",
-                        title=f"Dependence Plot: {t1}",
-                    )
-                    _plotly_and_save(fig_dep, f"shap_dependence_{t1}").classes("full-width")
-
+                # 実際の描画パネルを配置
+                _render_shap_panel_inner(shap_result, feat_names=shap_result.metadata.get("feature_names", feat_names), view_mode="compare")
                 ui.notify("✅ SHAP解析完了", type="positive")
 
-        except ImportError as ie:
-            shap_container.clear()
-            with shap_container:
-                ui.label(f"⚠️ {ie}").classes("text-amber text-caption")
         except Exception as ex:
             shap_container.clear()
             with shap_container:
                 ui.label(f"❌ SHAP計算エラー: {ex}").classes("text-red text-caption")
 
-    ui.button("🔍 SHAP解析を実行", on_click=_run_shap).props(
-        "unelevated color=cyan size=sm no-caps"
-    )
+    ui.button("🔍 SHAP解析を実行", on_click=_run_shap).props("unelevated color=cyan size=sm no-caps")
     shap_container
 
 

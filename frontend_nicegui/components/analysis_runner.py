@@ -251,22 +251,18 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                     model_params[mkey] = {}
                 model_params[mkey].update(mcfg.default_params)
         model_params = model_params or None
-        mono_raw = state.get("monotonic_constraints", {})
-        # column_meta から単調性制約も自動マージ
+
+        # ── 新しい単調性制約システムの反映 ──
+        monotonic_constraints = state.get("feature_constraints", {})
+        
         try:
-            from frontend_nicegui.components.column_meta_editor import (
-                build_column_meta_dict,
-                extract_monotonic_from_column_meta,
-            )
+            from frontend_nicegui.components.column_meta_editor import build_column_meta_dict
             column_meta_dict = build_column_meta_dict(state)
-            mono_from_meta = extract_monotonic_from_column_meta(state)
-            # マージ: 直接設定が優先
-            merged_mono = {**mono_from_meta, **{k: v for k, v in mono_raw.items() if v != 0}}
-            monotonic_constraints = merged_mono or None
         except Exception as _e:
             logger.warning(f"column_meta の変換に失敗: {_e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             column_meta_dict = None
-            monotonic_constraints = {k: v for k, v in mono_raw.items() if v != 0} or None
         cv_key = state.get("cv_key", "auto")
 
         # ══════════════════════════════════════════════════════
@@ -403,6 +399,34 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             state["best_set_name"] = best_set_name
             state["pipeline_result"] = type("PipelineResult", (), {"elapsed": best_result.elapsed_seconds})()
 
+            # ── 評価エンジン（StratifiedMetricCalculator）の初期化と一括計算 ──
+            try:
+                from backend.metrics.stratified_evaluator import StratifiedMetricCalculator
+                
+                metric_calc = StratifiedMetricCalculator(min_group_size=10)
+                
+                # y_true, y_pred を取得
+                y_train = best_result.y_train if hasattr(best_result, 'y_train') else pd.Series(y).values
+                y_train_pred = best_result.train_predictions if hasattr(best_result, 'train_predictions') else getattr(best_result, "best_pipeline", None).predict(X_train) if getattr(best_result, "best_pipeline", None) else None
+                
+                if y_train_pred is not None:
+                    metadata = state.get("df_encoded") if state else None
+                    
+                    stratified_metrics = metric_calc.compute_all(
+                        y_true=y_train,
+                        y_pred=y_train_pred,
+                        metadata=metadata,
+                        auto_cluster=True,
+                        n_clusters=5,
+                        cluster_method="kmeans"
+                    )
+                    
+                    best_result.stratified_metrics = stratified_metrics
+                    state["stratified_metrics"] = stratified_metrics
+                
+            except Exception as ev_ex:
+                logger.warning(f"メトリック評価エンジンの初期化・計算に失敗: {ev_ex}")
+
             # ── 自動解決された単調性制約を column_meta に反映し、UIへフィードバック ──
             res_constraints = getattr(best_result, "resolved_constraints", {})
             cm = state.setdefault("column_meta", {})
@@ -410,6 +434,17 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                 if col not in cm:
                     cm[col] = {"monotonic": 0}
                 cm[col]["resolved_monotonic"] = val
+
+            # 新しい単調性制約フィードバック
+            feature_constraints = state.get("feature_constraints", {})
+            if feature_constraints:
+                active = [f for f, c in feature_constraints.items() if c.get("direction") not in ("none", None)]
+                if active:
+                    model_key = best_result.best_model_key.lower().replace(" ", "")
+                    if any(s in model_key for s in ["lgbm", "xgb", "catboost", "hist"]):
+                        ui.notify(f"✅ 単調性制約適用: {best_result.best_model_key} ({len(active)}変数: {', '.join(active[:3])}{'...' if len(active)>3 else ''})", type="positive", timeout=4000)
+                    else:
+                        ui.notify(f"⚠️ 単調性制約スキップ: {best_result.best_model_key} は非対応です（設定は保持されます）", type="warning", timeout=5000)
 
             # ── バックグラウンドでプロット（Plotly + matplotlib）を自動保存 ──
             try:

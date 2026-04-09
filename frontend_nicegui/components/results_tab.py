@@ -137,6 +137,13 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
     train_true = getattr(ar, "y_train", None)
     train_pred = getattr(ar, "train_predictions", None)
     
+    # ── データ前処理サマリー (Transparency Report) ──
+    preproc_report = getattr(ar, "preprocess_report", None)
+    if preproc_report:
+        with ui.expansion("⚙️ 前処理レポート (Transparency)", icon="auto_fix_high").classes("full-width q-mb-md glass-card"):
+            ui.label("このモデルの学習時に適用された前処理ステップの記録です。").classes("text-caption text-grey-5 q-mb-sm")
+            ui.html(f"<pre style='font-size: 0.85rem; color: #a1a1aa; white-space: pre-wrap;'>{preproc_report.generate_summary()}</pre>")
+
     # ── 指標カード行 ──
     if cv_true is not None and cv_pred is not None:
         y_cv_t = np.asarray(cv_true).ravel()
@@ -196,36 +203,65 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
             if not np.isnan(train_r2) and not np.isnan(cv_r2) and gap > 0.15:
                  ui.notify(f"⚠️ 過学習の疑い: Train-CV差={gap:.4f}", type="warning", position="bottom-right")
 
+            # --- 多階層メトリック評価システム ---
+            ui.label("📊 多階層評価指標 (Stratified Metrics)").classes("text-h6 q-mt-md")
+            
+            metrics = None
+            if state and "stratified_metrics" in state:
+                sm = state["stratified_metrics"]
+                if hasattr(sm, "to_dict"):
+                    metrics = sm.to_dict()
+                elif isinstance(sm, dict):
+                    metrics = sm
+            elif hasattr(ar, "stratified_metrics"):
+                sm = ar.stratified_metrics
+                if hasattr(sm, "to_dict"):
+                    metrics = sm.to_dict()
+            
+            if metrics is None:
+                ui.label("ℹ️ 解析を実行すると階層別評価指標が表示されます").classes("text-grey-6")
+            else:
+                from frontend_nicegui.components.metric_breakdown_panel import render_metric_breakdown_panel
+                render_metric_breakdown_panel(metrics)
+
             # --- プロット生成用ヘルパー ---
             def _create_scatter(y_t_arr, y_p_arr, title, is_train=False):
-                fig = go.Figure()
-                rng_lo = float(min(y_t_arr.min(), y_p_arr.min()))
-                rng_hi = float(max(y_t_arr.max(), y_p_arr.max()))
-                pad = (rng_hi - rng_lo) * 0.05
-                axis_range = [rng_lo - pad, rng_hi + pad]
+                # 非有限値・NaNの除去（描画クラッシュ防止）
+                mask = np.isfinite(y_t_arr) & np.isfinite(y_p_arr)
+                yt, yp = y_t_arr[mask], y_p_arr[mask]
+                if len(yt) < 2:
+                    return None
 
-                fig.add_trace(go.Scatter(
-                    x=axis_range, y=axis_range, mode="lines",
-                    line=dict(color="rgba(255,255,255,0.25)", dash="dash", width=1.5),
-                    name="y = x", hoverinfo="skip",
-                ))
-                
+                fig = go.Figure()
                 color_scale = "Purples" if is_train else "RdBu_r"
-                marker_color = y_t_arr - y_p_arr if not is_train else "#a78bfa"
+                marker_color = yt - yp if not is_train else "#a78bfa"
+                
                 fig.add_trace(go.Scatter(
-                    x=y_t_arr, y=y_p_arr, mode="markers",
+                    x=yt, y=yp, mode="markers",
                     marker=dict(size=6, color=marker_color, opacity=0.7, colorscale=color_scale if not is_train else None),
                     name="データ点",
+                    hovertemplate="実測: %{x:.3f}<br>予測: %{y:.3f}<extra></extra>"
                 ))
+
+                # アスペクト比固定（range手動設定は競合するため削除）
+                fig.update_yaxes(scaleanchor="x", scaleratio=1, gridcolor="rgba(255,255,255,0.08)")
+                fig.update_xaxes(gridcolor="rgba(255,255,255,0.08)")
+
+                # y=x 対角線
+                mn, mx = float(min(yt.min(), yp.min())), float(max(yt.max(), yp.max()))
+                fig.add_shape(type="line", x0=mn, y0=mn, x1=mx, y1=mx,
+                              line=dict(color="rgba(255,255,255,0.4)", dash="dash", width=1.5))
+
                 fig.update_layout(
                     template="plotly_dark",
                     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.15)",
                     margin=dict(l=40, r=20, t=40, b=40),
-                    xaxis=dict(title="実測値", range=axis_range, gridcolor="rgba(255,255,255,0.08)"),
-                    yaxis=dict(title="予測値", range=axis_range, scaleanchor="x", scaleratio=1, gridcolor="rgba(255,255,255,0.08)"),
+                    xaxis_title="実測値", yaxis_title="予測値",
                     title=dict(text=title, font=dict(size=14)),
+                    hovermode="closest"
                 )
                 return fig
+
 
             # --- プロット表示 (タブ切り替え) ---
             ui.label("📊 予測実測プロット").classes("text-subtitle2 q-mt-md")

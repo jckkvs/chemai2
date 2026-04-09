@@ -178,6 +178,19 @@ _CV_CATEGORIES = {
             },
         },
     },
+    "🧬 化学特化": {
+        "icon": "🧬",
+        "requires_smiles": True,
+        "methods": {
+            "scaffold": {
+                "label": "Scaffold Split (Bemis-Murcko)",
+                "desc": "分子骨格に基づく分割。新規骨格への汎化性能を評価。",
+                "params": {
+                    "n_splits": {"type": "slider", "label": "分割数 (K)", "min": 2, "max": 20, "step": 1, "default": 5},
+                },
+            },
+        },
+    },
 }
 
 
@@ -291,6 +304,14 @@ def _render_cv_dialog_content(state: dict) -> None:
                 ui.label(
                     "⚠️ グループ列が未設定です。「列の役割」タブでグループ列を指定してください。\n"
                     "　  グループ列なしでも選択はできますが、解析時に自動でKFoldに切り替わります。"
+                ).classes("text-warning text-caption q-mb-sm")
+                
+            has_smiles = bool(state.get("smiles_cols") or state.get("mix_smiles_cols") or state.get("smiles_col") or state.get("smiles_column"))
+            is_smiles_cat = cat_info.get("requires_smiles", False)
+            if is_smiles_cat and not has_smiles:
+                ui.label(
+                    "⚠️ SMILES列が見つかりません。SMILES列を含むデータを読み込むか、役割を設定してください。\n"
+                    "　  SMILES列なしでも選択はできますが、解析時に自動でKFoldに切り替わります。"
                 ).classes("text-warning text-caption q-mb-sm")
 
             available = {}

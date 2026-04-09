@@ -21,6 +21,54 @@ from sklearn.metrics import (
     f1_score,
     roc_auc_score,
 )
+from sklearn.base import clone
+from typing import Dict, Any
+
+def _execute_prediction_pipeline(
+    estimator, X_train: np.ndarray, y_arr: np.ndarray, cv_obj
+) -> Dict[str, Any]:
+    """
+    予測値生成・指標計算の安全実行ラッパー。
+    同期呼び出しを想定（フロントエンドで run.io_bound に委譲）。
+    """
+    if len(y_arr) == 0:
+        raise ValueError("目的変数が空です")
+    if np.ptp(y_arr) < 1e-9:
+        return {
+            "train_preds": getattr(estimator, "predict", lambda x: np.zeros(len(x)))(X_train),
+            "oof_preds": np.full_like(y_arr, np.nan, dtype=float),
+            "train_r2": float('nan'), "cv_r2": float('nan'), "gap": float('nan'),
+            "y_true": y_arr
+        }
+    if X_train.shape[0] != len(y_arr):
+        raise ValueError(f"特徴量行列と目的変数の行数が不一致: X={X_train.shape[0]}, y={len(y_arr)}")
+
+    from sklearn.model_selection import cross_val_predict
+    try:
+        oof_preds = cross_val_predict(
+            estimator, X_train, y_arr, cv=cv_obj, n_jobs=1,
+            method="predict"
+        )
+    except Exception as e:
+        raise RuntimeError(f"CV予測に失敗: {e}")
+
+    full_pipe = clone(estimator)
+    full_pipe.fit(X_train, y_arr)
+    train_preds = full_pipe.predict(X_train)
+
+    train_r2 = r2_score(y_arr, train_preds)
+    cv_r2 = r2_score(y_arr, oof_preds)
+    gap = train_r2 - cv_r2
+
+    return {
+        "train_preds": train_preds,
+        "oof_preds": oof_preds,
+        "train_r2": float(train_r2),
+        "cv_r2": float(cv_r2),
+        "gap": float(gap),
+        "y_true": y_arr,
+        "best_pipeline": full_pipe
+    }
 
 from backend.data.type_detector import TypeDetector, DetectionResult
 from backend.data.preprocessor import Preprocessor, PreprocessConfig, build_full_pipeline
@@ -57,12 +105,18 @@ class AutoMLResult:
     holdout_true: np.ndarray | None = None
     # Trainデータの予測 (全データでの学習後の予測値)
     train_predictions: np.ndarray | None = None
+    train_true: np.ndarray | None = None
     # SMILES相関係数とTransformerの保持
     smiles_correlations: dict[str, float] = field(default_factory=dict)
     smiles_transformer: Any | None = None
     # 自動解決された単調性制約の保持
     resolved_constraints: dict[str, int] = field(default_factory=dict)
-
+    # 不確実性と適用領域 (Applicability Domain) の保持
+    ad_distance_cv: np.ndarray | None = None
+    in_domain_cv: np.ndarray | None = None
+    uncertainty_cv: np.ndarray | None = None
+    # Preprocessing Transparency Report
+    preprocess_report: Any | None = None
 
 class AutoMLEngine:
     """
@@ -246,19 +300,44 @@ class AutoMLEngine:
         else:
             cv_key = self.cv_key
 
+        if cv_key == "scaffold":
+            _chosen_smiles_col = None
+            if isinstance(smiles_col, str):
+                _chosen_smiles_col = smiles_col
+            elif isinstance(smiles_col, list) and len(smiles_col) > 0:
+                _chosen_smiles_col = smiles_col[0].get("smiles_col")
+            
+            if _chosen_smiles_col and _chosen_smiles_col in df.columns:
+                try:
+                    from rdkit.Chem.Scaffolds.MurckoScaffold import MurckoScaffoldSmiles
+                    def get_scaffold(s):
+                        try:
+                            if pd.isna(s): return "unknown"
+                            return MurckoScaffoldSmiles(str(s))
+                        except Exception:
+                            return "unknown"
+                    groups = df[_chosen_smiles_col].apply(get_scaffold).values
+                    logger.info(f"Scaffold Split groups computed from {_chosen_smiles_col}.")
+                except ImportError:
+                    logger.warning("RDKit is not installed. Falling back to KFold.")
+                    cv_key = "stratified_kfold" if task == "classification" else "kfold"
+            else:
+                logger.warning("SMILES column not found for Scaffold Split. Falling back to KFold.")
+                cv_key = "stratified_kfold" if task == "classification" else "kfold"
+
         # GroupKFold系の場合: グループ数 >= n_splits のバリデーション
-        if cv_key in ("group_kfold", "leave_one_group_out") and groups is not None:
+        if cv_key in ("group_kfold", "leave_one_group_out", "scaffold") and groups is not None:
             n_unique_groups = len(np.unique(groups))
             if n_unique_groups < self.cv_folds:
                 if n_unique_groups >= 2:
                     logger.warning(
-                        f"GroupKFold: グループ数({n_unique_groups}) < n_splits({self.cv_folds})。"
+                        f"{cv_key}: グループ数({n_unique_groups}) < n_splits({self.cv_folds})。"
                         f"n_splitsを{n_unique_groups}に自動調整します。"
                     )
                     self.cv_folds = n_unique_groups
                 else:
                     logger.warning(
-                        f"GroupKFold: グループ数({n_unique_groups})が不足。通常KFoldにフォールバックします。"
+                        f"{cv_key}: グループ数({n_unique_groups})が不足。通常KFoldにフォールバックします。"
                     )
                     cv_key = "stratified_kfold" if task == "classification" else "kfold"
                     groups = None
@@ -310,37 +389,31 @@ class AutoMLEngine:
             )
             try:
                 model_inst = get_model(mkey, task=task, **self.model_params.get(mkey, {}))
-                # 単調性制約を適用（ネイティブ対応 or ソフト制約ラッパー）
-                # column_meta_dict と monotonic_constraints_dict をマージして使用
-                if self.monotonic_constraints_dict or self.column_meta_dict:
-                    try:
-                        from backend.pipeline.column_selector import ColumnMeta
-                        from backend.pipeline.pipeline_builder import apply_monotonic_constraints
-                        # 優先度: column_meta_dict > monotonic_constraints_dict
-                        _col_meta: dict[str, ColumnMeta] = {}
-                        # まず monotonic_constraints_dict から
-                        for col in X_train.columns:
-                            mono_val = self.monotonic_constraints_dict.get(col, 0)
-                            _col_meta[col] = ColumnMeta(monotonic=mono_val)
-                        # 次に column_meta_dict で上書き（より詳細な情報を持つ）
-                        for col, meta in self.column_meta_dict.items():
-                            if col in X_train.columns:
-                                if isinstance(meta, ColumnMeta):
-                                    _col_meta[col] = meta
-                                elif isinstance(meta, dict):
-                                    _col_meta[col] = ColumnMeta.from_dict(meta)
-                        model_inst = apply_monotonic_constraints(
-                            model_inst, _col_meta,
-                            feature_names=list(X_train.columns)
-                        )
-                    except Exception as _e:
-                        logger.warning(f"単調性制約適用をスキップ ({mkey}): {_e}")
-
+                
+                # パイプラインを先に構築し、前処理器を fit() してS4特徴量空間を取得する
                 pipeline_base = build_full_pipeline(
                     detection_result, model_inst,
                     target_col=target_col,
                     config=preprocess_cfg,
                 )
+
+                if self.monotonic_constraints_dict:
+                    try:
+                        from backend.models.monotonicity_adapter import apply_monotonicity_constraints
+                        
+                        preprocessor_step = pipeline_base.named_steps["preprocess"]
+                        preprocessor_step.fit(X_train)
+
+                        constrained_model = apply_monotonicity_constraints(
+                            estimator=model_inst,
+                            pipeline=preprocessor_step,
+                            constraints_dict=self.monotonic_constraints_dict
+                        )
+                        # パイプラインの最終step (model) を置換
+                        pipeline_base.steps[-1] = ("model", constrained_model)
+
+                    except Exception as _e:
+                        logger.warning(f"単調性制約適用をスキップ ({mkey}): {_e}", exc_info=True)
                 # SMILES列があった場合: CV実行は変換済みX_trainで行う（smiles_varsなし）。
                 # ── 理由: fold毎にSMILS変換すると、fold内の分子セットによって生成される記述子列が
                 # ── 変わり「A given column is not a column of the dataframe」KeyErrorが発生する。
@@ -393,14 +466,20 @@ class AutoMLEngine:
         self.progress_callback(5, total_steps, f"最良モデル({best_key})を全データで学習中...")
         best_model = get_model(best_key, task=task, **self.model_params.get(best_key, {}))
         # 最良モデルにも単調性制約を適用
-        if self.monotonic_constraints_dict:
+        if self.monotonic_constraints_dict or self.column_meta_dict:
             try:
                 from backend.pipeline.column_selector import ColumnMeta
                 from backend.pipeline.pipeline_builder import apply_monotonic_constraints
-                _col_meta_best = {
-                    col: ColumnMeta(monotonic=self.monotonic_constraints_dict.get(col, 0))
-                    for col in X_train.columns
-                }
+                _col_meta_best: dict[str, ColumnMeta] = {}
+                for col in X_train.columns:
+                    mono_val = self.monotonic_constraints_dict.get(col, 0)
+                    _col_meta_best[col] = ColumnMeta(monotonic=mono_val)
+                for col, meta in self.column_meta_dict.items():
+                    if col in X_train.columns:
+                        if isinstance(meta, ColumnMeta):
+                            _col_meta_best[col] = meta
+                        elif isinstance(meta, dict):
+                            _col_meta_best[col] = ColumnMeta.from_dict(meta)
                 best_model = apply_monotonic_constraints(
                     best_model, _col_meta_best,
                     feature_names=list(X_train.columns)
@@ -429,7 +508,14 @@ class AutoMLEngine:
         # パイプラインの前処理部分(estimator以外)でtransformし、
         # 「実際にモデルに入力された最終データ」を取得する
         processed_X_final: pd.DataFrame | None = None
+        preproc_report = None
         try:
+            from backend.preprocessing.report import PreprocessingReport
+            preproc_report = PreprocessingReport()
+            preproc_report.original_features_count = X_for_eda.shape[1]
+            if preprocess_cfg:
+                preproc_report.scaler_used = preprocess_cfg.scaler
+                
             # Pipeline[-1]がestimator。Pipeline[:-1]が前処理ステップ群。
             preprocessor_steps = best_pipeline[:-1]
             X_transformed = preprocessor_steps.transform(X_for_eda)
@@ -445,6 +531,16 @@ class AutoMLEngine:
             processed_X_final = pd.DataFrame(
                 X_transformed, columns=feat_names, index=X_for_eda.index
             )
+            preproc_report.final_features_count = processed_X_final.shape[1]
+            
+            # Simple difference heuristic
+            dropped = set(X_for_eda.columns) - set(processed_X_final.columns)
+            preproc_report.dropped_cols = list(dropped)
+            num_cols = X_for_eda.select_dtypes(include='number').columns
+            if X_for_eda[num_cols].isna().any().any():
+                preproc_report.missing_value_handled = True
+                preproc_report.imputations = {c: preprocess_cfg.numerical_imputer for c in num_cols if X_for_eda[c].isna().any()}
+
         except Exception as e:
             logger.warning(f"前処理後データの取得に失敗: {e}")
             processed_X_final = X_for_eda  # フォールバック: 変換済データ
@@ -480,6 +576,22 @@ class AutoMLEngine:
         except Exception as e:
             logger.warning(f"OOF予測の計算に失敗: {e}")
             oof_preds = None
+
+        # ── AD (適用領域) と不確実性の計算 ──
+        ad_distance_cv: np.ndarray | None = None
+        in_domain_cv: np.ndarray | None = None
+        uncertainty_cv: np.ndarray | None = None
+        if processed_X_final is not None and oof_preds is not None:
+            try:
+                from backend.metrics.uncertainty import compute_ad_and_uncertainty
+                X_mat = processed_X_final.values
+                # 今回はCV全データに対して、自身を学習データとしてADを計算する (PCA Mahalanobis)
+                ad_res = compute_ad_and_uncertainty(X_new=X_mat, X_train=X_mat, predictions=oof_preds)
+                ad_distance_cv = ad_res.get("ad_distance")
+                in_domain_cv = ad_res.get("in_domain")
+                uncertainty_cv = ad_res.get("uncertainty")
+            except Exception as e:
+                logger.warning(f"AD/Uncertainty計算に失敗: {e}")
 
         self.progress_callback(6, total_steps, "完了!")
         elapsed = time.time() - start
@@ -532,9 +644,14 @@ class AutoMLEngine:
             oof_predictions=oof_preds,
             oof_true=y if oof_preds is not None else None,
             train_predictions=train_preds,
+            train_true=y if train_preds is not None else None,
             smiles_transformer=_smiles_transformer_for_cv,
             smiles_correlations=_smiles_correlations,
             resolved_constraints=resolved_constraints,
+            preprocess_report=preproc_report,
+            ad_distance_cv=ad_distance_cv,
+            in_domain_cv=in_domain_cv,
+            uncertainty_cv=uncertainty_cv,
         )
 
     def run_multi_feature_sets(

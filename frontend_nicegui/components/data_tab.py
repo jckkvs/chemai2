@@ -173,12 +173,19 @@ def _render_data_load(state: dict) -> None:
         name = e.name
         try:
             if name.endswith(".csv"):
-                state["df"] = pd.read_csv(io.BytesIO(content))
+                # 型崩壊防止: 高精度で読み込みつつ、int/floatはfloat64へ寄せる
+                df_loaded = pd.read_csv(io.BytesIO(content), float_precision="high")
             elif name.endswith((".xlsx", ".xls")):
-                state["df"] = pd.read_excel(io.BytesIO(content))
+                df_loaded = pd.read_excel(io.BytesIO(content))
             else:
                 upload_status.text = "❌ CSV/Excelファイルのみ対応"
                 return
+            
+            # S0 (Raw Data)段階での精度保証: 全ての数値列を float64 キャスト
+            for col in df_loaded.select_dtypes(include=['float16', 'float32', 'int8', 'int16', 'int32', 'int64']).columns:
+                df_loaded[col] = df_loaded[col].astype('float64')
+
+            state["df"] = df_loaded
             state["filename"] = name
             state["automl_result"] = None
             state["pipeline_result"] = None

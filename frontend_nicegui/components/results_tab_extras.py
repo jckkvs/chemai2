@@ -290,30 +290,71 @@ def _render_extra_visualizations(ar, state: dict) -> None:
                     from sklearn.inspection import partial_dependence
 
                     def _calc():
-                        return partial_dependence(model, X, features=[fi], grid_resolution=50)
+                        # kind="both" を指定して PDP（平均）と ICE（個別）の両方を計算
+                        return partial_dependence(model, X, features=[fi], grid_resolution=50, kind="both")
 
                     pd_result = await nicegui_run.io_bound(_calc)
                     grid = pd_result["grid_values"][0]
                     avg  = pd_result["average"][0]
+                    individuals = pd_result.get("individual", np.array([]))
+                    if len(individuals.shape) == 3:
+                        individuals = individuals[0]  # num_classes x n_samples x grid_points -> n_samples x grid_points
+
+                    # 生スケールへの逆変換 (X_train_raw が存在する場合)
+                    display_grid = grid
+                    X_raw = getattr(ar, "X_train_raw", None)
+                    if X_raw is not None and hasattr(X_raw, "columns") and feat_sel.value in X_raw.columns:
+                        raw_col = X_raw[feat_sel.value]
+                        proc_col = X[feat_sel.value] if hasattr(X, "columns") else X[:, fi]
+                        
+                        p_min, p_max = float(proc_col.min()), float(proc_col.max())
+                        r_min, r_max = float(raw_col.min()), float(raw_col.max())
+                        
+                        if abs(p_max - p_min) > 1e-6:
+                            slope = (r_max - r_min) / (p_max - p_min)
+                            intercept = r_min - slope * p_min
+                            display_grid = grid * slope + intercept
+                            logger.debug(f"PDP X-axis inverse transformed for {feat_sel.value}")
+
                     with pdp_container:
-                        fig_pdp = go.Figure(go.Scatter(
-                            x=grid, y=avg, mode="lines+markers",
-                            line=dict(color="#00d4ff", width=2),
-                            marker=dict(size=4),
+                        fig_pdp = go.Figure()
+                        
+                        # ICE線の描画（最大100本程度に間引く）
+                        if len(individuals) > 0:
+                            n_samples = len(individuals)
+                            sample_idx = np.random.choice(n_samples, size=min(n_samples, 100), replace=False)
+                            for i in sample_idx:
+                                fig_pdp.add_trace(go.Scatter(
+                                    x=display_grid, y=individuals[i], mode="lines",
+                                    line=dict(color="rgba(100, 150, 200, 0.1)", width=1),
+                                    showlegend=False,
+                                    hoverinfo="skip"
+                                ))
+
+                        # PDP線（平均）の描画
+                        fig_pdp.add_trace(go.Scatter(
+                            x=display_grid, y=avg, mode="lines+markers",
+                            line=dict(color="#00d4ff", width=3),
+                            marker=dict(size=6),
+                            name="Average (PDP)"
                         ))
+                        
+                        xaxis_type = "生データスケール" if X_raw is not None else "標準化スケール"
                         fig_pdp.update_layout(
                             template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                            plot_bgcolor="rgba(0,0,0,0.1)", height=320,
-                            margin=dict(l=10, r=10, t=30, b=10),
-                            xaxis_title=feat_sel.value, yaxis_title="平均予測値",
-                            title=f"PDP: {feat_sel.value}",
+                            plot_bgcolor="rgba(0,0,0,0.1)", height=380,
+                            margin=dict(l=10, r=10, t=40, b=10),
+                            xaxis_title=f"{feat_sel.value} ({xaxis_type})", yaxis_title="予測値",
+                            title=f"PDP & ICE プロット: {feat_sel.value}",
+                            showlegend=True,
+                            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
                         )
                         ui.plotly(fig_pdp).classes("full-width")
                 except Exception as ex:
                     with pdp_container:
                         ui.label(f"PDP計算エラー: {ex}").classes("text-red text-caption")
 
-            ui.button("📐 PDP を計算", on_click=_run_pdp).props("outline color=cyan size=sm no-caps")
+            ui.button("📐 PDP & ICE を計算", on_click=_run_pdp).props("outline color=cyan size=sm no-caps")
             pdp_container
 
     # ─── 2. 特徴量相関ヒートマップ ───
