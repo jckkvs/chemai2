@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 サンプルデータ生成スクリプト
-- SMILES系データ：RDKit記述子から擬似目的変数を生成
-- テーブルデータ：scikit-learnのmake_regression + 人工的ノイズ・欠損値追加
+- SMILES 系データ：RDKit 記述子から擬似目的変数を生成
+- テーブルデータ：scikit-learn の make_regression + 人工的ノイズ・欠損値追加
+- 混合物データ：化合物 3 列（SMILES）、回帰、重量 WT％での分率
 """
 import pandas as pd
 import numpy as np
@@ -11,7 +12,7 @@ from rdkit.Chem import Descriptors, Crippen, Lipinski
 from sklearn.datasets import make_regression, make_classification
 import os
 
-# ========== SMILESデータ生成 ==========
+# ========== SMILES データ生成 ==========
 SMILES_POOL = [
     # 医薬品
     "CC(=O)Oc1ccccc1C(=O)O",  # Aspirin
@@ -29,24 +30,24 @@ SMILES_POOL = [
 ]
 
 def calc_pseudo_targets(smiles: str) -> dict:
-    """SMILESから擬似目的変数を計算（物性値の相関を模擬）"""
+    """SMILES から擬似目的変数を計算（物性値の相関を模擬）"""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return {"logS": np.nan, "pIC50": np.nan, "class": -1}
     
-    # RDKit記述子
+    # RDKit 記述子
     mw = Descriptors.MolWt(mol)
     logp = Crippen.MolLogP(mol)
     tpsa = Descriptors.TPSA(mol)
     hbd = Lipinski.NumHDonors(mol)
     
-    # 擬似logS（水溶性）: MW↑・logP↑・TPSA↑ → 溶解度↓
+    # 擬似 logS（水溶性）: MW↑・logP↑・TPSA↑ → 溶解度↓
     logS = -0.01*mw - 0.3*logp - 0.005*tpsa + np.random.normal(0, 0.3)
     
-    # 擬似pIC50（活性）: 複雑な構造ほど高い活性を模擬
+    # 擬似 pIC50（活性）: 複雑な構造ほど高い活性を模擬
     pIC50 = 3 + 0.005*mw + 0.2*logp - 0.1*hbd + np.random.normal(0, 0.5)
     
-    # 分類ラベル（logP閾値ベース）
+    # 分類ラベル（logP 閾値ベース）
     cls = 1 if logp > 2.5 else 0
     
     return {
@@ -71,6 +72,79 @@ def generate_smiles_samples(n: int, filename: str):
             "Source": "Synthetic",
             "Notes": "Generated for testing"
         })
+    df = pd.DataFrame(data)
+    df.to_csv(filename, index=False, encoding="utf-8-sig")
+    print(f"Generated {filename} ({len(df)} rows)")
+
+# ========== 混合物データ生成 ==========
+def generate_mixture_samples(n: int, filename: str):
+    """
+    混合物データ生成：化合物 3 列（SMILES）、回帰目的変数、重量％分率（WT%）
+    - 3 成分の混合物を想定
+    - 各成分の重量％は合計 100% になるように正規化
+    - 目的変数は各成分の寄与と相互作用から擬似生成
+    """
+    # 使用する化合物プール（異なる特性を持つものを選択）
+    compound_pool = [
+        ("CCO", "Ethanol"),                    # 極性溶媒
+        ("CC(C)O", "Isopropanol"),             # 極性溶媒
+        ("c1ccccc1", "Benzene"),               # 非極性溶媒
+        ("CC1=CC=CC=C1", "Toluene"),           # 非極性溶媒
+        ("CC(=O)Oc1ccccc1C(=O)O", "Aspirin"),  # 医薬品
+        ("CN1C=NC2=C1C(=O)N(C(=O)N2C)C", "Caffeine"),  # 天然物
+        ("CCC1=CC(=C(C=C1)O)C=O", "Vanillin"), # 香料
+        ("CC(C)Cc1ccc(cc1)C(C)C(=O)O", "Ibuprofen"),  # 医薬品
+    ]
+    
+    data = []
+    for i in range(n):
+        # 3 成分をランダム選択（重複あり）
+        indices = np.random.choice(len(compound_pool), size=3, replace=True)
+        
+        # 重量％の生成（合計 100% に正規化）
+        raw_weights = np.random.uniform(10, 90, size=3)
+        wt_percent = (raw_weights / raw_weights.sum() * 100).round(2)
+        
+        # 化合物情報
+        smiles_list = [compound_pool[idx][0] for idx in indices]
+        names = [compound_pool[idx][1] for idx in indices]
+        
+        # 擬似目的変数の生成（各成分の特性と相互作用を考慮）
+        mol_props = []
+        for smi in smiles_list:
+            mol = Chem.MolFromSmiles(smi)
+            if mol:
+                mw = Descriptors.MolWt(mol)
+                logp = Crippen.MolLogP(mol)
+                tpsa = Descriptors.TPSA(mol)
+                mol_props.append((mw, logp, tpsa))
+            else:
+                mol_props.append((0, 0, 0))
+        
+        # 重量％を係数として使用（0-1 の範囲）
+        frac = wt_percent / 100.0
+        
+        # 擬似物性値：各成分の寄与の加重平均 + 相互作用項 + ノイズ
+        base_property = sum(frac[j] * (mol_props[j][1] * 0.5 + mol_props[j][2] * 0.01) for j in range(3))
+        interaction = frac[0] * frac[1] * 5 + frac[1] * frac[2] * 3  # 二元相互作用
+        target = base_property + interaction + np.random.normal(0, 2)
+        
+        data.append({
+            "Compound_1_SMILES": smiles_list[0],
+            "Compound_1_Name": names[0],
+            "Compound_1_WT%": wt_percent[0],
+            "Compound_2_SMILES": smiles_list[1],
+            "Compound_2_Name": names[1],
+            "Compound_2_WT%": wt_percent[1],
+            "Compound_3_SMILES": smiles_list[2],
+            "Compound_3_Name": names[2],
+            "Compound_3_WT%": wt_percent[2],
+            "Target_Property": round(target, 3),
+            "Sample_ID": f"MIX{i+1:04d}",
+            "Total_WT%": wt_percent.sum(),  # 検証用（常に 100%）
+            "Notes": "Synthetic mixture data"
+        })
+    
     df = pd.DataFrame(data)
     df.to_csv(filename, index=False, encoding="utf-8-sig")
     print(f"Generated {filename} ({len(df)} rows)")
@@ -110,7 +184,7 @@ def generate_tabular_samples(n: int, filename: str, task: str = "regression"):
 if __name__ == "__main__":
     os.makedirs("data/samples", exist_ok=True)
     
-    # SMILESデータ
+    # SMILES データ
     generate_smiles_samples(25, "data/samples/smiles_25_quick.csv")
     generate_smiles_samples(100, "data/samples/smiles_100_ml.csv")
     generate_smiles_samples(500, "data/samples/smiles_500_stress.csv")
@@ -119,5 +193,9 @@ if __name__ == "__main__":
     generate_tabular_samples(50, "data/samples/tabular_50_simple.csv", "regression")
     generate_tabular_samples(200, "data/samples/tabular_200_complex.csv", "regression")
     generate_tabular_samples(1000, "data/samples/tabular_1000_large.csv", "regression")
+    
+    # 混合物データ
+    generate_mixture_samples(30, "data/samples/mixture_30_simple.csv")
+    generate_mixture_samples(100, "data/samples/mixture_100_ml.csv")
     
     print("\n🎉 All sample data generated successfully!")
