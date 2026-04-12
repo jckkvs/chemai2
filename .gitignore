@@ -1,1 +1,1 @@
-(data/samples/ is not added to .gitignore because CSV files appear to be intentional data samples for the project)
+(data/samples/ -- only data files being modified, no build artifacts, dependencies, or temp files to ignore)
