@@ -146,8 +146,8 @@ class ColumnSelectorWrapper(BaseEstimator, TransformerMixin):
             )
 
         self._input_columns = X.columns.tolist()
-        _cols = self.columns or []           # fit時にNone対e応
-        _meta = self.column_meta or {}       # fit時にNone対e応
+        _cols = self.columns or []           # fit時にNone対応
+        _meta = self.column_meta or {}       # fit時にNone対応
 
         if self.mode == "all":
             self._selected_columns = self._input_columns.copy()

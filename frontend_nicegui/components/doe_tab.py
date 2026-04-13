@@ -46,7 +46,7 @@ def render_doe_tab(app_state: dict | None = None) -> None:
         "factors": [],           # list[dict] — 因子定義
         "existing_df": None,     # pd.DataFrame | None
         "n_new": 8,
-        "criterion": "D",
+        "criterion": "MAXIMIN",
         "oa_name": "L8(2\u2077)",  # 直交表名
         "max_candidates": 5000,
         "random_seed": 42,

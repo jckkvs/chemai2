@@ -462,6 +462,56 @@ _RECOMMENDATION_DATA = [
             DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率", "Polymer Physics", "トポロジー系"),
         ]
     ),
+    TargetRecommendations(
+        target_name="分子構造カウント (Structural Counts)",
+        summary="原子数・結合数・官能基数など、分子構造の数え上げに基づく記述子群。分子サイズ・複雑性・官能基の存在を直接反映し、多くの物性予測で基礎的な役割を果たします。",
+        category="カウント系",
+        descriptors=[
+            DescriptorInfo("HeavyAtomCount", "RDKit", "重原子数（水素を除く原子の総数）", "RDKit Descriptors", "カウント系"),
+            DescriptorInfo("NumRotatableBonds", "RDKit", "回転可能結合数（分子の柔軟性の指標）", "Veber et al. (2002)", "カウント系"),
+            DescriptorInfo("RingCount", "RDKit", "環の総数", "RDKit Descriptors", "カウント系"),
+            DescriptorInfo("NumAromaticRings", "RDKit", "芳香環の数", "RDKit Descriptors", "カウント系"),
+            DescriptorInfo("NumSaturatedRings", "RDKit", "飽和環の数", "RDKit Descriptors", "カウント系"),
+            DescriptorInfo("NumAliphaticRings", "RDKit", "脂肪族環の数", "RDKit Descriptors", "カウント系"),
+            DescriptorInfo("NumHAcceptors", "RDKit", "水素結合受容体数", "Lipinski (1997)", "カウント系"),
+            DescriptorInfo("NumHDonors", "RDKit", "水素結合供与体数", "Lipinski (1997)", "カウント系"),
+            DescriptorInfo("NumAromaticHeterocycles", "RDKit", "芳香族ヘテロ環の数", "RDKit Descriptors", "カウント系"),
+            DescriptorInfo("fr_Al_OH", "RDKit", "脂肪族水酸基の数", "RDKit Fragment Descriptors", "カウント系"),
+            DescriptorInfo("fr_Ar_OH", "RDKit", "芳香族水酸基の数", "RDKit Fragment Descriptors", "カウント系"),
+            DescriptorInfo("fr_NH2", "RDKit", "第一級アミン基の数", "RDKit Fragment Descriptors", "カウント系"),
+            DescriptorInfo("fr_ether", "RDKit", "エーテル結合の数", "RDKit Fragment Descriptors", "カウント系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="溶解度・分配係数 (Solubility / Partition)",
+        summary="溶解度やLogPなどの溶液中の分子の振る舞いに関する記述子群。薬理動態・材料の相溶性・溶媒選択に不可欠。",
+        category="溶解性・分配系",
+        descriptors=[
+            DescriptorInfo("MolLogP", "RDKit", "LogP（オクタノール/水分配係数、脂溶性の指標）", "Wildman-Crippen method", "溶解性・分配系"),
+            DescriptorInfo("TPSA", "RDKit", "トポロジカル極性表面積（水溶性・膜透過性に相関）", "Ertl et al. (2000)", "溶解性・分配系"),
+            DescriptorInfo("MolMR", "RDKit", "モル屈折（分子の大きさと分極率の複合指標）", "Wildman-Crippen method", "溶解性・分配系"),
+            DescriptorInfo("LabuteASA", "RDKit", "アクセス可能表面積（溶媒との接触面積）", "Labute (2000)", "溶解性・分配系"),
+            DescriptorInfo("NumHAcceptors", "RDKit", "水素結合受容体数（水溶性への寄与）", "Lipinski (1997)", "溶解性・分配系"),
+            DescriptorInfo("NumHDonors", "RDKit", "水素結合供与体数（水溶性への寄与）", "Lipinski (1997)", "溶解性・分配系"),
+            DescriptorInfo("FractionCSP3", "RDKit", "sp3炭素比率（立体的飽和度、溶解度に影響）", "Lovering et al. (2009)", "溶解性・分配系"),
+            DescriptorInfo("DipoleMoment", "XTB", "双極子モーメント（極性溶媒への溶解性）", "GFN2-xTB", "溶解性・分配系"),
+        ]
+    ),
+    TargetRecommendations(
+        target_name="反応性指標 (Reactivity Indicators)",
+        summary="分子の反応性を評価するための電子状態・部分電荷の記述子群。触媒設計・反応条件最適化・安定性評価に活用。",
+        category="反応性系",
+        descriptors=[
+            DescriptorInfo("MaxPartialCharge", "RDKit", "最大部分電荷（求電子攻撃を受けやすい部位）", "Gasteiger charges", "反応性系"),
+            DescriptorInfo("MinPartialCharge", "RDKit", "最小部分電荷（求核攻撃を受けやすい部位）", "Gasteiger charges", "反応性系"),
+            DescriptorInfo("MaxAbsPartialCharge", "RDKit", "最大絶対部分電荷（電荷の偏りの大きさ）", "Gasteiger charges", "反応性系"),
+            DescriptorInfo("HomoEnergy", "XTB", "HOMO エネルギー（求核性・酸化されやすさ）", "GFN2-xTB / Koopmans' theorem", "反応性系"),
+            DescriptorInfo("LumoEnergy", "XTB", "LUMO エネルギー（求電子性・還元されやすさ）", "GFN2-xTB / Koopmans' theorem", "反応性系"),
+            DescriptorInfo("HomoLumoGap", "XTB", "HOMO-LUMOギャップ（化学的安定性の指標）", "GFN2-xTB", "反応性系"),
+            DescriptorInfo("HallKierAlpha", "RDKit", "Hall-Kier α値（原子の分極性に基づく反応性）", "Hall & Kier (1995)", "反応性系"),
+            DescriptorInfo("MaxAbsEStateIndex", "RDKit", "最大EState指数（局所的な電子状態の極端さ）", "Hall & Kier E-State", "反応性系"),
+        ]
+    ),
 ]
 
 def get_all_target_recommendations() -> List[TargetRecommendations]:

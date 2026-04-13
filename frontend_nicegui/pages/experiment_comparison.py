@@ -101,6 +101,8 @@ def _render_dashboard(state: dict[str, Any]) -> None:
             {"name": "best_model", "label": "最良モデル", "field": "best_model", "align": "left",   "sortable": True},
             {"name": "best_score", "label": "スコア",     "field": "best_score", "align": "center", "sortable": True},
             {"name": "metrics",    "label": "R²/Acc",    "field": "metrics",    "align": "center", "sortable": False},
+            {"name": "desc_set",   "label": "記述子セット", "field": "desc_set", "align": "left",   "sortable": True},
+            {"name": "n_descs",    "label": "記述子数",   "field": "n_descs",    "align": "center", "sortable": True},
             {"name": "n_samples",  "label": "N",          "field": "n_samples",  "align": "center", "sortable": True},
             {"name": "elapsed",    "label": "時間(秒)",   "field": "elapsed",    "align": "center", "sortable": True},
             {"name": "action",     "label": "操作",       "field": "action",     "align": "center", "sortable": False},
@@ -112,6 +114,10 @@ def _render_dashboard(state: dict[str, Any]) -> None:
             r2_or_acc = metrics_dict.get("R2", metrics_dict.get("Accuracy", "—"))
             if isinstance(r2_or_acc, float):
                 r2_or_acc = f"{r2_or_acc:.4f}"
+            # 記述子セット情報の抽出
+            prep = json.loads(exp.get("preprocess_json") or "{}")
+            desc_set_name = prep.get("descriptor_set_name", "—")
+            n_descs = prep.get("n_descriptors", "—")
             rows.append({
                 "exp_hash":  exp["exp_hash"],
                 "sel":       "☑" if exp["exp_hash"] in selected_hashes else "☐",
@@ -121,6 +127,8 @@ def _render_dashboard(state: dict[str, Any]) -> None:
                 "best_model": exp["best_model_key"],
                 "best_score": f"{exp['best_score']:.4f}",
                 "metrics":   str(r2_or_acc),
+                "desc_set":  str(desc_set_name),
+                "n_descs":   str(n_descs),
                 "n_samples": exp.get("n_samples", "—"),
                 "elapsed":   f"{exp.get('elapsed_seconds', 0):.1f}",
                 "action":    "🗑️",

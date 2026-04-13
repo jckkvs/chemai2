@@ -116,31 +116,22 @@ OPTIMIZATION_METHODS = [
 # メインレンダリング
 # ═══════════════════════════════════════════════════════════
 def render_inverse_analysis_tab(state: dict[str, Any]) -> None:
-    """逆解析タブの全UIを描画する。"""
+    """逆解析タブの全UIを描画する。
+
+    Note: ヘッダー、ワークフロー進捗バー、MOLAI セクションは
+    親コンポーネント (inverse_tab.py) が管理するため、ここでは
+    記述子最適化の設定・実行・結果のみを描画する。
+    """
 
     has_result = state.get("automl_result") is not None
     has_data = state.get("df") is not None
     target_col = state.get("target_col", "")
 
-    # ── ヘッダー ──
-    with ui.row().classes("items-center q-gutter-sm full-width q-mb-md"):
-        ui.icon("find_replace", color="purple").classes("text-h4")
-        ui.label("逆解析").classes("text-h5")
-        if has_result:
-            ui.badge("モデル準備完了 ✅", color="green").props("outline")
-        elif has_data:
-            ui.badge("設定可能 / 実行には順解析が必要", color="amber").props("outline")
-        else:
-            ui.badge("データ未読込", color="grey").props("outline")
-
-    # ── データなし → 最小限のガイドのみ表示して終了 ──
+    # ── データなし → 最小限のガイド ──
     if not has_data:
-        with ui.card().classes("full-width q-pa-md").style(
-            "border: 1px dashed rgba(255,255,255,0.2); border-radius: 10px;"
-        ):
-            with ui.row().classes("items-center q-gutter-sm"):
-                ui.icon("upload_file", color="grey").classes("text-h5")
-                ui.label("データを読み込むと逆解析の設定が可能になります").classes("text-body2 text-grey")
+        ui.label("データを読み込むと記述子最適化の設定が可能になります").classes(
+            "text-body2 text-grey"
+        )
         return
 
     # ── 逆解析設定初期化 ──
@@ -155,24 +146,6 @@ def render_inverse_analysis_tab(state: dict[str, Any]) -> None:
             "results": None,
         }
     inv = state["_inv"]
-
-    # ── ワークフロー進捗バー ──
-    with ui.row().classes("items-center q-gutter-sm q-mb-md"):
-        ui.badge("1", color="green").props("rounded")
-        ui.label("データ読込").classes("text-body2 text-green")
-        ui.icon("arrow_forward", color="grey")
-        ui.badge("2", color="cyan").props("rounded")
-        ui.label("逆解析設定").classes("text-body2 text-cyan text-bold")
-        ui.icon("arrow_forward", color="grey")
-        ui.badge("3", color="green" if has_result else "grey").props(
-            "rounded" if has_result else "rounded outline"
-        )
-        ui.label("順解析完了").classes(f"text-body2 {'text-green' if has_result else 'text-grey'}")
-        if has_result:
-            ui.icon("check", color="green")
-        ui.icon("arrow_forward", color="grey")
-        ui.badge("4", color="grey").props("rounded outline")
-        ui.label("逆解析実行").classes("text-body2 text-grey")
 
     # ── 使用モデル（順解析完了時のみ） ──
     if has_result:
@@ -213,10 +186,6 @@ def render_inverse_analysis_tab(state: dict[str, Any]) -> None:
     if inv.get("results") is not None:
         _render_results(state, inv)
 
-    # ── MOLAI双方向逆変換セクション（SMILES専用） ──
-    if state.get("smiles_col"):
-        ui.separator().classes("q-my-md")
-        _render_molai_bidirectional(state, inv)
 
 
 # ═══════════════════════════════════════════════════════════

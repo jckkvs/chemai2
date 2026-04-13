@@ -914,6 +914,7 @@ def main_page():
     _REBUILD_MAP = {
         "eda":        "_refresh_eda_main",
         "results":    "_refresh_results",
+        "inverse":    "_refresh_inverse",
         "export":     "_refresh_export",
         "comparison": "_refresh_experiment_comparison",
         "mixture":    "_refresh_mixture",

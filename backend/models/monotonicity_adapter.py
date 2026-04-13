@@ -32,18 +32,24 @@ def apply_monotonicity_constraints(
         orig_feat = _get_orig_name(feat)
         orig_feat_base = orig_feat.split("_")[0] if "_" in orig_feat and orig_feat not in constraints_dict else orig_feat
         
-        cfg = constraints_dict.get(orig_feat, {})
-        if not cfg:
-            cfg = constraints_dict.get(orig_feat_base, {}) # Fallback for one-hot encoded categories
-            
-        direction = cfg.get("direction", "none")
+        cfg = constraints_dict.get(orig_feat)
+        if cfg is None:
+            cfg = constraints_dict.get(orig_feat_base) # Fallback for one-hot encoded categories
         
-        if direction == "increasing":
-            val = 1
-        elif direction == "decreasing":
-            val = -1
+        # cfg が int の場合（automl.py からの直接値: 1/-1/0）と
+        # dict の場合（{"direction": "increasing"} 等）の両方に対応
+        if isinstance(cfg, int):
+            val = cfg  # 直接 +1/-1/0 として使用
+        elif isinstance(cfg, dict):
+            direction = cfg.get("direction", "none")
+            if direction == "increasing":
+                val = 1
+            elif direction == "decreasing":
+                val = -1
+            else:
+                val = 0
         else:
-            val = 0 # "unknown" や "none" は制約なしとして処理
+            val = 0 # None や未知の型は制約なしとして処理
             
         constraint_values.append(val)
         if val != 0:

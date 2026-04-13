@@ -891,6 +891,20 @@ def _render_set_management_bar(state: dict) -> None:
             "flat round dense size=sm color=amber"
         ).tooltip("全セットの比較・管理ダイアログ")
 
+        # ── セット比較ショートカット（2セット以上で表示） ──
+        if len(sets) >= 2:
+            def _open_compare():
+                from frontend_nicegui.components.descriptor_selector_dialog import (
+                    _open_set_compare_dialog,
+                )
+                _open_set_compare_dialog(sets, state)
+
+            ui.button(
+                "📊 セット比較", on_click=_open_compare,
+            ).props(
+                "outline dense size=sm no-caps color=amber"
+            ).tooltip("全セットの記述子重複・差分を比較")
+
         # ── アクティブセット数（2以上の場合） ──
         active_sets = [n for n, info in sets.items() if info.get("active", True)]
         if len(active_sets) > 1:
@@ -1224,6 +1238,37 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                     f"{'unelevated' if all_avail else 'outline'}"
                                     " size=md no-caps color=cyan"
                                 )
+
+                                def _apply_and_save(
+                                    engines=preset_engines,
+                                    pname=preset_name,
+                                    pinfo=preset_info,
+                                ):
+                                    _apply_preset(engines, pname, pinfo)
+                                    # セットとして保存
+                                    sets = state.get("descriptor_sets", {})
+                                    active = state.get("selected_descriptors", [])
+                                    sets[pname] = {
+                                        "engines": list(engines),
+                                        "active": True,
+                                        "descriptors": list(active),
+                                    }
+                                    state["current_set_name"] = pname
+                                    ui.notify(
+                                        f"💾 「{pname}」セットに保存しました",
+                                        type="positive",
+                                    )
+                                    if state.get("_refresh_tabs"):
+                                        state["_refresh_tabs"]()
+
+                                ui.button(
+                                    "適用＆保存",
+                                    on_click=_apply_and_save,
+                                ).props(
+                                    "outline size=sm no-caps color=teal"
+                                ).tooltip(
+                                    "プリセットを適用し、セット管理バーに保存します"
+                                )
                         
                         # --- アコーディオン展開で透明性確保（研究者・数学者用） ---
                         with ui.expansion("内訳を表示", icon="view_list").classes("full-width bg-transparent"):
@@ -1305,6 +1350,114 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                 except ImportError:
                     ui.label("recommender.py が利用できません").classes("text-warning")
 
+                # ── 記述子カテゴリ（物理的意味）別選択 ──
+                ui.separator().classes("q-my-md")
+                with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
+                    ui.icon("category", color="teal").classes("text-h6")
+                    ui.label("説明変数カテゴリ（物理的意味）で選ぶ").classes("text-subtitle1 text-bold")
+
+                ui.label(
+                    "記述子を物理・化学的な意味の観点から分類して選択できます。"
+                    "複数カテゴリの記述子を組み合わせて、目的に合った記述子セットを構築してください。"
+                ).classes("text-caption text-grey q-mb-sm")
+
+                try:
+                    from backend.chem.recommender import (
+                        get_all_descriptor_categories,
+                        get_descriptors_by_category,
+                    )
+
+                    desc_categories = get_all_descriptor_categories()
+                    _cat_icons = {
+                        "量子化学・電子状態系": "⚛️",
+                        "熱力学・相互作用系": "🔥",
+                        "立体・形状系": "📐",
+                        "トポロジー系": "🔗",
+                        "極性・官能基系": "⚡",
+                        "熱・相転移系": "🌡️",
+                        "カウント系": "🔢",
+                        "溶解性・分配系": "💧",
+                        "反応性系": "⚗️",
+                    }
+
+                    for dc_name in desc_categories:
+                        dc_descs = get_descriptors_by_category(dc_name)
+                        dc_desc_names = [d.name for d in dc_descs]
+                        dc_valid = [d for d in dc_desc_names if d in all_descs]
+                        dc_n_valid = len(dc_valid)
+                        dc_n_total = len(dc_descs)
+
+                        if dc_n_valid == 0:
+                            continue  # 計算済み記述子が0個ならスキップ
+
+                        dc_n_sel = sum(
+                            1 for dn in dc_valid
+                            if dn in state.get("selected_descriptors", [])
+                        )
+                        dc_is_all_on = (dc_n_sel == dc_n_valid and dc_n_valid > 0)
+                        dc_icon = _cat_icons.get(dc_name, "📋")
+
+                        with ui.expansion(
+                            f"{dc_icon} {dc_name} ({dc_n_sel}/{dc_n_valid}個選択中)",
+                        ).classes("full-width q-mb-xs").props("dense"):
+                            # カテゴリ全選択/全解除
+                            with ui.row().classes("q-gutter-sm q-mb-xs"):
+                                def _cat_all_on(ds=dc_valid):
+                                    s = set(state.get("selected_descriptors", []))
+                                    s.update(ds)
+                                    state["selected_descriptors"] = list(s)
+                                    ui.notify(f"{len(ds)}個追加", type="positive")
+
+                                def _cat_all_off(ds=dc_valid):
+                                    s = set(state.get("selected_descriptors", []))
+                                    s -= set(ds)
+                                    state["selected_descriptors"] = list(s)
+                                    ui.notify(f"{len(ds)}個解除", type="info")
+
+                                ui.button("✓ 全選択", on_click=_cat_all_on).props(
+                                    "outline size=xs no-caps color=cyan"
+                                )
+                                ui.button("✕ 全解除", on_click=_cat_all_off).props(
+                                    "flat size=xs no-caps color=grey"
+                                )
+                                ui.badge(
+                                    f"計算済 {dc_n_valid} / 定義 {dc_n_total}",
+                                    color="teal" if dc_n_valid == dc_n_total else "amber",
+                                ).props("outline")
+
+                            # 個別チェックボックス（グリッドレイアウト）
+                            with ui.element("div").style(
+                                "display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));"
+                                "gap: 2px;"
+                            ):
+                                for dc_di in dc_descs:
+                                    if dc_di.name not in all_descs:
+                                        continue
+                                    _dc_is_on = dc_di.name in state.get("selected_descriptors", [])
+
+                                    def _dc_toggle(val, dn=dc_di.name):
+                                        s = set(state.get("selected_descriptors", []))
+                                        if val:
+                                            s.add(dn)
+                                        else:
+                                            s.discard(dn)
+                                        state["selected_descriptors"] = list(s)
+
+                                    with ui.row().classes(
+                                        "items-center q-gutter-xs"
+                                    ).style("min-height: 28px;"):
+                                        ui.checkbox(
+                                            dc_di.name,
+                                            value=_dc_is_on,
+                                            on_change=lambda e, dn=dc_di.name: _dc_toggle(e.value, dn),
+                                        ).props("dense").style("min-width: 180px;")
+                                        ui.label(dc_di.meaning).classes(
+                                            "text-caption text-grey"
+                                        ).style("font-size: 0.72rem;")
+
+                except ImportError:
+                    pass  # recommender未インストール時は無視
+
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # タブ3: 相関係数で選ぶ
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1339,6 +1492,18 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                         ui.label(
                             f"目的変数「{target_col}」との|r|で上位を選択できます。"
                         ).classes("text-caption text-grey q-mb-sm")
+
+                        # 推奨記述子数ガイド
+                        _n_samples = len(df) if df is not None else 0
+                        _n_recommended = max(5, _n_samples // 5)
+                        with ui.row().classes("items-center q-gutter-xs q-mb-sm").style(
+                            "background: rgba(0,212,255,0.08); border-radius: 6px; padding: 4px 10px;"
+                        ):
+                            ui.icon("lightbulb", color="amber").classes("text-body2")
+                            ui.label(
+                                f"💡 推奨: サンプル数 {_n_samples} → 記述子数 ≤ {_n_recommended} 個"
+                                f"（N/5 ルール）"
+                            ).classes("text-caption text-amber")
 
                         # 相関閾値スライダー
                         with ui.row().classes("items-center q-gutter-sm q-mb-sm full-width"):
@@ -1578,32 +1743,36 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                         f"{g_sel}/{len(g_names)}", color=g_color,
                                     ).props("outline dense").classes("text-xs")
 
-                                # 個別チェックボックス+化学的意味
-                                for desc_name, desc_short in group_items:
-                                    is_on = desc_name in selected
+                                # 個別チェックボックス+化学的意味（グリッドレイアウト）
+                                with ui.element("div").style(
+                                    "display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));"
+                                    "gap: 2px;"
+                                ):
+                                    for desc_name, desc_short in group_items:
+                                        is_on = desc_name in selected
 
-                                    def _toggle(val, dn=desc_name):
-                                        s = set(state.get("selected_descriptors", []))
-                                        if val:
-                                            s.add(dn)
-                                        else:
-                                            s.discard(dn)
-                                        state["selected_descriptors"] = list(s)
+                                        def _toggle(val, dn=desc_name):
+                                            s = set(state.get("selected_descriptors", []))
+                                            if val:
+                                                s.add(dn)
+                                            else:
+                                                s.discard(dn)
+                                            state["selected_descriptors"] = list(s)
 
-                                    with ui.row().classes(
-                                        "items-center q-gutter-xs"
-                                    ).style("min-height: 26px;"):
-                                        ui.checkbox(
-                                            desc_name,
-                                            value=is_on,
-                                            on_change=lambda e, dn=desc_name: _toggle(
-                                                e.value, dn
-                                            ),
-                                        ).props("dense").style("min-width: 200px;")
-                                        if desc_short:
-                                            ui.label(desc_short).classes(
-                                                "text-caption text-grey"
-                                            ).style("font-size: 0.7rem;")
+                                        with ui.row().classes(
+                                            "items-center q-gutter-xs"
+                                        ).style("min-height: 26px;"):
+                                            ui.checkbox(
+                                                desc_name,
+                                                value=is_on,
+                                                on_change=lambda e, dn=desc_name: _toggle(
+                                                    e.value, dn
+                                                ),
+                                            ).props("dense").style("min-width: 180px;")
+                                            if desc_short:
+                                                ui.label(desc_short).classes(
+                                                    "text-caption text-grey"
+                                                ).style("font-size: 0.7rem;")
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # タブ5: テキスト検索（NEW）

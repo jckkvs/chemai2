@@ -22,7 +22,6 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.base import clone
-from typing import Dict, Any
 
 def _execute_prediction_pipeline(
     estimator, X_train: np.ndarray, y_arr: np.ndarray, cv_obj
@@ -516,8 +515,15 @@ class AutoMLEngine:
             if preprocess_cfg:
                 preproc_report.scaler_used = preprocess_cfg.scaler
                 
-            # Pipeline[-1]がestimator。Pipeline[:-1]が前処理ステップ群。
-            preprocessor_steps = best_pipeline[:-1]
+            # SMILES変換ありの場合: best_pipeline は [smiles_vars, main_pipe] のネスト構造。
+            # best_pipeline[:-1] だと smiles_vars のみになり、変換後DFを入力すると壊れる。
+            # そのため、SMILES変換ありの場合は main_pipe の前処理部分を直接使用する。
+            if _smiles_transformer_for_cv is not None:
+                # best_pipeline_base = Pipeline([("preprocess", ...), ("model", ...)])
+                preprocessor_steps = best_pipeline_base[:-1]
+            else:
+                # best_pipeline = Pipeline([("preprocess", ...), ("model", ...)])
+                preprocessor_steps = best_pipeline[:-1]
             X_transformed = preprocessor_steps.transform(X_for_eda)
             # 特徴量名の取得
             try:
@@ -552,7 +558,10 @@ class AutoMLEngine:
             from sklearn.model_selection import cross_val_predict
             from backend.models.cv_manager import get_cv
             _cv_splitter = get_cv(CVConfig(cv_key=cv_key, n_splits=self.cv_folds, extra_params=cv_extra_params))
-            _cv_method = "predict_proba" if task == "classification" and hasattr(best_pipeline, "predict_proba") else "predict"
+            # OOF/Train予測にはpredict（ラベル出力）を使用。
+            # predict_proba → argmax だと非連続クラスラベル（例: [2,5,7]）で
+            # インデックスとラベルが不一致になるバグがある。
+            _cv_method = "predict"
             
             # 1. CV (OOF) 予測
             oof_preds = cross_val_predict(
@@ -560,16 +569,11 @@ class AutoMLEngine:
                 cv=_cv_splitter, method=_cv_method, n_jobs=1,
                 groups=groups,
             )
-            if _cv_method == "predict_proba" and oof_preds.ndim == 2:
-                oof_preds = oof_preds.argmax(axis=1)
 
             # 2. 全データ (Train) 予測
             try:
                 # すでに全データで学習済み(fit)の best_pipeline を使用
-                predict_func = getattr(best_pipeline, _cv_method)
-                train_preds = predict_func(X_for_eda if _smiles_transformer_for_cv is None else X)
-                if _cv_method == "predict_proba" and train_preds.ndim == 2:
-                    train_preds = train_preds.argmax(axis=1)
+                train_preds = best_pipeline.predict(X_for_eda if _smiles_transformer_for_cv is None else X)
             except Exception as e:
                 logger.warning(f"全データ予測の計算に失敗: {e}")
 
