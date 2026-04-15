@@ -8,6 +8,20 @@ from pathlib import Path
 
 # サンプルデータの定義
 DEBUG_SAMPLES = {
+    "mixture_smiles_only": {
+        "name": "🧪 混合物 SMILES の回帰（WT% のみ）",
+        "file": "mixture_smiles_only.csv",
+        "desc": "混合物データ（SMILES+WT% のみ）。数値特徴量なしで加重平均変換と回帰のテスト用。",
+        "target_col": "Target_BoilingPoint_C",
+        "task_type": "regression"
+    },
+    "mixture_smiles_numeric": {
+        "name": "🧪 混合物 SMILES+ 数値データ",
+        "file": "mixture_smiles_numeric.csv",
+        "desc": "混合物データ（SMILES+WT%+ 温度/圧力/pH/撹拌速度など）。SMILES と数値特徴量の両方を使った回帰タスク用。",
+        "target_col": "Target_Yield_pct",
+        "task_type": "regression"
+    },
     "mixture_regression_debug": {
         "name": "🧪 混合物回帰 (WT% + 数値)",
         "file": "mixture_regression_debug.csv",

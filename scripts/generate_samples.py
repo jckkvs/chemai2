@@ -245,6 +245,61 @@ def generate_mixture_samples_with_numeric(n: int, filename: str):
     df.to_csv(filename, index=False, encoding="utf-8-sig")
     print(f"Generated {filename} ({len(df)} rows)")
 
+
+def generate_mixture_4comp_samples(n: int, filename: str, with_numeric: bool = False):
+    """
+    4成分の混合物データ生成：化合物 4 列（SMILES）、重量％分率（WT%）
+    """
+    compound_pool = [
+        ("CCO", "Ethanol"),
+        ("CC(C)O", "Isopropanol"),
+        ("c1ccccc1", "Benzene"),
+        ("CC1=CC=CC=C1", "Toluene"),
+        ("CC(=O)Oc1ccccc1C(=O)O", "Aspirin"),
+        ("CN1=C(C(N(C1=O)=O)C)N(C)C", "Caffeine"),  # SMILES 修正
+        ("CCC1=CC(=C(C=C1)O)C=O", "Vanillin"),
+        ("CC(C)Cc1ccc(cc1)C(C)C(=O)O", "Ibuprofen"),
+        ("CC(=O)O", "Acetic Acid"),
+        ("C1CCCCC1", "Cyclohexane"),
+    ]
+
+    data = []
+    for i in range(n):
+        num_comp = np.random.randint(2, 5)  # 2〜4成分
+        indices = np.random.choice(len(compound_pool), size=num_comp, replace=False)
+        raw_weights = np.random.uniform(10, 90, size=num_comp)
+        wt_percent = (raw_weights / raw_weights.sum() * 100).round(2)
+
+        row = {"Sample_ID": f"MIX4_{i + 1:04d}"}
+        # 4列分用意（足りない分は空）
+        for j in range(4):
+            if j < num_comp:
+                row[f"Compound_{j + 1}_Name"] = compound_pool[indices[j]][1]
+                row[f"Compound_{j + 1}_SMILES"] = compound_pool[indices[j]][0]
+                row[f"Compound_{j + 1}_WT%"] = wt_percent[j]
+            else:
+                row[f"Compound_{j + 1}_Name"] = ""
+                row[f"Compound_{j + 1}_SMILES"] = ""
+                row[f"Compound_{j + 1}_WT%"] = np.nan
+
+        if with_numeric:
+            row["Temperature_C"] = round(np.random.uniform(20, 100), 1)
+            row["Pressure_atm"] = round(np.random.uniform(0.5, 5.0), 2)
+            row["pH"] = round(np.random.uniform(2, 12), 2)
+            row["StirringSpeed_rpm"] = np.random.randint(100, 1000)
+            row["ReactionTime_h"] = round(np.random.uniform(1, 48), 1)
+            # 収率ターゲット
+            row["Target_Yield_pct"] = round(np.random.uniform(10, 100), 2)
+        else:
+            # 沸点ターゲット（模造）
+            row["Target_BoilingPoint_C"] = round(np.random.uniform(50, 200), 1)
+
+        data.append(row)
+
+    df = pd.DataFrame(data)
+    df.to_csv(filename, index=False, encoding="utf-8-sig")
+    print(f"Generated {filename} ({len(df)} rows)")
+
 # ========== 通常テーブルデータ生成 ==========
 def generate_tabular_samples(n: int, filename: str, task: str = "regression"):
     if task == "regression":
@@ -284,6 +339,14 @@ def generate_debug_samples():
 
     # 1. 混合物回帰 (WT% + 数値)
     generate_mixture_samples_with_numeric(50, f"{debug_dir}/mixture_regression_debug.csv")
+
+    # 1-2. 混合物 SMILES の回帰 (4成分)
+    generate_mixture_4comp_samples(50, f"{debug_dir}/mixture_smiles_only.csv", with_numeric=False)
+    
+    # 1-3. 混合物 SMILES + 数値 (4成分)
+    # ※ mixture_smiles_numeric.csv はユーザー提供データがあるため、存在しない場合のみ生成
+    if not os.path.exists(f"{debug_dir}/mixture_smiles_numeric.csv"):
+        generate_mixture_4comp_samples(50, f"{debug_dir}/mixture_smiles_numeric.csv", with_numeric=True)
 
     # 2. 単調性制約テスト
     n = 100
