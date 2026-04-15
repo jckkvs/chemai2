@@ -276,6 +276,67 @@ def generate_tabular_samples(n: int, filename: str, task: str = "regression"):
     df.to_csv(filename, index=False, encoding="utf-8-sig")
     print(f"Generated {filename} ({len(df)} rows)")
 
+
+def generate_debug_samples():
+    """コンポーネントが期待するデバッグ用サンプル 5 種を生成"""
+    debug_dir = "data/samples/debug"
+    os.makedirs(debug_dir, exist_ok=True)
+
+    # 1. 混合物回帰 (WT% + 数値)
+    generate_mixture_samples_with_numeric(50, f"{debug_dir}/mixture_regression_debug.csv")
+
+    # 2. 単調性制約テスト
+    n = 100
+    np.random.seed(42)
+    mw = np.random.uniform(100, 500, n)
+    logp = np.random.uniform(-1, 5, n)
+    tpsa = np.random.uniform(20, 150, n)
+    # 単調減少（MW, LogP, TPSAが上がると溶解度が下がる傾向）
+    sol = 5 - (0.01 * mw) - (0.5 * logp) - (0.005 * tpsa) + np.random.normal(0, 0.2, n)
+    df_mono = pd.DataFrame({
+        "MW": mw.round(2),
+        "LogP": logp.round(2),
+        "TPSA": tpsa.round(2),
+        "Solubility_mg_L": sol.round(3)
+    })
+    df_mono.to_csv(f"{debug_dir}/monotonicity_test.csv", index=False)
+    print(f"Generated {debug_dir}/monotonicity_test.csv")
+
+    # 3. 時系列リーク検出テスト
+    n = 50
+    dates = pd.date_range(start="2024-01-01", periods=n, freq="D")
+    df_leak = pd.DataFrame({
+        "Date": dates.strftime("%Y-%m-%d"),
+        "Batch_ID": [f"BATCH_{i // 5:02d}" for i in range(n)],
+        "Temperature": np.random.uniform(50, 100, n),
+        "Pressure": np.random.uniform(1, 5, n),
+        # 時系列に強く依存するターゲット（リークの元）
+        "Yield_pct": (np.linspace(70, 95, n) + np.random.normal(0, 1, n)).round(2)
+    })
+    df_leak.to_csv(f"{debug_dir}/timeseries_leak_test.csv", index=False)
+    print(f"Generated {debug_dir}/timeseries_leak_test.csv")
+
+    # 4. xTB 外部ツール依存テスト (小分子)
+    small_smiles = ["C", "CC", "CCC", "CCO", "CCN", "c1ccccc1", "C1CCCCC1", "O=C=O", "N", "O"]
+    data_xtb = []
+    for i in range(20):
+        smi = small_smiles[i % len(small_smiles)]
+        data_xtb.append({
+            "SMILES": smi,
+            "ID": f"MOL_{i:02d}",
+            "HOMO_eV": np.nan  # xTBで計算すべき場所
+        })
+    df_xtb = pd.DataFrame(data_xtb)
+    df_xtb.to_csv(f"{debug_dir}/xtb_dependency_test.csv", index=False)
+    print(f"Generated {debug_dir}/xtb_dependency_test.csv")
+
+    # 5. 分類タスク (バランス済み)
+    X, y = make_classification(n_samples=100, n_features=10, n_classes=2, weights=[0.5, 0.5], random_state=42)
+    df_cls = pd.DataFrame(X, columns=[f"Feature_{i}" for i in range(10)])
+    df_cls["Activity"] = y
+    df_cls.to_csv(f"{debug_dir}/classification_balanced.csv", index=False)
+    print(f"Generated {debug_dir}/classification_balanced.csv")
+
 # ========== 実行 ==========
 if __name__ == "__main__":
     os.makedirs("data/samples", exist_ok=True)
@@ -296,5 +357,8 @@ if __name__ == "__main__":
 
     # 混合物データ（数値特徴量付き：デバッグ用）
     generate_mixture_samples_with_numeric(50, "data/samples/mixture_50_debug_numeric.csv")
+
+    # デバッグ用追加セット
+    generate_debug_samples()
 
     print("\nAll sample data generated successfully!")

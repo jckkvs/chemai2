@@ -16,6 +16,7 @@ import pandas as pd
 from nicegui import ui
 
 from frontend_nicegui.components.feature_comparison_dashboard import render_feature_comparison_dashboard
+from frontend_nicegui.components.debug_samples_selector import create_debug_samples_selector
 
 logger = logging.getLogger(__name__)
 
@@ -315,6 +316,39 @@ def _render_data_load(state: dict) -> None:
             ui.button("🧪 回帰 (SMILES)", on_click=_load_sample_regression).props("outline color=purple size=sm")
             ui.button("🏷️ 分類 (SMILES)", on_click=_load_sample_classification).props("outline color=blue size=sm")
             ui.button("📊 数値のみ", on_click=_load_sample_numeric).props("outline color=teal size=sm")
+
+        # ── 新規: デバッグ専用詳細セレクター ──
+        ui.separator().classes("q-my-md")
+        
+        def handle_debug_data_loaded(df, task_type, target_col, filename):
+            """デバッグセレクターからのデータ読み込みハンドラ"""
+            state["df"] = df
+            state["filename"] = filename
+            state["automl_result"] = None
+            state["pipeline_result"] = None
+            state["precalc_done"] = False
+            state["precalc_df"] = None
+            state["_chem_adapters"] = None
+            state["_applied_recommendation"] = None
+            
+            # 内部の自動判定ロジックを呼ぶ
+            from frontend_nicegui.components.data_tab import _auto_detect_columns, _show_preview, _update_metrics
+            _auto_detect_columns(state)
+            
+            # セレクターで定義された情報を優先適用
+            state["task_type"] = task_type
+            state["target_col"] = target_col
+            
+            # UI更新
+            upload_status.text = f"✅ {filename} 読み込み完了 ({len(df)}行)"
+            _show_preview(df, preview_container)
+            _update_metrics(state, metrics_row)
+            
+            refresh = state.get("_refresh_tabs")
+            if refresh:
+                refresh()
+
+        create_debug_samples_selector(on_data_loaded=handle_debug_data_loaded)
 
         # ── ベンチマークデータ ──
         ui.separator()

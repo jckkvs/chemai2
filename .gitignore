@@ -150,7 +150,6 @@ cython_debug/
 .vscode/
 
 # Project Specifics
-.chemai_experiments.db
 coverage.json
 exports/
 media/
