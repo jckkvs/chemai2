@@ -348,14 +348,14 @@ class AutoMLEngine:
         preprocess_cfg = preprocess_config or PreprocessConfig()
         deadline = start + self.timeout_seconds
 
-        # ── 【設計判断】SMILES列が存在する場合: 先にfit_transformして記述子DFを取得。
-        # ── 理由1: 各fold内でSMILES解析を行うと計算負荷が極めて高く、同一分子でも重複計算される。
-        # ── 理由2: 記述子生成は「確定的な特徴量抽出」であり、学習データのみに閉じる必要はない。
-        # ── 一方で、次元圧縮やスケーリング、欠損値補完などの「統計的加工」は、CVの各fold内で
-        # ── 厳密に行う必要がある（データリーク防止）。
-        # ── この設計により、「記述子生成は一括」と「統計前処理はCV内」の両立を実現している。
-        # ── 従来の「SmilesTransformer先頭挿入→変換前DFのdetection_result使用」という
-        # ── 旧設計は TypeDetector が変換後の記述子列を認識できずColumnTransformerが空になるバグがあった。
+        # ── 【設計判断】SMILES から記述子への変換は、CV フォールド分割前に全データで一度行われます。
+        # これは、SMILES->Descriptor 変換が統計情報（平均・分散など）に依存しない決定論的変換であるためです。
+        # 一方、数値特徴量の標準化（StandardScaler 等）は、build_full_pipeline 内で構築され、
+        # CV 内の各 fold で train データのみを用いて fit されるため、データリークは発生しません。
+        # この設計により、「記述子生成は一括」と「統計前処理はCV内」の両立を実現しています。
+        # 従来の「SmilesTransformer先頭挿入→変換前DFのdetection_result使用」という
+        # 旧設計は TypeDetector が変換後の記述子列を認識できずColumnTransformerが空になるバグがあった。
+        # TODO: 将来的に、計算リソースに余裕があれば、完全に独立したパイプラインとしての並列実行も検討。
         _smiles_transformer_for_cv: Optional[SmilesDescriptorTransformer] = None
         X_train = X.copy()
 
