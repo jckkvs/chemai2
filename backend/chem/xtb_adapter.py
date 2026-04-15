@@ -117,41 +117,51 @@ def _parse_xtb_output(output: str) -> Dict[str, float]:
 
     for i, line in enumerate(lines):
         line_l = line.lower()
+        parts = line.split()
+        if not parts:
+            continue
+
         try:
             if "homo-lumo gap" in line_l:
-                result["xtb_HomoLumoGap"] = float(line.split()[-2])
-            elif "| homo" in line_l and "eV" in line:
+                # 形式: " | HOMO-LUMO GAP                     4.8118 eV   |"
+                if len(parts) >= 2:
+                    # 最後の要素が | なので、数値はその手前（-2）
+                    try:
+                        result["xtb_HomoLumoGap"] = float(parts[-2])
+                    except ValueError:
+                        pass
+            elif "| homo" in line_l and "ev" in line_l:
                 # 形式: " | HOMO | -0.51262 | -13.9492 | eV |"
-                # パイプ区切りなので split('|') でeV値を取得
                 pipe_parts = [p.strip() for p in line.split("|") if p.strip()]
                 for pp in pipe_parts:
                     tokens = pp.split()
-                    if len(tokens) >= 1:
+                    if tokens:
                         try:
-                            val = float(tokens[0])
-                            # eV単位の値を取得（最後の数値フィールド）
-                            result["xtb_HomoEnergy"] = val
+                            result["xtb_HomoEnergy"] = float(tokens[0])
                         except ValueError:
                             pass
-            elif "| lumo" in line_l and "eV" in line:
+            elif "| lumo" in line_l and "ev" in line_l:
                 pipe_parts = [p.strip() for p in line.split("|") if p.strip()]
                 for pp in pipe_parts:
                     tokens = pp.split()
-                    if len(tokens) >= 1:
+                    if tokens:
                         try:
-                            val = float(tokens[0])
-                            result["xtb_LumoEnergy"] = val
+                            result["xtb_LumoEnergy"] = float(tokens[0])
                         except ValueError:
                             pass
-            elif "total energy" in line_l and "Eh" in line:
-                result["xtb_TotalEnergy"] = float(line.split()[-2])
-            elif "| total" in line_l and "debye" in line_l.replace("| total", ""):
-                # 形式: " | total | 0.000 0.001 0.002 1.234 Debye"
+            elif "total energy" in line_l and "eh" in line_l:
+                # 形式: "   :: total energy              -15.12345678 Eh"
+                if len(parts) >= 2:
+                    try:
+                        result["xtb_TotalEnergy"] = float(parts[-2])
+                    except ValueError:
+                        pass
+            elif "| total" in line_l and "debye" in line_l:
+                # 形式: " | total | 0.000  0.000  1.234 Debye |"
                 pipe_parts = [p.strip() for p in line.split("|") if p.strip()]
                 for pp in pipe_parts:
                     if "debye" in pp.lower():
                         tokens = pp.split()
-                        # Debye直前の数値がtotal dipole moment
                         for t in reversed(tokens):
                             try:
                                 result["xtb_DipoleMoment"] = float(t)
@@ -161,26 +171,30 @@ def _parse_xtb_output(output: str) -> Dict[str, float]:
                         break
 
             # Mulliken電荷ブロックの検出
-            # xtb出力: "Mulliken/CM5 charges" または "#   Z          covCN         q      C6AA"
             elif "mulliken" in line_l and "charge" in line_l:
                 in_charges_block = True
                 mulliken_charges = []
             elif in_charges_block:
-                parts = line.split()
-                # 形式: "  1  C   ...  q_value  ..." — 4列目が電荷の場合が多い
-                if len(parts) >= 4:
+                # 形式: "  1  6  C     3.856  -0.0152     1.000     0.000"
+                #        #  Z  Sym   covCN      q        C6AA     alpha
+                if len(parts) >= 5:
                     try:
-                        q = float(parts[3])  # Mulliken電荷列
+                        # 5列目（インデックス4）が電荷 'q'
+                        q = float(parts[4])
                         mulliken_charges.append(q)
                     except ValueError:
-                        # 数値変換失敗時はブロック終了（パース終了）
+                        # 数値に変換できない行（ヘッダーやフッター）が現れたらブロック終了
+                        if mulliken_charges: # 既に取得済みなら終了
+                             in_charges_block = False
+                elif len(parts) > 0:
+                    # 空行でないが列数が足りない場合もブロック終了
+                    if mulliken_charges:
                         in_charges_block = False
-                else:
-                    # 列数不足もブロック終了
-                    in_charges_block = False
 
-        except (ValueError, IndexError):
-            pass
+        except Exception as e:
+            # 個別のパースエラーは警告に留める
+            logger.debug(f"XTB line parse error at line {i}: {e}")
+            continue
 
     # HOMO-LUMO 由来の推定値（Koopmans定理）
     homo = result.get("xtb_HomoEnergy")

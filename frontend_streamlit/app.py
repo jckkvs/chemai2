@@ -442,12 +442,15 @@ else:
 
                 with st.expander("🔧 デバッグ用サンプルデータ", expanded=False):
                     st.caption("開発・テスト用。通常はファイルをアップロードしてください。")
-                    use_smiles = st.checkbox("SMILES（化合物構造）列を含める", value=False, key="demo_smiles")
+                    
+                    # ── 基本サンプルの生成 ──────────────────
+                    st.markdown("##### 📦 基本サンプル (動的生成)")
+                    use_smiles = st.checkbox("SMILES（化合物構造）列を含める", value=True, key="demo_smiles")
                     c_r, c_c = st.columns(2)
                     _DUMMY_SMILES = ["C", "CC", "CCC", "CCO", "CCN", "c1ccccc1", "c1ccccc1O", "CC(=O)O", "CC(C)C", "C1CCCCC1", "c1ccncc1", "c1ncncn1", "C1COCCO1"]
                     with c_r:
-                        if st.button("🧪 回帰サンプル", use_container_width=True, key="demo_reg"):
-                            np.random.seed(42); n = 25  # テスト高速化のたも25件
+                        if st.button("🧪 回帰サンプル (25件)", use_container_width=True, key="demo_reg"):
+                            np.random.seed(42); n = 25
                             if use_smiles:
                                 base_df = pd.DataFrame({"SMILES": np.random.choice(_DUMMY_SMILES, n), "solubility_logS": np.random.randn(n) * 2 - 2})
                             else:
@@ -456,30 +459,81 @@ else:
                                     "pressure":    np.random.exponential(5, n),
                                     "catalyst":    np.random.choice(["A型","B型","C型"], n),
                                     "time_h":      np.random.uniform(1, 24, n),
-                                    "is_active":   np.random.randint(0, 2, n),
                                     "yield":       np.random.randn(n) * 10 + 75,
                                 })
                             _make_sample("sample_regression.csv", base_df, set_smiles=use_smiles)
                             st.session_state["task"] = "regression"
-                            st.session_state["adv_models"] = ["lr", "rf"]
                             st.rerun()
                     with c_c:
-                        if st.button("🏷️ 分類サンプル", use_container_width=True, key="demo_cls"):
-                            np.random.seed(42); n = 25  # テスト高速化のたも25件
+                        if st.button("🏷️ 分類サンプル (25件)", use_container_width=True, key="demo_cls"):
+                            np.random.seed(42); n = 25
                             if use_smiles:
                                 base_df = pd.DataFrame({"SMILES": np.random.choice(_DUMMY_SMILES, n), "is_toxic": np.random.randint(0, 2, n)})
                             else:
                                 base_df = pd.DataFrame({
                                     "feature_1": np.random.randn(n),
-                                    "feature_2": np.random.randn(n),
                                     "category":  np.random.choice(["低","中","高"], n),
-                                    "numeric":   np.random.randint(1, 100, n),
                                     "label":     np.random.randint(0, 2, n),
                                 })
                             _make_sample("sample_classification.csv", base_df, set_smiles=use_smiles)
                             st.session_state["task"] = "classification"
-                            st.session_state["adv_models"] = ["logreg", "rf"]
                             st.rerun()
+
+                    # ── 特殊デバッグ用（ファイルベース） ────
+                    st.markdown("---")
+                    st.markdown("##### 🧪 理論・デバッグ用セット (固定データ)")
+                    
+                    DEBUG_SAMPLES = {
+                        "mixture_smiles_only": {
+                            "name": "🧪 混合物回帰 (SMILESのみ)",
+                            "file": "mixture_smiles_only.csv",
+                            "desc": "化合物SMILESとその割合のみの混合物データ（50行）。",
+                            "target": "Target_BoilingPoint_C",
+                            "task": "regression"
+                        },
+                        "mixture_smiles_numeric": {
+                            "name": "🧪 混合物回帰 (SMILES + 数値)",
+                            "file": "mixture_smiles_numeric.csv",
+                            "desc": "SMILES, WT%, および外部条件（温度・pH等）を含む混合物（50行）。",
+                            "target": "Target_Yield_pct",
+                            "task": "regression"
+                        },
+                        "mixture_regression_debug": {
+                            "name": "🧪 混合物回帰 (汎用)",
+                            "file": "mixture_regression_debug.csv",
+                            "desc": "加重平均変換と各記述子エンジンの結合テスト用（50行）。",
+                            "target": "Boiling_Point_C",
+                            "task": "regression"
+                        },
+                        "monotonicity_test": {
+                            "name": "📈 単調性制約テスト",
+                            "file": "monotonicity_test.csv",
+                            "desc": "分子量・LogP等と溶解度の関係。制約適用の検証用。",
+                            "target": "Solubility_mg_L",
+                            "task": "regression"
+                        },
+                    }
+
+                    for skey, sinfo in DEBUG_SAMPLES.items():
+                        c_left, c_right = st.columns([0.4, 0.6])
+                        with c_left:
+                            if st.button(sinfo["name"], key=f"btn_{skey}", use_container_width=True):
+                                try:
+                                    csv_path = Path("data/samples/debug") / sinfo["file"]
+                                    if not csv_path.exists():
+                                        # scripts/ を上位ディレクトリから探索
+                                        csv_path = Path(__file__).parent.parent / "data" / "samples" / "debug" / sinfo["file"]
+                                    
+                                    df_dbg = pd.read_csv(csv_path)
+                                    _make_sample(sinfo["file"], df_dbg)
+                                    st.session_state["target_col"] = sinfo["target"]
+                                    st.session_state["task"] = sinfo["task"]
+                                    st.success(f"Loaded: {sinfo['name']}")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error loading {sinfo['file']}: {e}")
+                        with c_right:
+                            st.caption(sinfo["desc"])
 
                 with st.expander("📚 オープンベンチマークデータをロード"):
                     st.markdown("ケモインフォマティクスの評価でよく使われる公開データセットです。")

@@ -342,7 +342,7 @@ def generate_mixture_samples_with_numeric(n: int, filename: str):
             "pH": round(ph_value, 2),
             "StirringSpeed_rpm": round(stirring_speed, 1),
             "ReactionTime_h": round(reaction_time, 2),
-            "Target_Property": round(target, 3),
+            "Boiling_Point_C": round(target, 3),
             "Sample_ID": f"MIX_DBG{i+1:04d}",
             "Total_WT%": wt_percent.sum(),  # 検証用（常に 100%）
             "Notes": "Synthetic mixture data with numeric features for debugging"
