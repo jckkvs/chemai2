@@ -1000,8 +1000,8 @@ else:
                         "SMR_VSA2": "屈折率ビン2の表面積。低分極率領域",
                         "SMR_VSA3": "屈折率ビン3の表面積。高分極率領域",
                         "SlogP_VSA1": "LogPビン1の表面積。最も親水的な原子の表面積",
-                        "SlogP_VSA2": "LogPビン2の表面積。親水的領域",
-                        "SlogP_VSA3": "LogPビン3の表面積。疎水的領域",
+                        "SlogP_VSA2": "LogPビン2の表面積。親的な領域",
+                        "SlogP_VSA3": "LogPビン3の表面積。疎的な領域",
                         "Kier1": "Kier κ1形状指数。分子の直線性を反映。直鎖に近いほど大きい",
                         "Kier2": "Kier κ2形状指数。分子の分岐度を反映。分岐が多いほど大きい",
                         "Kier3": "Kier κ3形状指数。分子の空間的広がりを反映",
@@ -1681,7 +1681,7 @@ else:
 
 
         # ══════════════════════════════════════════════════════════════
-        # サブタブ3: SMILES特徴量設計
+        # サブタブ4: 特徴量EDA
         # ══════════════════════════════════════════════════════════════
         with ds_tab4:
             df = st.session_state.get("df")
@@ -1722,291 +1722,8 @@ else:
                 df_preview = df_preview.apply(pd.to_numeric, errors='ignore').convert_dtypes()
 
                 st.markdown("### 📊 データプレビュー")
-                from frontend_streamlit.components.smiles_hover import render_smiles_table
-                _smiles_col_prev = smiles_col_eda if smiles_col_eda and smiles_col_eda in df_preview.columns else None
-                if _smiles_col_prev:
-                    render_smiles_table(df_preview, smiles_col=_smiles_col_prev, max_rows=100, height=420)
-                else:
-                    st.dataframe(df_preview, use_container_width=True, height=400)
-
-                # 統計量サマリー
-                st.markdown("### 📈 統計量サマリー")
-                try:
-                    _stat_rows = []
-                    for _col in df_preview.columns:
-                        _s = df_preview[_col]
-                        _n_missing = int(_s.isna().sum())
-                        _n_total   = len(_s)
-                        _missing_rate = _n_missing / _n_total * 100 if _n_total > 0 else 0.0
-                        _cardinality  = int(_s.nunique(dropna=True))
-                        _row = {
-                            "列名": _col,
-                            "ユニーク数": _cardinality,
-                            "欠損数": _n_missing,
-                            "欠損率(%)": f"{_missing_rate:.1f}",
-                        }
-                        _numeric_s = pd.to_numeric(_s, errors="coerce")
-                        if _numeric_s.notna().any():
-                            _row["最小値"] = f"{_numeric_s.min():.4g}"
-                            _row["最大値"] = f"{_numeric_s.max():.4g}"
-                            _row["平均値"] = f"{_numeric_s.mean():.4g}"
-                            _row["標準偏差"] = f"{_numeric_s.std():.4g}"
-                        else:
-                            _row["最小値"] = _row["最大値"] = _row["平均値"] = _row["標準偏差"] = "—"
-                        _stat_rows.append(_row)
-                    _stat_df = pd.DataFrame(_stat_rows)
-                    st.dataframe(_stat_df, use_container_width=True, hide_index=True, height=min(600, 40 + len(_stat_rows) * 35))
-                    if added_smiles_cols:
-                        st.caption(f"🟢 SMILES展開で追加された列: **{len(added_smiles_cols)}個**")
-                except Exception as _e_stat:
-                    st.warning(f"統計量計算エラー: {_e_stat}")
-
-                # TypeDetector結果
-                st.markdown("---")
-                st.markdown("### 🔍 変数型の自動判定結果 (TypeDetector)")
-                dr_eda = st.session_state.get("detection_result")
-                if dr_eda:
-                    if added_smiles_cols:
-                        from backend.data.type_detector import TypeDetector
-                        tmp_dr = TypeDetector().detect(df_preview.drop(columns=[target_col_eda], errors="ignore") if target_col_eda else df_preview)
-                    else:
-                        tmp_dr = dr_eda
-                    type_data = []
-                    for c in df_preview.columns:
-                        t = "❓不明"
-                        if target_col_eda and c == target_col_eda:
-                            t = "🎯 目的変数"
-                        elif c in getattr(tmp_dr, "numeric_columns", []):
-                            t = "🔢 数値"
-                        elif c in getattr(tmp_dr, "categorical_columns", []):
-                            t = "🔤 カテゴリ"
-                        elif c in getattr(tmp_dr, "binary_columns", []):
-                            t = "0️⃣1️⃣ ２値"
-                        elif c in getattr(tmp_dr, "datetime_columns", []):
-                            t = "📅 日時"
-                        elif c in getattr(tmp_dr, "ignored_columns", []):
-                            t = "❌ 除外（一意・定数等）"
-                        type_data.append({"列名": c, "判定型": t})
-                    st.dataframe(pd.DataFrame(type_data), use_container_width=True, hide_index=True)
-                else:
-                    st.info("型判定結果がありません")
-
-                # EDAタブでは記述子選択は行わない（SMILES特徴量設計タブで設定）
-                if st.session_state.get("smiles_col"):
-                    if st.session_state.get("precalc_done"):
-                        n_sel = len(st.session_state.get("adv_desc") or [])
-                        st.info(f"🔬 記述子の選択は「⚗️ SMILES特徴量設計」タブで行えます。現在 **{n_sel}件** 選択中。")
-                    else:
-                        st.info("💡 「⚗️ SMILES特徴量設計」タブで記述子を計算・選択してください。")
-
-                # ══════════════════════════════════════════════════════════════
-                # 🧹 データクリーニング
-                # ══════════════════════════════════════════════════════════════
-                st.markdown("---")
-                st.markdown(
-                    '<div class="section-header">🧹 データクリーニング</div>',
-                    unsafe_allow_html=True,
-                )
-                st.caption(
-                    "EDAの分析結果を見ながら、データを直接加工できます。"
-                    "変更は即座に反映され、Undoで元に戻せます。"
-                )
-
-                from backend.data.data_cleaner import (
-                    drop_columns, drop_rows_with_missing,
-                    remove_constant_columns, clip_outliers,
-                    remove_duplicates, preview_missing_impact,
-                    preview_outlier_impact, get_cleaning_summary,
-                )
-
-                # 初期化: Undo用スタック & ログ
-                if "_df_history" not in st.session_state:
-                    st.session_state["_df_history"] = []
-                if "_cleaning_log" not in st.session_state:
-                    st.session_state["_cleaning_log"] = []
-
-                # ── 現在のデータ概要 ──
-                _cs = get_cleaning_summary(df)
-                _cs_c1, _cs_c2, _cs_c3, _cs_c4 = st.columns(4)
-                with _cs_c1:
-                    st.metric("行数", f"{len(df):,}")
-                with _cs_c2:
-                    st.metric("列数", f"{df.shape[1]}")
-                with _cs_c3:
-                    st.metric("欠損率", f"{_cs['total_missing_rate']:.1%}")
-                with _cs_c4:
-                    _issues = _cs["n_const_cols"] + _cs["n_dup_rows"] + _cs["n_all_missing_cols"]
-                    st.metric("検出問題", f"{_issues}件")
-
-                # ── 操作履歴 & Undo ──
-                _log = st.session_state.get("_cleaning_log", [])
-                if _log:
-                    with st.expander(f"操作履歴（{len(_log)}件）", expanded=False):
-                        for _li, _la in enumerate(reversed(_log)):
-                            st.markdown(
-                                f'<div class="card" style="padding:0.5rem 0.8rem; margin-bottom:0.3rem;">'
-                                f'<span style="color:#00d4ff;">●</span> '
-                                f'<b>{_la.description}</b> '
-                                f'<span style="font-size:0.78rem; color:#8888aa;">'
-                                f'({_la.rows_before}→{_la.rows_after}行, '
-                                f'{_la.cols_before}→{_la.cols_after}列)</span></div>',
-                                unsafe_allow_html=True,
-                            )
-
-                    if st.button("⏪ 直前の操作をUndoする", key="undo_cleaning",
-                                 use_container_width=True):
-                        _hist = st.session_state.get("_df_history", [])
-                        if _hist:
-                            st.session_state["df"] = _hist.pop()
-                            st.session_state["_df_history"] = _hist
-                            _log_list = st.session_state.get("_cleaning_log", [])
-                            if _log_list:
-                                _log_list.pop()
-                                st.session_state["_cleaning_log"] = _log_list
-                            st.success("⏪ Undo完了！直前の操作を取り消しました。")
-                            st.rerun()
-                        else:
-                            st.warning("Undo履歴がありません。")
-
-                # ── クリーニングアクション ──
-                _clean_tabs = st.tabs([
-                    "列の除外",
-                    "欠損行削除",
-                    "定数列除去",
-                    "外れ値クリップ",
-                    "重複行除去",
-                ])
-
-                # --- 1. 列の除外 ---
-                with _clean_tabs[0]:
-                    _target_col_clean = st.session_state.get("target_col")
-                    _smiles_col_clean = st.session_state.get("smiles_col")
-                    _protect = [c for c in [_target_col_clean, _smiles_col_clean] if c]
-                    _droppable = [c for c in df.columns if c not in _protect]
-
-                    if not _droppable:
-                        st.info("除外可能な列がありません。")
-                    else:
-                        _cols_to_drop = st.multiselect(
-                            "除外する列を選択",
-                            options=_droppable,
-                            key="clean_drop_cols",
-                            help="目的変数・SMILES列は保護されます",
-                        )
-                        if _cols_to_drop:
-                            st.caption(f"選択中: {len(_cols_to_drop)}列 → 残り{df.shape[1] - len(_cols_to_drop)}列")
-                            if st.button("選択列を除外する", key="btn_drop_cols",
-                                         type="primary", use_container_width=True):
-                                st.session_state["_df_history"].append(df.copy())
-                                _new_df, _action = drop_columns(df, _cols_to_drop)
-                                st.session_state["df"] = _new_df
-                                st.session_state["_cleaning_log"].append(_action)
-                                st.success(f"✅ {_action.description}")
-                                st.rerun()
-
-                # --- 2. 欠損行削除 ---
-                with _clean_tabs[1]:
-                    _miss_threshold = st.slider(
-                        "欠損率の閾値",
-                        min_value=0.0, max_value=1.0, value=0.5, step=0.05,
-                        key="clean_miss_thresh",
-                        help="各行が持つ欠損率がこの値以上の行を削除（0.0=欠損が1つでもあれば削除）",
-                    )
-                    _miss_impact = preview_missing_impact(df, threshold=_miss_threshold)
-                    if _miss_impact > 0:
-                        st.warning(f"{_miss_impact:,}行（全体の{_miss_impact/len(df):.1%}）が削除されます。")
-                    else:
-                        st.success("削除対象の行はありません。")
-
-                    if _miss_impact > 0:
-                        if st.button("欠損行を削除する", key="btn_drop_miss",
-                                     type="primary", use_container_width=True):
-                            st.session_state["_df_history"].append(df.copy())
-                            _new_df, _action = drop_rows_with_missing(df, threshold=_miss_threshold)
-                            st.session_state["df"] = _new_df
-                            st.session_state["_cleaning_log"].append(_action)
-                            st.success(f"✅ {_action.description}")
-                            st.rerun()
-
-                # --- 3. 定数列除去 ---
-                with _clean_tabs[2]:
-                    if _cs["n_const_cols"] > 0:
-                        st.warning(
-                            f"定数列が **{_cs['n_const_cols']}列** 見つかりました: "
-                            f"{', '.join(_cs['const_cols'][:8])}"
-                            + (f" 他{_cs['n_const_cols']-8}列" if _cs['n_const_cols'] > 8 else "")
-                        )
-                        if st.button("定数列を一括除去する", key="btn_rm_const",
-                                     type="primary", use_container_width=True):
-                            st.session_state["_df_history"].append(df.copy())
-                            _new_df, _action = remove_constant_columns(df)
-                            st.session_state["df"] = _new_df
-                            st.session_state["_cleaning_log"].append(_action)
-                            st.success(f"✅ {_action.description}")
-                            st.rerun()
-                    else:
-                        st.success("定数列は見つかりませんでした。")
-
-                # --- 4. 外れ値クリッピング ---
-                with _clean_tabs[3]:
-                    _num_cols = list(df.select_dtypes(include="number").columns)
-                    if not _num_cols:
-                        st.info("数値列がないため外れ値クリッピングは利用できません。")
-                    else:
-                        _iqr_mult = st.slider(
-                            "IQR倍率",
-                            min_value=1.0, max_value=5.0, value=1.5, step=0.1,
-                            key="clean_iqr_mult",
-                            help="Q1 - IQR*倍率 〜 Q3 + IQR*倍率 の範囲にクリップ",
-                        )
-                        _outlier_cols = st.multiselect(
-                            "対象列（空=全数値列）",
-                            options=_num_cols,
-                            key="clean_outlier_cols",
-                        )
-                        _target_outlier_cols = _outlier_cols if _outlier_cols else None
-                        _outlier_preview = preview_outlier_impact(
-                            df, iqr_multiplier=_iqr_mult, columns=_target_outlier_cols
-                        )
-                        _total_outliers = sum(_outlier_preview.values())
-                        if _total_outliers > 0:
-                            st.warning(
-                                f"{len(_outlier_preview)}列で計{_total_outliers:,}値の外れ値を検出。"
-                            )
-                            with st.expander("列別の詳細"):
-                                for _oc, _on in sorted(_outlier_preview.items(), key=lambda x: -x[1]):
-                                    st.markdown(f"- **{_oc}**: {_on}値")
-                            if st.button("外れ値をクリップする", key="btn_clip_outliers",
-                                         type="primary", use_container_width=True):
-                                st.session_state["_df_history"].append(df.copy())
-                                _new_df, _action = clip_outliers(
-                                    df, iqr_multiplier=_iqr_mult, columns=_target_outlier_cols
-                                )
-                                st.session_state["df"] = _new_df
-                                st.session_state["_cleaning_log"].append(_action)
-                                st.success(f"✅ {_action.description}")
-                                st.rerun()
-                        else:
-                            st.success("外れ値は検出されませんでした。")
-
-                # --- 5. 重複行除去 ---
-                with _clean_tabs[4]:
-                    if _cs["n_dup_rows"] > 0:
-                        st.warning(
-                            f"**{_cs['n_dup_rows']:,}件** の重複行が見つかりました。"
-                        )
-                        if st.button("重複行を除去する", key="btn_rm_dup",
-                                     type="primary", use_container_width=True):
-                            st.session_state["_df_history"].append(df.copy())
-                            _new_df, _action = remove_duplicates(df)
-                            st.session_state["df"] = _new_df
-                            st.session_state["_cleaning_log"].append(_action)
-                            st.success(f"✅ {_action.description}")
-                            st.rerun()
-                    else:
-                        st.success("重複行は見つかりませんでした。")
-
-
+                from frontend_streamlit.pages.pipeline import eda_page
+                eda_page.render_preview(df_preview, target_col_eda, added_smiles_cols)
 
         # ══════════════════════════════════════════════════════════════
         # サブタブ5: パイプライン設計
@@ -2016,308 +1733,130 @@ else:
             if df is None:
                 st.warning("⚠️ まず「📂 データ読込」タブでデータを読み込んでください。")
             else:
-                # CV設定（コンパクト）
-                with st.expander("⚙️ 交差検証・その他の基本設定", expanded=False):
-                    c_cv1, c_cv2, c_cv3 = st.columns(3)
-                    with c_cv1:
-                        cv_folds  = st.slider("CV分割数", 2, 10, st.session_state.get("_adv_cv_folds", 5), key="adv_cv")
-                    with c_cv2:
-                        timeout   = st.slider("タイムアウト(秒)", 30, 3600, st.session_state.get("_adv_timeout", 300), key="adv_to")
-                    with c_cv3:
-                        scaler    = st.selectbox("スケーラー", ["auto","standard","robust","minmax","none"], key="adv_sc")
-                    c_p1, c_p2, c_p3, c_p4 = st.columns(4)
-                    with c_p1: do_eda  = st.checkbox("EDA", value=True, key="adv_eda")
-                    with c_p2: do_prep = st.checkbox("前処理", value=True, key="adv_prep")
-                    with c_p3: do_eval = st.checkbox("評価", value=True, key="adv_eval")
-                    with c_p4: do_pca  = st.checkbox("PCA", value=True, key="adv_pca")
-                    do_shap = st.checkbox("SHAP解析", value=True, key="adv_shap")
+                target_col_adv = st.session_state.get("target_col")
+                _auto_task_adv = "regression" if pd.api.types.is_float_dtype(df[target_col_adv]) else "classification"
 
-                # モデル選択（コンパクト）
-                with st.expander("🤖 使用するモデルを選ぶ", expanded=True):
-                    from backend.models.factory import list_models, get_default_automl_models, get_model_registry
-                    import inspect
-                    _tmp_task = st.session_state.get("task", "auto")
-                    if _tmp_task == "auto":
-                        _tc = st.session_state.get("target_col")
-                        _tmp_task = "regression" if (_tc and pd.api.types.is_float_dtype(df[_tc])) else "classification"
+                st.markdown("### ⚙️ パイプラインの詳細設定")
+                st.caption("AutoMLの探索範囲や、モデルへの制約を設定します。")
 
-                    available_models = list_models(task=_tmp_task, available_only=True)
-                    default_models   = get_default_automl_models(task=_tmp_task)
+                col_p1, col_p2 = st.columns(2)
 
-                    def _get_category(mkey, mname):
-                        k = mkey.lower() + mname.lower()
-                        if any(x in k for x in ["linear","ridge","lasso","elastic","logistic","ard","huber","theilsen","ransac","pls","sgd"]): return "線形系"
-                        if any(x in k for x in ["svr","svc","support","rbf","kernel","gaussian"]): return "カーネル系"
-                        if any(x in k for x in ["tree","forest","boost","gbm","gradient"]): return "決定木系"
-                        return "その他"
+                with col_p1:
+                    st.markdown("**🛡️ バリデーション設定**")
+                    cv_folds = st.number_input("CVフォールド数", 2, 10, 5, key="adv_cv")
 
-                    categories = {"線形系": [], "カーネル系": [], "決定木系": [], "その他": []}
-                    for m in available_models:
-                        categories[_get_category(m["key"], m["name"])].append(m)
+                    st.markdown("**⏰ 探索時間設定**")
+                    timeout = st.number_input("最大探索時間（秒）", 10, 3600, 300, 30, key="adv_timeout")
 
-                    selected_models = st.session_state.get("adv_models", default_models)
-                    new_selection = []
-                    sel_tabs = st.tabs(list(categories.keys()))
-                    for cat_name, t_body in zip(categories.keys(), sel_tabs):
-                        with t_body:
-                            cat_cols = st.columns(4)
-                            for idx, m in enumerate(categories[cat_name]):
-                                with cat_cols[idx % 4]:
-                                    is_checked = m["key"] in selected_models
-                                    if not m["available"]:
-                                        st.checkbox(f"{m['name']} (未実装)", value=False, disabled=True, key=f"c_{m['key']}")
-                                    else:
-                                        if st.checkbox(m["name"], value=is_checked, key=f"c_{m['key']}"):
-                                            new_selection.append(m["key"])
-                    st.session_state["adv_models"] = new_selection
-                    selected_models = new_selection
-
-                # パイプライン全設定UI （7ステップタブ）
-                st.markdown("### ⚙️ パイプライン構成の設定")
-                st.caption(
-                    "各ステップで複数選択すると全組み合わせを自動評価します。\n\n"
-                    "**組合せ数** = `cont_imp × scaler × cat_imp × cat_enc × bin_imp × bin_enc × engineer × selector × estimator`"
-                )
-                try:
-                    from frontend_streamlit.components.pipeline_config_ui import render_pipeline_config_ui as _render_pg_ui
-                except ImportError:
-                    from components.pipeline_config_ui import render_pipeline_config_ui as _render_pg_ui
-
-                _all_cols_pg = list(df.columns) if df is not None else []
-                _task_pg     = st.session_state.get("task", "regression")
-                _target_pg   = st.session_state.get("target_col")
-                _smiles_pg   = st.session_state.get("smiles_col")
-
-                _pg_cfg = _render_pg_ui(
-                    all_cols=_all_cols_pg,
-                    target_col=_target_pg,
-                    smiles_col=_smiles_pg,
-                    task=_task_pg,
-                )
-                st.session_state["_pipeline_full_config"] = _pg_cfg
-
-                # ── per-feature 単調性制約 UI ───────────────────────────
-                st.markdown("---")
-                with st.expander("📐 単調性制約（特徴量ごとに設定）", expanded=False):
-                    try:
-                        from frontend_streamlit.components.pipeline_config_ui import render_monotonic_constraints_ui as _rmui
-                    except ImportError:
-                        from components.pipeline_config_ui import render_monotonic_constraints_ui as _rmui
-
-                    # 数値列（目的変数・SMILES除く）のみ対象
-                    _feat_cols_mono = [
-                        c for c in _all_cols_pg
-                        if c not in (_target_pg, _smiles_pg)
-                        and df is not None
-                        and pd.api.types.is_numeric_dtype(df[c])
-                    ] if df is not None else []
-
-                    if _feat_cols_mono:
-                        _mono_constraints = _rmui(
-                            feature_cols=_feat_cols_mono,
-                            n_cols=4,
-                        )
-                        st.session_state["_monotonic_constraints_dict"] = _mono_constraints
-                    else:
-                        st.info("ℹ️ 数値列が見つかりません。データを読み込んでから設定してください。")
-                        st.session_state["_monotonic_constraints_dict"] = {}
-
-                # 詳細設定の値をセッションに保存
-                st.session_state["_adv"] = dict(
-                    cv_folds=cv_folds, models=selected_models, timeout=timeout,
-                    scaler=scaler,
-                    do_eda=do_eda, do_prep=do_prep, do_eval=do_eval,
-                    do_pca=do_pca, do_shap=do_shap,
-                    selected_descriptors=st.session_state.get("adv_desc") or [],
-                )
-
-    # ====================================================
-    # TAB 2: 結果確認
-    # ====================================================
-    with tab2:
-        if not has_result:
-            st.info("⏳ 解析を実行すると、結果がここに表示されます。上部の「🚀 解析開始」ボタンを押してください。")
-        else:
-            c_re1, c_re2 = st.columns([2, 1])
-            with c_re2:
-                if st.button("🔄 設定を変えて再解析", key="tab3_rerun", use_container_width=True):
-                    st.session_state["automl_result"] = None
-                    st.rerun()
-            with c_re1:
-                ar = st.session_state.get("automl_result")
-                if ar:
-                    st.success(
-                        f"✅ 最良モデル: **{ar.best_model_key}** | "
-                        f"スコア: `{ar.best_score:.4f}` | "
-                        f"タスク: {ar.task}"
+                    st.markdown("**📏 スケーラー設定**")
+                    scaler = st.selectbox(
+                        "数値スケーリング",
+                        ["auto", "standard", "robust", "minmax", "none"],
+                        index=0, key="adv_scaler"
                     )
 
-            st.markdown("---")
+                with col_p2:
+                    st.markdown("**🤖 使用モデルの選択**")
+                    if _auto_task_adv == "regression":
+                        model_options = {
+                            "lr": "Linear Regression (線形)",
+                            "ridge": "Ridge / Lasso",
+                            "rf": "Random Forest",
+                            "lgbm": "LightGBM (高速GPU対応)",
+                            "xgb": "XGBoost",
+                            "gp": "Gaussian Process (不確かさ)",
+                            "svm": "SVR",
+                        }
+                    else:
+                        model_options = {
+                            "logreg": "Logistic Regression",
+                            "rf": "Random Forest",
+                            "lgbm": "LightGBM",
+                            "xgb": "XGBoost",
+                            "svm": "SVC",
+                            "knn": "K-Neighbors",
+                        }
 
-            # ── 結果確認サブタブ ────────────────────────────────────────
-            res_tab1, res_tab_data, res_tab2, res_tab_bo = st.tabs(["📈 モデル評価", "📊 前処理後データ", "🔬 モデル解釈性", "🎯 実験計画(BO)"])
+                    # デフォルト全選択
+                    selected_models = st.multiselect(
+                        "探索対象モデル",
+                        options=list(model_options.keys()),
+                        format_func=lambda x: model_options[x],
+                        default=list(model_options.keys()),
+                        key="adv_models_sel",
+                    )
 
-            with res_tab1:
-                try:
-                    from frontend_streamlit.pages.pipeline import evaluation_page
-                    evaluation_page.render()
-                except Exception as e:
-                    st.error(f"❌ 評価ページの読み込みエラー: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
+                    st.markdown("**🔧 その他オプション**")
+                    do_pca = st.checkbox("特徴量次元削減 (PCA) を試行", value=True, key="adv_do_pca")
+                    do_shap = st.checkbox("SHAP重要度解析を実行", value=True, key="adv_do_shap")
 
-            with res_tab_data:
-                ar = st.session_state.get("automl_result")
-                if ar is None:
-                    st.info("解析を実行すると、前処理後のデータがここに表示されます。")
+                # 単調性制約設定
+                st.markdown("---")
+                st.markdown("**📈 単調性制約 (Monotonic Constraints)**")
+                st.caption("「分子量が大きいほど沸点が高くなる」といったドメイン知識を指定できます。")
+                
+                feat_candidates = [c for c in df.columns if c != target_col_adv and pd.api.types.is_numeric_dtype(df[c])]
+                # 展開後の記述子も候補に入れる
+                if st.session_state.get("precalc_done"):
+                    feat_candidates += [c for c in st.session_state["precalc_smiles_df"].columns if c in (st.session_state.get("adv_desc") or [])]
+
+                if feat_candidates:
+                    st.session_state.setdefault("_monotonic_constraints_dict", {})
+                    m_dict = st.session_state["_monotonic_constraints_dict"]
+
+                    # リセット・全削除
+                    if st.button("🗑️ 制約をすべて解除", key="clear_mono"):
+                        st.session_state["_monotonic_constraints_dict"] = {}
+                        st.rerun()
+
+                    selected_mono_feat = st.selectbox("制約を追加する列", ["（選択してください）"] + feat_candidates, key="mono_col")
+                    if selected_mono_feat != "（選択してください）":
+                        m_type = st.radio("制約の方向", ["増加 (Increasing) 📈", "減少 (Decreasing) 📉"], key="mono_type", horizontal=True)
+                        if st.button("➕ 制約を追加", key="add_mono"):
+                            m_dict[selected_mono_feat] = 1 if "増加" in m_type else -1
+                            st.session_state["_monotonic_constraints_dict"] = m_dict
+                            st.rerun()
+
+                    if m_dict:
+                        st.markdown("**現在の設定済み制約:**")
+                        for f, v in m_dict.items():
+                            st.markdown(f"- `{f}`: {'📈 増加' if v==1 else '📉 減少'}")
                 else:
-                    _proc_X = getattr(ar, "processed_X", None)
-                    if _proc_X is not None and hasattr(_proc_X, "shape"):
-                        st.markdown("### 📊 モデルに入力された最終データ")
-                        st.caption(
-                            "カテゴリエンコーディング・欠損補完・スケーリング・変数選択などが完了した後の、"
-                            "実際にモデルに渡された数値データです。"
-                        )
+                    st.info("単調性制約を設定できる数値列がありません。")
 
-                        # メトリクス
-                        _pc1, _pc2, _pc3, _pc4 = st.columns(4)
-                        _pc1.metric("サンプル数", f"{_proc_X.shape[0]:,}")
-                        _pc2.metric("特徴量数", f"{_proc_X.shape[1]:,}")
-                        _pc3.metric("欠損値", f"{int(_proc_X.isnull().sum().sum()):,}" if hasattr(_proc_X, "isnull") else "0")
-                        _pc4.metric("データ型", "全て数値" if _proc_X.select_dtypes(include="number").shape[1] == _proc_X.shape[1] else "混合")
+                # 詳細設定の保存（st.session_state["_adv"] に集約）
+                st.session_state["_adv"] = {
+                    "cv_folds": cv_folds,
+                    "timeout": timeout,
+                    "scaler": scaler,
+                    "models": selected_models,
+                    "do_pca": do_pca,
+                    "do_shap": do_shap,
+                    "selected_descriptors": st.session_state.get("adv_desc"),
+                }
 
-                        # データプレビュー
-                        st.markdown("#### データプレビュー（先頭100行）")
-                        st.dataframe(
-                            _proc_X.head(100),
-                            use_container_width=True,
-                            height=400,
-                        )
+    # ──────────────────────────────────────────────────────────
+    # TAB 2: 結果確認（解析済みのときのみ）
+    # ──────────────────────────────────────────────────────────
+    with tab2:
+        if not has_result:
+            st.info("🚀 ①のタブで「解析開始」を押すと、ここに結果が表示されます。")
+            st.markdown(
+                '<div style="text-align:center; padding:3rem; color:#444;">'
+                '<div style="font-size:4rem; margin-bottom:1rem;">📊</div>'
+                '<div>解析結果はまだありません</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+        else:
+            from frontend_streamlit.pages.pipeline import evaluation_page
+            evaluation_page.render()
 
-                        # 基本統計量
-                        with st.expander("📐 基本統計量", expanded=False):
-                            st.dataframe(
-                                _proc_X.describe().T.round(4),
-                                use_container_width=True,
-                            )
-
-                        # 列一覧
-                        with st.expander(f"📋 列一覧（{_proc_X.shape[1]}列）", expanded=False):
-                            _col_info = pd.DataFrame({
-                                "列名": _proc_X.columns,
-                                "型": _proc_X.dtypes.astype(str).values,
-                                "欠損": _proc_X.isnull().sum().values if hasattr(_proc_X, "isnull") else 0,
-                            })
-                            # 数値列のみ統計量を計算（非数値列はNaN）
-                            _num_min = _proc_X.min(numeric_only=True)
-                            _num_max = _proc_X.max(numeric_only=True)
-                            _num_mean = _proc_X.mean(numeric_only=True)
-                            _col_info["最小"] = _col_info["列名"].map(lambda c: _num_min.get(c, "-"))
-                            _col_info["最大"] = _col_info["列名"].map(lambda c: _num_max.get(c, "-"))
-                            _col_info["平均"] = _col_info["列名"].map(lambda c: _num_mean.get(c, "-"))
-                            st.dataframe(_col_info, use_container_width=True, hide_index=True)
-
-                        # CSVダウンロード
-                        _csv = _proc_X.to_csv(index=False).encode("utf-8")
-                        st.download_button(
-                            "📥 前処理後データをCSVダウンロード",
-                            data=_csv,
-                            file_name="processed_features.csv",
-                            mime="text/csv",
-                            use_container_width=True,
-                        )
-
-                        # 前処理後データに対するリーケージ検出
-                        st.markdown("---")
-                        st.markdown("### 🔍 リーケージ検出（前処理後データ）")
-                        st.caption("前処理後の最終数値データに対してサンプル間類似度を評価し、リーケージリスクを検出します。")
-                        _proc_numeric = _proc_X.select_dtypes(include="number")
-                        if _proc_numeric.shape[1] >= 2 and len(_proc_numeric) >= 10:
-                            try:
-                                from backend.data.leakage_detector import detect_leakage as _detect_leakage_final
-                                _target_col_lk = st.session_state.get("target_col")
-                                _y_lk = st.session_state.get("df", pd.DataFrame()).get(_target_col_lk)
-                                if _y_lk is not None and len(_y_lk) == len(_proc_numeric):
-                                    _lk_final = _detect_leakage_final(
-                                        _proc_numeric, _y_lk.values, method="auto"
-                                    )
-                                else:
-                                    _lk_final = _detect_leakage_final(
-                                        _proc_numeric, method="auto"
-                                    )
-
-                                # リスクレベルに応じた表示
-                                _risk_colors = {"low": "🟢", "medium": "🟡", "high": "🔴"}
-                                _risk_icon = _risk_colors.get(_lk_final.risk_level, "⚪")
-                                st.markdown(
-                                    f"**リスクレベル**: {_risk_icon} **{_lk_final.risk_level.upper()}** "
-                                    f"(スコア: {_lk_final.risk_score:.3f})"
-                                )
-                                if _lk_final.risk_level == "low":
-                                    st.success(f"✅ {_lk_final.cv_reason}")
-                                elif _lk_final.risk_level == "medium":
-                                    st.warning(f"⚠️ {_lk_final.cv_reason}")
-                                else:
-                                    st.error(f"🚨 {_lk_final.cv_reason}")
-
-                                with st.expander("📋 検出詳細", expanded=False):
-                                    st.write(f"- 検出手法: `{_lk_final.method_used}`")
-                                    st.write(f"- 疑わしいペア数: {_lk_final.n_suspicious_pairs}")
-                                    st.write(f"- 推定グループ数: {_lk_final.n_groups}")
-                                    st.write(f"- 推奨CV: `{_lk_final.recommended_cv}`")
-                                    if _lk_final.details:
-                                        st.json(_lk_final.details)
-
-                                st.session_state["leakage_report_final"] = _lk_final
-                            except Exception as _lk_err:
-                                st.info(f"リーケージ検出スキップ: {_lk_err}")
-                        else:
-                            st.info("数値特徴量が2列未満またはサンプル数が少なすぎるため、リーケージ検出をスキップしました。")
-
-                    else:
-                        st.warning("前処理後データが取得できませんでした。パイプライン実行後に利用可能になります。")
-
-            with res_tab2:
-                try:
-                    from frontend_streamlit.components.interpretability_ui import render_interpretability_ui
-                    ar = st.session_state.get("automl_result")
-                    if ar is None:
-                        st.info("解析結果がありません。")
-                    else:
-                        _model  = getattr(ar, "best_pipeline", None) or getattr(ar, "best_model", None)
-                        _X_test = getattr(ar, "X_test", None) or getattr(ar, "X_train", None)
-                        _y_test = getattr(ar, "y_test", None) or getattr(ar, "y_train", None)
-                        _target = st.session_state.get("target_col")
-                        _smiles = st.session_state.get("smiles_col")
-                        _df_all = st.session_state.get("df")
-
-                        if _X_test is not None and hasattr(_X_test, "columns"):
-                            _feat_names = list(_X_test.columns)
-                        elif _df_all is not None:
-                            _feat_names = [c for c in _df_all.columns if c not in (_target, _smiles)]
-                        else:
-                            _feat_names = [f"x{i}" for i in range(
-                                _X_test.shape[1] if _X_test is not None and hasattr(_X_test, "shape") else 10)]
-
-                        if _model is None:
-                            st.warning("モデルオブジェクトが取得できませんでした。")
-                        elif _X_test is None:
-                            st.warning("テストデータが取得できませんでした。")
-                        else:
-                            render_interpretability_ui(
-                                model=_model,
-                                X=_X_test,
-                                y=_y_test,
-                                feature_names=_feat_names,
-                                task=getattr(ar, "task", "regression"),
-                            )
-                except Exception as e:
-                    st.error(f"❌ 解釈性UIの読み込みエラー: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
-
-
-            with res_tab_bo:
-                from frontend_streamlit.components.bayesian_opt_ui import render_bayesian_opt_ui
-                render_bayesian_opt_ui()
-
+# ── フッター ──────────────────────────────────────────────────
+st.markdown("---")
+st.markdown(
+    '<div style="text-align:center; color:#555; font-size:0.8rem;">'
+    '© 2024 ChemAI ML Studio | Accelerating Material Discovery with Agentic AI'
+    '</div>',
+    unsafe_allow_html=True,
+)
