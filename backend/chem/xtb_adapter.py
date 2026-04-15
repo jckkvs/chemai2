@@ -14,14 +14,7 @@ Implements: §3.9 XTB量子化学記述子
   conda install -c conda-forge xtb          # 推奨（Windows対応）
   または https://github.com/grimme-lab/xtb/releases からバイナリをダウンロード
 """
-from __future__ import annotations
-
-import logging
-import os
-import shutil
-import subprocess
-import tempfile
-from typing import Any
+from typing import Any, List, Dict, Optional, Union, Tuple
 
 import numpy as np
 import pandas as pd
@@ -44,7 +37,8 @@ if os.name == 'nt':
         pass
 
 # クラッシュ検出時に2回目以降の実行をスキップするためのフラグ
-_XTB_BROKEN = False
+# (後方互換性のために残すが、現在はインスタンス変数 self._xtb_broken を推奨)
+_XTB_BROKEN_GLOBAL = False
 
 _XTB_DESCRIPTORS = {
     "xtb_HomoLumoGap":         "HOMO-LUMOエネルギーギャップ（光吸収・反応性） [eV]",
@@ -64,7 +58,7 @@ _XTB_DESCRIPTORS = {
 }
 
 
-def _smiles_to_xyz(smiles: str, charge: int = 0) -> str | None:
+def _smiles_to_xyz(smiles: str, charge: int = 0) -> Optional[str]:
     """
     SMILES → 3D座標 (XYZ 形式文字列)。RDKit を使用。
 
@@ -101,21 +95,24 @@ def _smiles_to_xyz(smiles: str, charge: int = 0) -> str | None:
         for sym, pos in zip(atoms, positions):
             lines.append(f"{sym:2s}  {pos[0]:12.6f}  {pos[1]:12.6f}  {pos[2]:12.6f}")
         return "\n".join(lines)
+    except ImportError:
+        logger.error("RDKit が利用できません。")
+        raise
     except Exception as e:
-        logger.debug("SMILES→XYZ 変換失敗: %s, err=%s", smiles[:30], e)
+        logger.warning(f"SMILES→XYZ 変換中の予期せぬエラー ({type(e).__name__}): {e} [SMILES: {smiles[:30]}]")
         return None
 
 
-def _parse_xtb_output(output: str) -> dict[str, float]:
+def _parse_xtb_output(output: str) -> Dict[str, float]:
     """
     xtb 出力テキストから各種記述子を抽出する。
 
     Implements: §3.9 xtb出力パース
     Mulliken電荷の抽出も追加（qTOTAL 列を読む）
     """
-    result: dict[str, float] = {}
+    result: Dict[str, float] = {}
     lines = output.splitlines()
-    mulliken_charges: list[float] = []
+    mulliken_charges: List[float] = []
     in_charges_block = False
 
     for i, line in enumerate(lines):
@@ -173,10 +170,14 @@ def _parse_xtb_output(output: str) -> dict[str, float]:
                 # 形式: "  1  C   ...  q_value  ..." — 4列目が電荷の場合が多い
                 if len(parts) >= 4:
                     try:
-                        q = float(parts[3])  # Mulliken電荷列（xTBの標準出力形式）
+                        q = float(parts[3])  # Mulliken電荷列
                         mulliken_charges.append(q)
-                    except (ValueError, IndexError):
-                        in_charges_block = False  # 数値でなければブロック終了
+                    except ValueError:
+                        # 数値変換失敗時はブロック終了（パース終了）
+                        in_charges_block = False
+                else:
+                    # 列数不足もブロック終了
+                    in_charges_block = False
 
         except (ValueError, IndexError):
             pass
@@ -205,7 +206,7 @@ def _parse_xtb_output(output: str) -> dict[str, float]:
     return result
 
 
-def _read_xyz_coords(xyz_path: str) -> dict | None:
+def _read_xyz_coords(xyz_path: str) -> Optional[Dict[str, Any]]:
     """
     XYZファイルから座標と原子番号を読み取る（ML派生特徴量用）。
 
@@ -230,8 +231,8 @@ def _read_xyz_coords(xyz_path: str) -> dict | None:
         if len(lines) < 3:
             return None
         n_atoms = int(lines[0].strip())
-        symbols: list[str] = []
-        coords: list[list[float]] = []
+        symbols: List[str] = []
+        coords: List[List[float]] = []
         for line in lines[2: 2 + n_atoms]:
             parts = line.split()
             if len(parts) < 4:
@@ -277,7 +278,7 @@ class XTBAdapter(BaseChemAdapter):
         calc_type: str = "opt",   # デフォルトを構造最適化に変更（要件2.1）
         convergence: str = "normal",
         solvent: str = "none",
-        timeout: int | None = None,
+        timeout: Optional[int] = None,
         max_retries: int = 3,
     ):
         from backend.utils.config import default_config
@@ -290,6 +291,7 @@ class XTBAdapter(BaseChemAdapter):
         self.solvent = solvent
         self.timeout = timeout if timeout is not None else default_config.xtb_timeout_per_mol
         self.max_retries = max_retries
+        self._xtb_broken = False  # グローバル変数からインスタンス変数へ変更
 
     @property
     def name(self) -> str:
@@ -344,10 +346,10 @@ class XTBAdapter(BaseChemAdapter):
         xyz_path: str,
         charge: int,
         uhf: int,
-        calc_type: str | None = None,
-        convergence: str | None = None,
-        solvent: str | None = None,
-    ) -> list[str]:
+        calc_type: Optional[str] = None,
+        convergence: Optional[str] = None,
+        solvent: Optional[str] = None,
+    ) -> List[str]:
         """xtb コマンドライン引数を構築する。"""
         ct = calc_type or self.calc_type
         conv = convergence or self.convergence
@@ -381,9 +383,9 @@ class XTBAdapter(BaseChemAdapter):
 
     def compute(
         self,
-        smiles_list: list[str],
-        selected_descriptors: list[str] | None = None,
-        charge_config_store: Any | None = None,
+        smiles_list: List[str],
+        selected_descriptors: Optional[List[str]] = None,
+        charge_config_store: Optional[Any] = None,
         **kwargs: Any,
     ) -> DescriptorResult:
         """
@@ -413,20 +415,18 @@ class XTBAdapter(BaseChemAdapter):
         convergence = kwargs.get("convergence", self.convergence)
         solvent = kwargs.get("solvent", self.solvent)
 
-        rows: list[dict] = []
-        failed_indices: list[int] = []
-        optimized_coords: list[dict | None] = []  # 最適化後座標（ML特徴量抽出用）
+        rows: List[Dict[str, Any]] = []
+        failed_indices: List[int] = []
+        optimized_coords: List[Optional[Dict[str, Any]]] = []  # 最適化後座標（ML特徴量抽出用）
 
         # リトライ時の収束基準フォールバック順序
         _CONVERGENCE_FALLBACK = ["normal", "loose", "sloppy", "crude"]
-
-        global _XTB_BROKEN
 
         with tempfile.TemporaryDirectory() as tmpdir:
             for i, smi in enumerate(smiles_list):
                 row = {k: np.nan for k in col_names}
                 
-                if _XTB_BROKEN:
+                if self._xtb_broken:
                     failed_indices.append(i)
                     optimized_coords.append(None)
                     rows.append(row)
@@ -492,7 +492,7 @@ class XTBAdapter(BaseChemAdapter):
                             # 0xc0000142 = -1073741502 or 3221225794, 0xc0000135 = -1073741515 or 3221225749
                             if result.returncode in (3221225794, -1073741502, 3221225749, -1073741515, 3221225477, -1073741819):
                                 logger.critical("XTBがシステムエラーでクラッシュしました。以降の分子はスキップします。(returncode: %s)", result.returncode)
-                                _XTB_BROKEN = True
+                                self._xtb_broken = True
                                 success = False
                                 break
 
@@ -562,7 +562,7 @@ class XTBAdapter(BaseChemAdapter):
                             )
                             if result_sp.returncode in (3221225794, -1073741502, 3221225749, -1073741515, 3221225477, -1073741819):
                                 logger.critical("XTBがシステムエラーでクラッシュしました。以降の分子はスキップします。(returncode: %s)", result_sp.returncode)
-                                _XTB_BROKEN = True
+                                self._xtb_broken = True
 
                             if result_sp.returncode == 0:
                                 parsed = _parse_xtb_output(result_sp.stdout)

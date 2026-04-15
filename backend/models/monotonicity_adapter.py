@@ -1,12 +1,12 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Union, List
 
 logger = logging.getLogger(__name__)
 
 def apply_monotonicity_constraints(
     estimator: Any,
     pipeline: Any,
-    constraints_dict: Dict[str, Dict[str, Any]]
+    constraints_dict: Dict[str, Union[int, Dict[str, Any]]]
 ) -> Any:
     """
     変数単位の制約辞書を、選択モデルのネイティブ形式へ自動マッピングして適用する。
@@ -25,8 +25,8 @@ def apply_monotonicity_constraints(
 
     # 制約配列の構築
     # 方向性のマッピング: increasing=1, decreasing=-1, その他(unknown/none)=0
-    constraint_values = []
-    applied_count = 0
+    constraint_values: List[int] = []
+    applied_count: int = 0
     
     for feat in feature_order:
         orig_feat = _get_orig_name(feat)

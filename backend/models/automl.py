@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -88,34 +88,34 @@ class AutoMLResult:
     best_pipeline: Pipeline
     best_score: float
     scoring: str
-    model_scores: dict[str, float]     # {model_key: cv_mean_score}
-    model_details: dict[str, dict]     # {model_key: {mean, std, fit_time}}
+    model_scores: Dict[str, float]     # {model_key: cv_mean_score}
+    model_details: Dict[str, Dict]     # {model_key: {mean, std, fit_time}}
     detection_result: DetectionResult
     elapsed_seconds: float
-    warnings: list[str] = field(default_factory=list)
-    processed_X: pd.DataFrame | None = None
+    warnings: List[str] = field(default_factory=list)
+    processed_X: Optional[pd.DataFrame] = None
     # SHAP解析・評価用: パイプライン適用前の特徴量と目的変数
-    X_train: pd.DataFrame | None = None
-    y_train: np.ndarray | None = None
+    X_train: Optional[pd.DataFrame] = None
+    y_train: Optional[np.ndarray] = None
     # CV の Out-Of-Fold 予測 (全データに対するCVの予測値)
-    oof_predictions: np.ndarray | None = None
-    oof_true: np.ndarray | None = None
+    oof_predictions: Optional[np.ndarray] = None
+    oof_true: Optional[np.ndarray] = None
     # Holdout (train/test split) の予測
-    holdout_true: np.ndarray | None = None
+    holdout_true: Optional[np.ndarray] = None
     # Trainデータの予測 (全データでの学習後の予測値)
-    train_predictions: np.ndarray | None = None
-    train_true: np.ndarray | None = None
+    train_predictions: Optional[np.ndarray] = None
+    train_true: Optional[np.ndarray] = None
     # SMILES相関係数とTransformerの保持
-    smiles_correlations: dict[str, float] = field(default_factory=dict)
-    smiles_transformer: Any | None = None
+    smiles_correlations: Dict[str, float] = field(default_factory=dict)
+    smiles_transformer: Any = None
     # 自動解決された単調性制約の保持
-    resolved_constraints: dict[str, int] = field(default_factory=dict)
+    resolved_constraints: Dict[str, int] = field(default_factory=dict)
     # 不確実性と適用領域 (Applicability Domain) の保持
-    ad_distance_cv: np.ndarray | None = None
-    in_domain_cv: np.ndarray | None = None
-    uncertainty_cv: np.ndarray | None = None
+    ad_distance_cv: Optional[np.ndarray] = None
+    in_domain_cv: Optional[np.ndarray] = None
+    uncertainty_cv: Optional[np.ndarray] = None
     # Preprocessing Transparency Report
-    preprocess_report: Any | None = None
+    preprocess_report: Optional[Any] = None
 
 class AutoMLEngine:
     """
@@ -136,16 +136,16 @@ class AutoMLEngine:
         task: str = "auto",
         cv_folds: int = AUTOML_CV_FOLDS,
         cv_key: str = "auto",  # "auto" = kfold(regression) / stratified_kfold(classification)
-        cv_groups_col: str | None = None,  # GroupKFold等で使うグループ列名
-        model_keys: list[str] | None = None,
-        model_params: dict[str, dict[str, Any]] | None = None,  # {model_key: {param: val}}
-        preprocess_params: dict[str, Any] | None = None,  # PreprocessConfigの上書き
+        cv_groups_col: Optional[str] = None,  # GroupKFold等で使うグループ列名
+        model_keys: Optional[List[str]] = None,
+        model_params: Optional[Dict[str, Dict[str, Any]]] = None,  # {model_key: {param: val}}
+        preprocess_params: Optional[Dict[str, Any]] = None,  # PreprocessConfigの上書き
         timeout_seconds: int = 600,
-        progress_callback: Callable[[int, int, str], None] | None = None,
-        selected_descriptors: list[str] | None = None,
-        active_engines: list[str] | None = None,
-        monotonic_constraints_dict: dict[str, int] | None = None,
-        column_meta_dict: dict | None = None,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        selected_descriptors: Optional[List[str]] = None,
+        active_engines: Optional[List[str]] = None,
+        monotonic_constraints_dict: Optional[Dict[str, int]] = None,
+        column_meta_dict: Optional[Dict] = None,
         count_normalization: str = "density",
         auto_feature_selection: bool = False,
     ) -> None:
@@ -169,11 +169,11 @@ class AutoMLEngine:
         self,
         df: pd.DataFrame,
         target_col: str,
-        smiles_col: str | list[dict] | None = None,
+        smiles_col: Optional[Union[str, List[Dict]]] = None,
         fraction_type: str = "wt",
-        group_col: str | None = None,
-        preprocess_config: PreprocessConfig | None = None,
-        cv_extra_params: dict[str, Any] | None = None,
+        group_col: Optional[str] = None,
+        preprocess_config: Optional[PreprocessConfig] = None,
+        cv_extra_params: Optional[Dict[str, Any]] = None,
     ) -> AutoMLResult:
         """
         AutoML全フローを実行する。
@@ -190,7 +190,7 @@ class AutoMLEngine:
             AutoMLResult インスタンス
         """
         start = time.time()
-        warnings: list[str] = []
+        warnings: List[str] = []
         total_steps = 6
         cv_extra_params = cv_extra_params or {}
 
@@ -341,18 +341,22 @@ class AutoMLEngine:
                     cv_key = "stratified_kfold" if task == "classification" else "kfold"
                     groups = None
 
-        model_scores: dict[str, float] = {}
-        model_details: dict[str, dict[str, Any]] = {}
+        model_scores: Dict[str, float] = {}
+        model_details: Dict[str, Dict[str, Any]] = {}
         best_key = ""
         best_score = float("-inf")
         preprocess_cfg = preprocess_config or PreprocessConfig()
         deadline = start + self.timeout_seconds
 
-        # ── SMILES列が存在する場合: 先にfit_transformして記述子DFを取得。
-        # ── これによりTypeDetector・build_full_pipelineが記述子列を正しく認識できる。
+        # ── 【設計判断】SMILES列が存在する場合: 先にfit_transformして記述子DFを取得。
+        # ── 理由1: 各fold内でSMILES解析を行うと計算負荷が極めて高く、同一分子でも重複計算される。
+        # ── 理由2: 記述子生成は「確定的な特徴量抽出」であり、学習データのみに閉じる必要はない。
+        # ── 一方で、次元圧縮やスケーリング、欠損値補完などの「統計的加工」は、CVの各fold内で
+        # ── 厳密に行う必要がある（データリーク防止）。
+        # ── この設計により、「記述子生成は一括」と「統計前処理はCV内」の両立を実現している。
         # ── 従来の「SmilesTransformer先頭挿入→変換前DFのdetection_result使用」という
-        # ── 設計は TypeDetector が変換後の記述子列を認識できずColumnTransformerが空になるバグがあった。
-        _smiles_transformer_for_cv: SmilesDescriptorTransformer | None = None
+        # ── 旧設計は TypeDetector が変換後の記述子列を認識できずColumnTransformerが空になるバグがあった。
+        _smiles_transformer_for_cv: Optional[SmilesDescriptorTransformer] = None
         X_train = X.copy()
 
         if _smiles_cols_present:
