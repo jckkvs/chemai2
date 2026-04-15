@@ -374,18 +374,61 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
-def _load_4000_mappings():
-    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "chemai2_4000_manual_weighting.json")
+def _get_json_path():
+    # ユーザー設定ディレクトリ (~/.chemai2/) 配下に保存するように変更
+    user_dir = os.path.join(os.path.expanduser("~"), ".chemai2")
+    os.makedirs(user_dir, exist_ok=True)
+    new_path = os.path.join(user_dir, "manual_mixture_weighting.json")
+    
+    # 旧パス（プロジェクトルート）からの移行ロジック
+    old_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "chemai2_4000_manual_weighting.json")
+    if os.path.exists(old_path) and not os.path.exists(new_path):
+        try:
+            import shutil
+            shutil.move(old_path, new_path)
+            _logger.info(f"Migrated manual mixture mappings from {old_path} to {new_path}")
+        except Exception as e:
+            _logger.warning(f"Failed to migrate manual mappings: {e}")
+            return old_path # 失敗した場合は旧パスを返す
+            
+    return new_path
+
+def reload_mappings():
+    """手動マッピングJSONを再ロードし、メモリ上のマッピングを更新する。"""
+    json_path = _get_json_path()
     try:
         if os.path.exists(json_path):
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            # CLEAR EXPLICIT_DESCRIPTOR_MAP? No, only update from JSON
+            # However, if we want to support "Reset to Default", we might need a way to know original defaults.
+            # Currently EXPLICIT_DESCRIPTOR_MAP contains defaults + JSON overrides.
             for k, v in data.items():
                 EXPLICIT_DESCRIPTOR_MAP[k] = (v.get("weighting", "context"), v.get("rationale", "Loaded from JSON"))
+            _logger.info(f"Loaded {len(data)} manual mappings from {json_path}")
+            return True
     except Exception as e:
         _logger.warning(f"Failed to load user descriptor mappings from {json_path}: {e}")
+    return False
 
-_load_4000_mappings()
+def save_manual_mappings(mappings: dict[str, dict[str, str]]):
+    """
+    手動マッピングをJSONファイルに保存する。
+    mappings: { descriptor_name: { "weighting": "weight"|"mole"|"context", "rationale": "..." } }
+    """
+    json_path = _get_json_path()
+    try:
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(mappings, f, indent=2, ensure_ascii=False)
+        reload_mappings()
+        return True, "✅ 保存完了"
+    except Exception as e:
+        msg = f"❌ 保存失敗: {e}"
+        _logger.error(msg)
+        return False, msg
+
+# 初回ロード
+reload_mappings()
 
 # ============================================================
 # 正規表現フォールバック（未知記述子用）

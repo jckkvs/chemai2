@@ -20,7 +20,7 @@ def render() -> None:
         return
 
     target_col = st.session_state.get("target_col")
-    
+
     # 事前計算された記述子があればマージする
     precalc_df = st.session_state.get("precalc_smiles_df")
     if precalc_df is not None and not precalc_df.empty:
@@ -28,7 +28,7 @@ def render() -> None:
         cols_to_use = precalc_df.columns.difference(df.columns)
         if len(cols_to_use) > 0:
             df = pd.concat([df, precalc_df[cols_to_use]], axis=1)
-            
+
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
 
     # ─── データ全体サマリーカード ───────────────────────────────────────
@@ -45,8 +45,8 @@ def render() -> None:
         pass
 
     st.divider()
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["📊 分布", "🔗 相関", "📈 散布図", "🎯 目的変数", "⚠️ 外れ値"]
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+        ["📊 分布", "🔗 相関", "📈 散布図", "🎯 目的変数", "⚠️ 外れ値", "🔍 類似セット・クラスタ"]
     )
 
     with tab1:
@@ -66,6 +66,9 @@ def render() -> None:
 
     with tab5:
         _show_outliers(df, numeric_cols)
+
+    with tab6:
+        _show_similar_sets_and_clustering(df, numeric_cols, target_col)
 
 
 # ─── 分布タブ ──────────────────────────────────────────────────────────
@@ -195,18 +198,36 @@ def _plot_scatter(df: pd.DataFrame, numeric_cols: list[str], target_col: str | N
         default_y = 1 if len(numeric_cols) > 1 else 0
         y_col = st.selectbox("Y軸", numeric_cols, index=default_y, key="scatter_y")
 
-    color_col = target_col if target_col and target_col in df.columns else None
+    # クラスタラベルがあれば、選択肢に追加
+    color_options = [None]
+    if target_col and target_col in df.columns:
+        color_options.append(target_col)
+    
+    if "cluster_labels" in st.session_state:
+        # dfにダミー追加するか、直接渡す
+        color_options.append("Cluster")
+
+    # カテゴリ列も色分け候補に追加（ユーザーの要望：カテゴリごとに色分け）
+    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+    color_options.extend(cat_cols)
+
+    color_col = st.selectbox("色分け", color_options, index=1 if len(color_options)>1 else 0, key="scatter_color")
+
+    plot_df = df.copy()
+    if color_col == "Cluster" and "cluster_labels" in st.session_state:
+        labels = st.session_state["cluster_labels"]
+        plot_df["Cluster"] = labels.astype(str)
 
     # backend.utils.optional_import を使用して可用性をチェック
     from backend.utils.optional_import import is_available
     sm_available = is_available("statsmodels")
-    
+
     trendline_opt = "ols" if sm_available else None
     if not sm_available:
         st.info("💡 `statsmodels` がインストールされていないため、回帰直線（トレンドライン）は表示されません。")
 
     fig = px.scatter(
-        df, x=x_col, y=y_col, color=color_col,
+        plot_df, x=x_col, y=y_col, color=color_col,
         opacity=0.7,
         color_continuous_scale="Viridis",
         template="plotly_dark",
@@ -327,3 +348,134 @@ def _show_outliers(df: pd.DataFrame, numeric_cols: list[str]) -> None:
                 st.success("✅ 外れ値は検出されませんでした。")
     except Exception as e:
         st.error(f"外れ値検出エラー: {e}")
+
+
+# ─── 類似セット・クラスタタブ ─────────────────────────────────────────────
+
+def _show_similar_sets_and_clustering(
+    df: pd.DataFrame,
+    numeric_cols: list[str],
+    target_col: str | None
+) -> None:
+    """類似サンプルセットの抽出とクラスタリング結果を表示する。"""
+
+    st.markdown("### 🔍 類似サンプルペアセットの抽出")
+    st.info(\"\"\"
+    **① 一条件だけ変化させたセット**: 説明変数が 1 つだけ異なり、他はすべて同じサンプル群
+    **② 説明変数は同一だが目的変数が異なるセット**: 実験条件が同じなのに結果がばらついているサンプル群
+    \"\"\")
+
+    tolerance = st.slider("類似度判定閾値（相対誤差）", 0.001, 0.1, 0.01, 0.005, key="sim_tolerance")
+    max_sets = st.slider("表示するセット数の最大値", 5, 50, 20, 5, key="sim_max_sets")
+
+    if st.button("🔍 類似セットを抽出", key="find_similar_btn"):
+        try:
+            from backend.data.eda import find_similar_pair_sets
+            similar_sets = find_similar_pair_sets(
+                df,
+                target_col=target_col,
+                tolerance=tolerance,
+                max_sets=max_sets
+            )
+
+            if not similar_sets:
+                st.info("指定された条件で類似セットは見つかりませんでした。閾値を緩くしてみてください。")
+            else:
+                st.success(f"✅ {len(similar_sets)}件の類似セットを発見しました。")
+
+                # タイプごとに分類
+                type1_sets = [s for s in similar_sets if s.pair_type == "one_condition_diff"]
+                type2_sets = [s for s in similar_sets if s.pair_type == "same_explanatory_diff_target"]
+
+                if type1_sets:
+                    with st.expander(f"① 一条件変化セット ({len(type1_sets)}件)", expanded=False):
+                        for s in type1_sets:
+                            st.markdown(f"**{s.set_id}**: {s.description}")
+                            st.markdown(f"- 変動列：`{', '.join(s.varying_columns)}`")
+                            st.markdown(f"- 固定列：{len(s.constant_columns)}列")
+
+                            # サンプル詳細を表示
+                            sample_df = df.loc[s.indices]
+                            cols_to_show = s.varying_columns + ([target_col] if target_col else [])
+                            if cols_to_show:
+                                st.dataframe(sample_df[cols_to_show], use_container_width=True)
+
+                            # 散布図で可視化
+                            if len(s.varying_columns) == 1 and target_col:
+                                import plotly.express as px
+                                x_col = s.varying_columns[0]
+                                fig = px.scatter(
+                                    sample_df, x=x_col, y=target_col,
+                                    title=f"{x_col} vs {target_col}",
+                                    template="plotly_dark"
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            st.divider()
+
+                if type2_sets:
+                    with st.expander(f"② 説明変数同一・目的変数差異セット ({len(type2_sets)}件)", expanded=False):
+                        for s in type2_sets:
+                            st.markdown(f"**{s.set_id}**: {s.description}")
+                            if s.target_diff is not None:
+                                st.markdown(f"- 目的変数の差：{s.target_diff:.4g}")
+                            st.markdown(f"- 固定列：{len(s.constant_columns)}列")
+
+                            # サンプル詳細を表示
+                            sample_df = df.loc[s.indices]
+                            if target_col:
+                                st.dataframe(sample_df[[target_col] + s.constant_columns[:5]], use_container_width=True)
+                            st.divider()
+
+        except Exception as e:
+            st.error(f"類似セット抽出エラー：{e}")
+
+    st.divider()
+
+    st.markdown("### 🎨 クラスタリング可視化")
+    st.info("全データをクラスタリングし、各プロットにクラスター色を反映できます。")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        n_clusters = st.slider("クラスタ数", 2, 15, 5, key="cluster_n")
+    with col2:
+        cluster_method = st.selectbox("手法", ["kmeans", "agglomerative"], key="cluster_method")
+    with col3:
+        scale_cluster = st.checkbox("標準化", value=True, key="cluster_scale")
+
+    if st.button("🎨 クラスタリング実行", key="run_cluster_btn"):
+        try:
+            from backend.data.eda import perform_clustering
+
+            numeric_df = df.select_dtypes(include="number").dropna()
+            if len(numeric_df) < n_clusters:
+                st.error(f"サンプル数 ({len(numeric_df)}) がクラスタ数 ({n_clusters}) より少ないです。")
+            else:
+                cluster_result = perform_clustering(
+                    numeric_df,
+                    n_clusters=n_clusters,
+                    method=cluster_method,
+                    scale=scale_cluster
+                )
+
+                if "error" in cluster_result:
+                    st.error(cluster_result["error"])
+                else:
+                    # session_state にクラスタラベルを保存
+                    labels_series = pd.Series(cluster_result["labels"], index=cluster_result["sample_indices"], name="Cluster")
+                    st.session_state["cluster_labels"] = labels_series
+
+                    st.success(f"✅ クラスタリング完了（慣性：{cluster_result.get('inertia', 'N/A'):.2f}）")
+
+                    # クラスタ別の統計
+                    st.markdown("#### クラスタ別サマリー")
+                    summary_df = pd.DataFrame({"Cluster": labels_series})
+                    if target_col and target_col in df.columns:
+                        summary_df[target_col] = df.loc[labels_series.index, target_col]
+                        st.dataframe(summary_df.groupby("Cluster")[target_col].agg(["count", "mean", "std"]).round(3))
+
+        except Exception as e:
+            st.error(f"クラスタリングエラー：{e}")
+
+    # クラスタラベルがあれば、散布図に色付けオプションを追加
+    if "cluster_labels" in st.session_state:
+        st.success("✅ クラスタラベルが利用可能です。散布図タブで「色付け」に「Cluster」を選択できます。")

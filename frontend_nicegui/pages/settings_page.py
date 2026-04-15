@@ -8,6 +8,8 @@ frontend_nicegui/pages/settings_page.py
 from __future__ import annotations
 
 import logging
+import json
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -15,6 +17,14 @@ from nicegui import ui
 
 from backend.config.settings_manager import SettingsManager
 from backend.config.auto_downloader import AutoDownloader
+from backend.chem.descriptor_weighting_classifier import (
+    EXPLICIT_DESCRIPTOR_MAP,
+    classify_descriptor,
+    save_manual_mappings,
+    reload_mappings,
+    _get_json_path
+)
+from frontend_nicegui.components.mixture_settings_panel import render_mixture_settings_content
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +241,11 @@ def open_settings_dialog() -> None:
         ).style("border-top: 1px solid rgba(255,255,255,0.08);"):
             _render_package_manager()
 
+        with ui.expansion("🧪 混合物加重設定", icon="science").classes(
+            "full-width q-px-lg q-pb-sm"
+        ).style("border-top: 1px solid rgba(255,255,255,0.08);"):
+            render_mixture_settings_content()
+
     dlg.open()
 
 
@@ -422,3 +437,6 @@ def render_settings_page() -> None:
     ui.separator().classes("q-my-md")
     with ui.expansion("📦 パッケージ管理", icon="inventory_2").classes("full-width"):
         _render_package_manager()
+
+    with ui.expansion("🧪 混合物加重設定", icon="science").classes("full-width"):
+        render_mixture_settings_content()

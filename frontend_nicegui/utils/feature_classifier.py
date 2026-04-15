@@ -17,6 +17,8 @@ class FeatureClassifier:
         "unipka": ["unipka_", "pka_", "logd_", "solv_"],
         "cosmo": ["cosmo_", "sigma_", "dG_solv"],
         "molai": ["molai_pca_", "latent_"],
+        "mixture": ["mix_", "weighted_", "fraction_"],
+        "molfeat": ["molfeat_"],
         "group_contrib": ["gc_", "contrib_"],
     }
     

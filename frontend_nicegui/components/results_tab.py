@@ -18,6 +18,7 @@ from frontend_nicegui.components.results_tab_extras import (
     _render_sample_table_inline,
     _render_extra_visualizations,
 )
+from frontend_nicegui.components.feature_comparison_dashboard import render_feature_comparison_dashboard
 from frontend_nicegui.utils.plot_utils import render_plot_with_expand
 
 
@@ -380,43 +381,50 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                     )
 
                     with ui.expansion("📐 回帰係数詳細", icon="format_list_numbered").classes("full-width q-mt-sm").props('default-opened'):
+                        # 状態管理
+                        show_scaled_state = {"value": True}
+
                         # 切り替えボタン
                         with ui.row().classes("q-mb-sm"):
-                            btn_scaled = ui.button("標準化後で表示")
+                            btn_scaled = ui.button("標準化後で表示", color="primary")
                             btn_original = ui.button("標準化前で表示")
-                            ui.label("※標準化後: 特徴量間の相対的重要度比較用 / 標準化前: 実スケールでの解釈用").classes("text-caption text-grey-5")
-                        
+                            ui.label("※標準化後：特徴量間の相対的重要度比較用 / 標準化前：実スケールでの解釈用").classes("text-caption text-grey-5")
+
                         @ui.refreshable
-                        def coef_table_view(show_scaled: bool):
+                        def coef_table_view():
+                            show_scaled = show_scaled_state["value"]
                             cols = [
                                 {"name": "rank", "label": "順位", "field": "rank", "align": "center"},
                                 {"name": "feature", "label": "特徴量", "field": "feature", "align": "left"},
-                                {"name": "coef", "label": "係数", "field": "coef_scaled" if show_scaled else "coef_original", 
+                                {"name": "coef", "label": "係数", "field": "coef_scaled" if show_scaled else "coef_original",
                                  "format": lambda v: f"{v:+.4f}" if pd.notna(v) else "-", "align": "right"},
-                                {"name": "abs_coef", "label": "寄与度", "field": "abs_coef_scaled", 
+                                {"name": "abs_coef", "label": "寄与度", "field": "abs_coef_scaled",
                                  "format": lambda v: f"{v:.4f}" if pd.notna(v) else "-", "align": "right"},
                             ]
                             if not show_scaled:
-                                cols.append({"name": "coef_scaled_ref", "label": "参考(標準化後)", 
+                                cols.append({"name": "coef_scaled_ref", "label": "参考 (標準化後)",
                                            "field": "coef_scaled", "format": lambda v: f"{v:+.4f}", "align": "right"})
-                            
+
                             df_view = df_coef.copy()
                             df_view["rank"] = range(1, len(df_view)+1)
-                            ui.table(df_view.to_dict('records'), columns=cols, row_key="feature").classes("full-width").props("dense flat bordered dark")
+                            rows_data = df_view.to_dict('records')
+                            ui.table(rows=rows_data, columns=cols, row_key="feature").classes("full-width").props("dense flat bordered dark")
 
                         def update_table(show_scaled: bool):
-                            coef_table_view.refresh(show_scaled)
+                            show_scaled_state["value"] = show_scaled
+                            coef_table_view.refresh()
                             btn_scaled.props(f'color={"primary" if show_scaled else ""}')
                             btn_original.props(f'color={"primary" if not show_scaled else ""}')
 
                         btn_scaled.on("click", lambda: update_table(True))
                         btn_original.on("click", lambda: update_table(False))
-                        
+
                         # 初期表示
-                        coef_table_view(True)
-                        update_table(True)
+                        coef_table_view()
                 except Exception as ex:
-                    ui.label(f"回帰係数詳細表示エラー: {ex}").classes("text-red text-caption")
+                    import traceback
+                    ui.label(f"回帰係数詳細表示エラー：{ex}").classes("text-red text-caption")
+                    ui.label(f"詳細：{traceback.format_exc()}").classes("text-red text-caption")
             else:
                 ui.label("ℹ️ SHAP解析は「🧪 モデル詳細検証」タブ → 解釈性・重要度 で確認できます").classes("text-grey-5")
         except Exception as ex:
@@ -865,6 +873,10 @@ def _render_cross_set_comparison(success_results: dict, state: dict) -> None:
         )
 
         render_plot_with_expand(fig_hm, title="セット×推定機 スコアヒートマップ", height=f"{max(400, 50 * len(set_names) + 160)}px")
+
+        # ── 3. 特徴量重複分析 (新機能) ──
+        ui.separator().classes("q-my-md")
+        render_feature_comparison_dashboard(state)
 
         # ── 3. 統合ランキングテーブル ──
         ui.separator().classes("q-my-sm")

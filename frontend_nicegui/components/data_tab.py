@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 from nicegui import ui
 
+from frontend_nicegui.components.feature_comparison_dashboard import render_feature_comparison_dashboard
+
 logger = logging.getLogger(__name__)
 
 # ─── サンプルSMILES ─────────────────────────────────
@@ -576,6 +578,13 @@ def _render_smiles_features(state: dict) -> None:
         ui.label(f"✅ {len(precalc.columns)}個の記述子が計算済みです").classes("q-mt-md text-positive")
         results_container = ui.column().classes("full-width q-mt-sm")
         _show_descriptor_summary(state, results_container)
+
+        # ── 特徴量セット比較ダッシュボード (追加) ──
+        if state.get("automl_results"):
+             with ui.expansion("📊 特徴量セット比較ダッシュボード", icon="analytics").classes("full-width q-mt-md").style(
+                 "border: 1px solid rgba(0,212,255,0.2); border-radius: 12px;"
+             ):
+                 render_feature_comparison_dashboard(state)
     else:
         ui.label("⏳ SMILES検出後、記述子は自動計算されます").classes("q-mt-md text-grey-5")
 

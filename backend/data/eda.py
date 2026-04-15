@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -474,3 +474,152 @@ def convert_numpy_to_list(obj: Any) -> Any:
     elif hasattr(obj, '__dict__'):
         return {k: convert_numpy_to_list(v) for k, v in obj.__dict__.items()}
     return obj
+
+
+# ============================================================
+# 類似サンプル探索 & クラスタリング
+# ============================================================
+
+@dataclass
+class SimilarSetResult:
+    """類似サンプルセットの抽出結果。"""
+    set_id: str
+    pair_type: Literal["one_condition_diff", "same_explanatory_diff_target"]
+    indices: list[int]
+    description: str
+    varying_columns: list[str] = field(default_factory=list)
+    constant_columns: list[str] = field(default_factory=list)
+    target_diff: float | None = None
+
+
+def find_similar_pair_sets(
+    df: pd.DataFrame,
+    target_col: str | None = None,
+    tolerance: float = 0.01,
+    max_sets: int = 20,
+) -> list[SimilarSetResult]:
+    """
+    類似サンプルセットを抽出する。
+    ① 一条件だけ変化させたセット (One-condition difference)
+    ② 説明変数は同一だが目的変数が異なるセット
+    """
+    # 数値列かつ目的変数以外の列を対象にする
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    explanatory_cols = [c for c in numeric_cols if c != target_col]
+    
+    if not explanatory_cols:
+        return []
+
+    # 数値データの丸め処理（浮動小数点のゆらぎを吸収）
+    # 概ね tolerance のオーダーで丸める
+    decimals = int(np.ceil(-np.log10(tolerance))) if tolerance > 0 else 6
+    df_rounded = df[explanatory_cols].copy()
+    for col in explanatory_cols:
+        # スケールに応じて丸め幅を調整（簡易実装）
+        std = df_rounded[col].std()
+        if std > 0:
+            # 標準偏差に対して相対的な丸めを行う
+            df_rounded[col] = df_rounded[col].round(decimals)
+    
+    results: list[SimilarSetResult] = []
+    
+    # --- ② 説明変数同一・目的変数差異セット ---
+    if target_col and target_col in df.columns:
+        groups = df.groupby(explanatory_cols)
+        for _, g_df in groups:
+            if len(g_df) > 1:
+                t_vals = g_df[target_col].dropna()
+                if len(t_vals) > 1:
+                    t_diff = float(t_vals.max() - t_vals.min())
+                    if t_diff > tolerance:
+                        results.append(SimilarSetResult(
+                            set_id=f"SET_S_{len(results)+1:03d}",
+                            pair_type="same_explanatory_diff_target",
+                            indices=g_df.index.tolist(),
+                            description=f"説明変数が同一（{len(explanatory_cols)}列一致）で目的変数に差異あり",
+                            constant_columns=explanatory_cols,
+                            target_diff=t_diff
+                        ))
+            if len(results) >= max_sets // 2:
+                break
+
+    # --- ① 一条件だけ変化させたセット ---
+    # 計算負荷軽減のため、列数が多い場合は上位20列程度に制限
+    search_cols = explanatory_cols[:20]
+    for col in search_cols:
+        other_cols = [c for c in search_cols if c != col]
+        if not other_cols:
+            continue
+        
+        # 丸めたデータでグループ化
+        groups = df_rounded.groupby(other_cols)
+        for _, g_df in groups:
+            if 1 < len(g_df) <= 10:  # 適度なサイズのセットを優先
+                indices = g_df.index.tolist()
+                sub_df = df.loc[indices]
+                if sub_df[col].nunique() > 1:
+                    t_diff = None
+                    if target_col and target_col in df.columns:
+                        t_vals = sub_df[target_col].dropna()
+                        if len(t_vals) > 0:
+                            t_diff = float(t_vals.max() - t_vals.min())
+                            
+                    results.append(SimilarSetResult(
+                        set_id=f"SET_O_{len(results)+1:03d}",
+                        pair_type="one_condition_diff",
+                        indices=indices,
+                        description=f"「{col}」のみが変化し、他の{len(explanatory_cols)-1}列がほぼ同一のセット",
+                        varying_columns=[col],
+                        constant_columns=[c for c in explanatory_cols if c != col],
+                        target_diff=t_diff
+                    ))
+            if len(results) >= max_sets:
+                break
+        if len(results) >= max_sets:
+            break
+            
+    return results[:max_sets]
+
+
+def perform_clustering(
+    df: pd.DataFrame,
+    n_clusters: int = 5,
+    method: str = "kmeans",
+    scale: bool = True
+) -> dict[str, Any]:
+    """データをクラスタリングする。"""
+    try:
+        from sklearn.cluster import KMeans, AgglomerativeClustering
+        from sklearn.preprocessing import StandardScaler
+        
+        # 数値データのみ、欠損値は除去
+        X = df.select_dtypes(include="number").dropna()
+        if X.empty:
+            return {"error": "クラスタリング可能な数値データがありません。"}
+            
+        indices = X.index.tolist()
+        if scale:
+            X_scaled = StandardScaler().fit_transform(X)
+        else:
+            X_scaled = X.values
+            
+        if method == "kmeans":
+            model = KMeans(n_clusters=n_clusters, random_state=42, n_init="auto")
+        elif method == "agglomerative":
+            model = AgglomerativeClustering(n_clusters=n_clusters)
+        else:
+            return {"error": f"未知の手法: {method}"}
+            
+        labels = model.fit_predict(X_scaled).tolist()
+        
+        result = {
+            "labels": labels,
+            "sample_indices": indices,
+        }
+        if hasattr(model, "inertia_"):
+            result["inertia"] = float(model.inertia_)
+            
+        return result
+    except Exception as e:
+        import traceback
+        return {"error": f"クラスタリング実行エラー: {str(e)}\n{traceback.format_exc()}"}
