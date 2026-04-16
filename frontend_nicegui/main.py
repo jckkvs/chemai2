@@ -264,67 +264,74 @@ body, .nicegui-content, .q-page {
 .text-caption .q-icon { font-size: 16px !important; }
 .text-h5 .q-icon, .text-h6 .q-icon { font-size: 24px !important; }
 
-/* ── F-22: 桜井メソッド UI拡張 (ワクワク感とフィードバック) ── */
-@keyframes slide-up-fade {
-    0% { opacity: 0; transform: translateY(30px); }
-    100% { opacity: 1; transform: translateY(0); }
-}
-.animate-slide-up {
-    animation: slide-up-fade 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
-}
-.delay-100 { animation-delay: 0.1s; }
-.delay-200 { animation-delay: 0.2s; }
-.delay-300 { animation-delay: 0.3s; }
-.delay-400 { animation-delay: 0.4s; }
-.delay-500 { animation-delay: 0.5s; }
+    /* ── F-22: UI拡張 (ワクワク感とフィードバック) ── */
+    @keyframes slide-up-fade {
+        0% { opacity: 0; transform: translateY(30px); }
+        100% { opacity: 1; transform: translateY(0); }
+    }
+    .animate-slide-up {
+        animation: slide-up-fade 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+    }
+    .delay-100 { animation-delay: 0.1s; }
+    .delay-200 { animation-delay: 0.2s; }
+    .delay-300 { animation-delay: 0.3s; }
+    .delay-400 { animation-delay: 0.4s; }
+    .delay-500 { animation-delay: 0.5s; }
 
-.hover-bounce {
-    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
-}
-.hover-bounce:hover {
-    transform: scale(1.03) translateY(-4px) !important;
-    box-shadow: 0 12px 35px rgba(0, 212, 255, 0.25) !important;
-    z-index: 10;
-}
+    .hover-bounce {
+        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+    }
+    .hover-bounce:hover {
+        transform: scale(1.03) translateY(-4px) !important;
+        box-shadow: 0 12px 35px rgba(0, 212, 255, 0.25) !important;
+        z-index: 10;
+    }
 
-@keyframes success-glow {
-    0% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.3); }
-    50% { box-shadow: 0 0 25px rgba(74, 222, 128, 0.6), inset 0 0 10px rgba(74, 222, 128, 0.1); border-color: rgba(74, 222, 128, 0.7); }
-    100% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.3); }
-}
-.best-model-glow {
-    animation: success-glow 3s infinite;
-    background: linear-gradient(135deg, rgba(74, 222, 128, 0.08), rgba(0, 212, 255, 0.05)) !important;
-}
+    @keyframes success-glow {
+        0% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.3); }
+        50% { box-shadow: 0 0 25px rgba(74, 222, 128, 0.6), inset 0 0 10px rgba(74, 222, 128, 0.1); border-color: rgba(74, 222, 128, 0.7); }
+        100% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.3); }
+    }
+    .best-model-glow {
+        animation: success-glow 3s infinite;
+        background: linear-gradient(135deg, rgba(74, 222, 128, 0.08), rgba(0, 212, 255, 0.05)) !important;
+    }
 
-@keyframes shake-warning {
-    0%, 100% { transform: translateX(0); }
-    10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
-    20%, 40%, 60%, 80% { transform: translateX(4px); }
-}
-.animate-shake {
-    animation: shake-warning 0.6s cubic-bezier(.36,.07,.19,.97) both;
-}
+    @keyframes shake-warning {
+        0%, 100% { transform: translateX(0); }
+        10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+        20%, 40%, 60%, 80% { transform: translateX(4px); }
+    }
+    .animate-shake {
+        animation: shake-warning 0.6s cubic-bezier(.36,.07,.19,.97) both;
+    }
 
-/* ── ヘッダー完全削除後の Quasar 自動パディング除去 ── */
-/* ui.header() を削除してもQuasarがpadding-topを残すため強制リセット */
-.q-header {
-    display: none !important;
-    height: 0 !important;
-    min-height: 0 !important;
-}
-.q-page-container {
-    padding-top: 0 !important;
-}
-body {
-    padding-top: 0 !important;
-    margin-top: 0 !important;
-}
-/* 解析ステータスコンテナ（空の時はスペース不要） */
-.full-width:empty {
-    display: none !important;
-}
-"""
+    /* ── モダンなヘッダーデザイン ── */
+    .app-title {
+        background: linear-gradient(to right, #ffffff, #e0e7ff);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .glass-card {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    /* サイドバーのグラデーション */
+    .nicegui-drawer {
+        background: linear-gradient(180deg, #1a1a2e 0%, #0d0d1a 100%) !important;
+        border-right: 1px solid var(--border) !important;
+    }
+    
+    .q-header {
+        background: linear-gradient(to right, #4f46e5, #9333ea, #db2777) !important; /* Indigo via Purple to Pink */
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    """
 
 
 # ─────────────────────────────────────────────
@@ -550,395 +557,233 @@ def main_page():
     state["_apply_smart_defaults"] = _apply_smart_defaults
 
     # ═══════════════════════════════════════════════════════════
-    # サイドバー — ステップインジケーター + ジャンプ + 次のステップ
+    # サイドバー (Left Drawer) — ナビゲーション & ステータス
     # ═══════════════════════════════════════════════════════════
-    with ui.left_drawer(value=True).classes("bg-dark q-pa-md").props("width=240"):
-        # ── タイトル + 設定ボタン ──
-        with ui.row().classes("items-center justify-between full-width q-mb-xs"):
-            ui.label("⚗️ ChemAI").classes("text-h6 hero-gradient")
-            ui.button(icon="settings", on_click=_open_settings).props(
-                'flat round size=sm color=grey aria-label="設定" id="sidebar-settings-btn"'
-            ).tooltip("⚙️ 設定")
+    with ui.left_drawer(value=True).classes("bg-dark q-pa-none").props("width=260 elevated") as drawer:
+        with ui.column().classes("full-height no-wrap"):
+            # --- ヘッダーエリア ---
+            with ui.column().classes("full-width q-pa-md bg-secondary"):
+                with ui.row().classes("items-center justify-between full-width"):
+                    ui.label("⚗️ ChemAI Nexus").classes("text-h6 hero-gradient font-bold")
+                    ui.button(icon="menu_open", on_click=drawer.toggle).props("flat round color=grey")
+                
+                # 🚀 解析開始ボタン
+                run_btn = ui.button(
+                    "🚀 解析開始", on_click=_run_analysis,
+                ).classes("start-button full-width q-mt-sm").props(
+                    "size=md icon=rocket_launch no-caps unelevated"
+                )
+                
+                # 解析進捗
+                analysis_status_container = ui.column().classes("full-width q-mt-sm")
+                with analysis_status_container:
+                    pass
 
-        # ── 🚀 解析開始ボタン（サイドバー最上部・目立つ配置）──
-        run_btn = ui.button(
-            "🚀 解析開始", on_click=_run_analysis,
-        ).classes("btn-primary btn-run-analysis full-width q-mb-sm").props(
-            "size=md icon=rocket_launch no-caps unelevated"
-        )
-        run_btn.tooltip(
-            "ワンクリックで全自動ML: データ前処理 → 特徴選択 → "
-            "複数モデル比較 → 最良モデル評価 → SHAP解析まで一括実行"
-        )
+            ui.separator()
 
-        # ── 解析進捗（サイドバー内表示）──
-        analysis_status_container = ui.column().classes("full-width q-mb-xs")
-        with analysis_status_container:
-            pass  # analysis_runner が動的に書き込む
+            # --- メインナビゲーション ---
+            with ui.column().classes("full-width q-pa-sm q-gutter-y-xs"):
+                ui.label("📊 メインワークフロー").classes("text-caption text-grey-5 q-ml-sm q-mt-sm")
+                
+                def nav_item(icon: str, label: str, tab_id: str):
+                    return ui.button(label, icon=icon, on_click=lambda: main_tabs.set_value(tab_id)) \
+                        .props("flat align=left no-caps").classes("full-width text-white hover-bounce")
 
-        ui.separator()
+                nav_item("folder", "データ管理", "data")
+                nav_item("analytics", "EDA・可視化", "eda")
+                nav_item("psychology", "機械学習", "ml")
+                nav_item("assignment", "結果・レポート", "results")
 
-        # ステップインジケーター
-        step_container = ui.column().classes("full-width q-mt-sm")
+            ui.separator().classes("q-mx-md")
 
-        def _update_sidebar():
-            step_container.clear()
-            has_data = state["df"] is not None
-            has_target = bool(state.get("target_col"))
-            has_smiles = bool(state.get("smiles_col"))
-            has_desc = state.get("precalc_done", False)
-            has_result = state.get("automl_result") is not None
+            # --- 専門解析ツール ---
+            with ui.column().classes("full-width q-pa-sm"):
+                with ui.expansion("🔬 専門解析", icon="science").classes("full-width text-white").props("dense"):
+                    nav_item("find_replace", "逆解析・最適", "inverse").classes("q-pl-lg")
+                    nav_item("biotech", "実験計画 (DoE)", "doe").classes("q-pl-lg")
+                    nav_item("cloud_download", "外部モデル連携", "models").classes("q-pl-lg")
 
-            # F-15: 解析リアルタイムステータスバー
-            from frontend_nicegui.components.analysis_runner import (
-                _analysis_running as is_running,
-                _cancel_requested as is_cancelled,
-            )
-            with step_container:
-                if is_running:
-                    css_class = "sidebar-status-bar cancelled" if is_cancelled else "sidebar-status-bar running"
-                    icon = "🛑" if is_cancelled else "⏳"
-                    label = "中断処理中..." if is_cancelled else "解析実行中..."
-                    ui.html(
-                        f'<div class="{css_class}">'\
-                        f'<span style="font-size:0.85rem;">{icon} {label}</span></div>'
-                    )
+                with ui.expansion("⚛️ 量子化学", icon="hub").classes("full-width text-white").props("dense"):
+                    nav_item("speed", "計算管理", "computation").classes("q-pl-lg")
+                    nav_item("science", "量子特徴量", "quantum").classes("q-pl-lg")
 
-            steps = [
-                ("📂 データ読込", has_data),
-                ("🎯 目的変数設定", has_target),
-                ("🧬 SMILES検出", has_smiles),
-                ("⚗️ 記述子計算", has_desc),
-                ("🚀 解析完了", has_result),
-            ]
-            with step_container:
-                # ── ステップ表示 ──
-                for i, (label, done) in enumerate(steps):
-                    icon = "✅" if done else "⬜"
-                    color = "step-done" if done else "step-pending"
-                    # 接続線（最後以外）
-                    line_html = ""
-                    if i < len(steps) - 1:
-                        line_color = "rgba(74,222,128,0.3)" if done else "rgba(255,255,255,0.05)"
-                        line_html = f'<div style="border-left:2px solid {line_color};height:8px;margin-left:10px;"></div>'
-                    ui.html(
-                        f'<div class="step-indicator">'
-                        f'<span class="{color}" style="font-size:0.85rem;">'
-                        f'{icon} {label}</span></div>{line_html}'
-                    )
+            ui.separator().classes("q-mx-md")
 
-                # ── 次のステップヒント ──
-                ui.separator().classes("q-my-xs")
-                if not has_data:
-                    ui.html(
-                        '<div style="background:rgba(0,212,255,0.08);border-radius:8px;padding:8px;margin:4px 0;">'
-                        '<span style="color:#00d4ff;font-size:0.8rem;">'
-                        '👉 次: CSV/Excelをアップロード</span></div>'
-                    )
-                elif not has_target:
-                    ui.html(
-                        '<div style="background:rgba(0,212,255,0.08);border-radius:8px;padding:8px;margin:4px 0;">'
-                        '<span style="color:#00d4ff;font-size:0.8rem;">'
-                        '👉 次: 目的変数を設定</span></div>'
-                    )
-                elif not has_result:
-                    ui.html(
-                        '<div style="background:rgba(0,212,255,0.08);border-radius:8px;padding:8px;margin:4px 0;">'
-                        '<span style="color:#00d4ff;font-size:0.8rem;">'
-                        '👉 次: 🚀 解析開始ボタンで開始</span></div>'
-                    )
-                else:
-                    ui.html(
-                        '<div style="background:rgba(74,222,128,0.08);border-radius:8px;padding:8px;margin:4px 0;">'
-                        '<span style="color:#4ade80;font-size:0.8rem;">'
-                        '✨ 解析完了！結果タブで確認</span></div>'
-                    )
+            # --- システム・設定 ---
+            with ui.column().classes("full-width q-pa-sm"):
+                with ui.expansion("⚙️ システム", icon="settings").classes("full-width text-white").props("dense"):
+                    ui.button("アプリ設定", icon="settings", on_click=_open_settings).props("flat align=left no-caps").classes("full-width q-pl-lg")
+                    nav_item("delete_sweep", "キャッシュ管理", "data").classes("q-pl-lg") # 仮
 
-                # ── データサマリー ──
-                if has_data:
-                    df = state["df"]
-                    ui.separator().classes("q-my-xs")
-                    ui.label(state.get("filename", "")).classes("text-caption text-grey-6")
-                    ui.label(f"{df.shape[0]:,}行 × {df.shape[1]}列").classes("text-caption text-grey-6")
-                    # ミニダッシュボード
-                    na_pct = df.isna().mean().mean() * 100
-                    n_numeric = df.select_dtypes(include='number').shape[1]
-                    na_color = "text-green" if na_pct < 1 else ("text-amber" if na_pct < 10 else "text-red")
-                    ui.label(f"欠損: {na_pct:.1f}% | 数値列: {n_numeric}").classes(f"text-caption {na_color}")
-                    if state.get("target_col") and state["target_col"] in df.columns:
-                        tc = df[state["target_col"]]
-                        ui.label(f"目的変数: {tc.nunique()}種, 欠損{tc.isna().sum()}").classes("text-caption text-grey-7")
+            ui.element('div').classes('flex-grow')
+            
+            # --- フッターエリア (ステップ進捗) ---
+            with ui.column().classes("full-width q-pa-md bg-black-10"):
+                step_container = ui.column().classes("full-width")
+                
+                def _update_sidebar():
+                    step_container.clear()
+                    has_data = state["df"] is not None
+                    has_target = bool(state.get("target_col"))
+                    has_smiles = bool(state.get("smiles_col"))
+                    has_desc = state.get("precalc_done", False)
+                    has_result = state.get("automl_result") is not None
+                    
+                    from frontend_nicegui.components.analysis_runner import _analysis_running as is_running
+                    with step_container:
+                        if is_running:
+                            ui.html('<div class="sidebar-status-bar running"><span style="font-size:0.8rem;">⏳ 解析実行中...</span></div>')
+                        
+                        steps = [
+                            ("受入", has_data),
+                            ("SMI", has_smiles),
+                            ("計算", has_desc),
+                            ("完了", has_result),
+                        ]
+                        with ui.row().classes("full-width justify-around q-mb-sm"):
+                            for label, done in steps:
+                                color = "var(--accent-green)" if done else "#555"
+                                icon = "●" if done else "○"
+                                ui.label(f"{icon}{label}").style(f"color: {color}; font-size: 0.65rem; font-weight: bold;").tooltip(label)
+                        
+                        ui.label(f"v2.5 — Premium Edition").classes("text-caption text-grey-8 text-center full-width")
 
-                if has_result:
-                    ar = state["automl_result"]
-                    ui.separator().classes("q-my-xs")
-                    ui.label(f"🏆 {ar.best_model_key}").classes("text-caption text-cyan")
-                    ui.label(f"スコア: {ar.best_score:.4f}").classes("text-caption text-grey-6")
+                _update_sidebar()
+                ui.timer(5.0, _update_sidebar)
 
-                    # ── 結果後アクション提案 ──
-                    ui.separator().classes("q-my-xs")
-                    ui.label("💡 次のアクション").classes("text-caption text-grey-5 q-mb-xs")
-                    ui.button(
-                        "📝 レポート生成",
-                        on_click=lambda: main_tabs.set_value("results"),
-                    ).props("flat dense color=teal size=xs no-caps").classes("full-width")
-                    ui.button(
-                        "🔮 バッチ予測",
-                        on_click=lambda: main_tabs.set_value("results"),
-                    ).props("flat dense color=purple size=xs no-caps").classes("full-width")
+    # ── プレミアム CSS スタイル定義 (シンプル & プロフェッショナル) ──
+    ui.add_css('''
+        .nicegui-header {
+            background-color: #1e293b !important;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+        }
+        
+        .nicegui-drawer {
+            background-color: #0f172a !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
+        }
+        
+        .app-title {
+            color: #ffffff;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        
+        .start-button {
+            background-color: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            transition: all 0.2s ease !important;
+        }
+        
+        .start-button:hover {
+            background-color: rgba(255, 255, 255, 0.12) !important;
+            transform: translateY(-1px);
+        }
+    ''')
 
-        _update_sidebar()
-        # タイマーで定期更新
-        ui.timer(2.0, _update_sidebar)
-
-        # ジャンプボタン
-        ui.separator()
-        ui.button(
-            "📂 データ設定", on_click=lambda: main_tabs.set_value("data")
-        ).props("flat color=white align=left size=sm no-caps").classes("full-width")
-        ui.button(
-            "🔬 EDA", on_click=lambda: main_tabs.set_value("eda")
-        ).props("flat color=white align=left size=sm no-caps").classes("full-width")
-        ui.button(
-            "⚙️ 設定", on_click=lambda: main_tabs.set_value("pipeline")
-        ).props("flat color=white align=left size=sm no-caps").classes("full-width")
-        ui.button(
-            "📊 結果確認", on_click=lambda: main_tabs.set_value("results")
-        ).props("flat color=white align=left size=sm no-caps").classes("full-width")
-        ui.button(
-            "🔮 逆解析", on_click=lambda: main_tabs.set_value("inverse")
-        ).props("flat color=white align=left size=sm no-caps").classes("full-width")
-
-        ui.space()
-        ui.separator()
-        ui.link("❓ ヘルプ", "/help").classes("text-white")
-        ui.link("📚 記述子辞書", "/help/descriptors").classes("text-white text-caption")
-        ui.label("v2.2 — NiceGUI Edition").classes("text-caption text-grey-7 q-mt-sm")
-
-        # ── 環境情報 ──
-        import sys as _sys
-        py_ver = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"
-        ui.label(f"Python {py_ver}").classes("text-caption text-grey-8")
+    # ── プレミアム ヘッダー (トップレベルに配置必須) ──
+    with ui.header().classes('bg-slate-800 shadow-sm'):
+        with ui.row().classes('w-full items-center justify-between q-pa-md'):
+            # ロゴ・タイトル
+            with ui.row().classes('items-center gap-3 cursor-pointer').on('click', lambda: main_tabs.set_value('data')):
+                ui.icon('science', size='32px', color='white').classes('opacity-80')
+                ui.label('ChemAI Nexus').classes('text-2xl font-bold text-white app-title')
+            
+            # 右側アクション
+            with ui.row().classes('items-center gap-4'):
+                ui.button(icon="menu", on_click=drawer.toggle).props("flat round dense color=white")
+                ui.button(icon="help_outline", on_click=lambda: ui.navigate.to("/help")).props("flat round color=white")
+                ui.avatar(icon="person", color="slate-700")
 
     # ═══════════════════════════════════════════════════════════
-    # メインコンテンツ — 2タブ構造
+    # メインコンテンツ — 統合ワークフロー
     # ═══════════════════════════════════════════════════════════
+    with ui.column().classes("full-width items-stretch"):
+    
+        # ── メインタブ (4つに削減) ──
+        with ui.tabs().classes("full-width q-px-md").props("active-color=cyan indicator-color=cyan align=left") as main_tabs:
+            tab_data = ui.tab("data", label="📁 データ管理", icon="folder")
+            tab_eda = ui.tab("eda", label="📊 EDA・可視化", icon="analytics")
+            tab_ml = ui.tab("ml", label="🤖 機械学習", icon="psychology")
+            tab_results = ui.tab("results", label="📑 結果・レポート", icon="assignment")
+            
+            # 非表示タブ (サイドバーからの遷移用)
+            tab_inverse = ui.tab("inverse").classes("hidden")
+            tab_doe = ui.tab("doe").classes("hidden")
+            tab_models = ui.tab("models").classes("hidden")
+            tab_computation = ui.tab("computation").classes("hidden")
+            tab_quantum = ui.tab("quantum").classes("hidden")
 
+        with ui.tab_panels(main_tabs, value="data").classes("full-width q-pa-md bg-transparent") as panels:
+            
+            # 1. 📁 データ管理
+            with ui.tab_panel("data"):
+                from frontend_nicegui.components.data_tab import render_data_tab
+                render_data_tab(state)
 
-    # 記述子セット表示バー・フローステッパーは削除（UI簡素化）
-    # _refresh_stepper は他コードから参照されるためノーオペレーションで保持
-    def _refresh_stepper():
-        pass
-    state["_refresh_stepper"] = _refresh_stepper
+            # 2. 📊 EDA・可視化
+            with ui.tab_panel("eda"):
+                _eda_container = ui.column().classes("full-width")
+                def _build_eda():
+                    _eda_container.clear()
+                    with _eda_container:
+                        from frontend_nicegui.components.eda_panel import render_eda_panel
+                        render_eda_panel(state)
+                _build_eda()
+                state["_refresh_eda_main"] = _build_eda
 
-    from frontend_nicegui.components.workflow_navigator import render_workflow_navigator
-    render_workflow_navigator(state, None) # will be updated later with main_tabs in _refresh logic
-    # To fix cyclic dependency or None reference, we will define a refreshable wrapper after main_tabs
+            # 3. 🤖 機械学習
+            with ui.tab_panel("ml"):
+                from frontend_nicegui.components.ml_workflow import render_ml_workflow
+                render_ml_workflow(state)
 
-    with ui.tabs().classes("full-width q-mt-xs").props(
-        "active-color=cyan indicator-color=cyan align=left"
-    ) as main_tabs:
-        data_tab = ui.tab("data", label="📂 データ設定", icon="settings")
-        eda_tab = ui.tab("eda", label="🔬 EDA", icon="query_stats")
-        pipeline_tab = ui.tab("pipeline", label="⚙️ 設定", icon="tune")
-        results_tab = ui.tab("results", label="📊 結果確認", icon="analytics")
-        inverse_tab = ui.tab("inverse", label="🔮 逆解析", icon="find_replace")
-        doe_tab = ui.tab("doe", label="🧪 実験計画", icon="science")
-        model_tab = ui.tab("models", label="🤗 外部モデル", icon="download").props('hint="外部学習済みMLモデルの選択・評価・比較"')
-        export_tab = ui.tab("export", label="📤 レポート", icon="file_download")
-        comparison_tab = ui.tab("comparison", label="🔬 実験ダッシュ", icon="dashboard")
-        mixture_tab = ui.tab("mixture", label="🧪 混合物", icon="science")
-        computation_tab = ui.tab("computation", label="⚡ 計算管理", icon="speed")
-        quantum_tab = ui.tab("quantum", label="🔬 量子特徴量", icon="hub")
+            # 4. 📑 結果・レポート
+            with ui.tab_panel("results"):
+                from frontend_nicegui.components.results_view_container import render_results_view_container
+                render_results_view_container(state)
 
-    with ui.tab_panels(main_tabs, value=data_tab).classes("full-width"):
+            # --- 専門ツールパネル (Hidden Tabs) ---
+            with ui.tab_panel("inverse"):
+                from frontend_nicegui.components.inverse_tab import render_inverse_panel
+                render_inverse_panel(state)
 
-        # ── データ設定タブ ──
-        with ui.tab_panel(data_tab):
-            from frontend_nicegui.components.data_tab import render_data_tab
-            render_data_tab(state)
+            with ui.tab_panel("doe"):
+                from frontend_nicegui.components.doe_tab import render_doe_tab
+                render_doe_tab(state)
 
-        # ── EDAタブ（コンテナ方式: データ読み込み後に再描画）──
-        with ui.tab_panel(eda_tab):
-            _eda_container = ui.column().classes("full-width")
-            def _build_eda():
-                _eda_container.clear()
-                with _eda_container:
-                    from frontend_nicegui.components.eda_panel import render_eda_panel
-                    render_eda_panel(state)
-            _build_eda()
-            state["_refresh_eda_main"] = _build_eda
+            with ui.tab_panel("models"):
+                from frontend_nicegui.pages.model_manager import render_model_manager
+                render_model_manager()
 
-        # ── パイプライン設定タブ ──
-        with ui.tab_panel(pipeline_tab):
-            # 設定整合性チェッカー（常設）
-            from frontend_nicegui.components.settings_checker import render_settings_checker
-            render_settings_checker(state)
-            ui.separator().classes("q-my-sm")
-            from frontend_nicegui.components.leakage_check_ui import render_leakage_check_panel
-            render_leakage_check_panel(state)
-            ui.separator().classes("q-my-sm")
-            from frontend_nicegui.components.cv_config_ui import render_cv_config
-            render_cv_config(state)
-            ui.separator().classes("q-my-sm")
-            from frontend_nicegui.components.pipeline_config_ui import render_pipeline_config
-            render_pipeline_config(state)
-            # 解析後の自動処理設定（逆解析事前設定 — タスク3-1）
-            ui.separator().classes("q-my-sm")
-            from frontend_nicegui.components.post_analysis_config import render_post_analysis_config
-            render_post_analysis_config(state)
+            with ui.tab_panel("computation"):
+                from frontend_nicegui.components.computation_progress import render_computation_progress
+                render_computation_progress(state)
 
-            from frontend_nicegui.components.monotonicity_config import render_monotonicity_config
-            ui.separator().classes("q-my-sm")
-            render_monotonicity_config(state)
-
-
-        # ── 結果確認タブ（コンテナ方式）──
-        with ui.tab_panel(results_tab):
-            _results_container = ui.column().classes("full-width")
-            def _build_results():
-                _results_container.clear()
-                with _results_container:
-                    from frontend_nicegui.components.results_tab import render_results_tab
-                    render_results_tab(state)
-            _build_results()
-            state["_refresh_results"] = _build_results
-
-        # ── 逆解析タブ（コンテナ方式: データ読み込み後に再描画）──
-        with ui.tab_panel(inverse_tab):
-            _inverse_container = ui.column().classes("full-width")
-            def _build_inverse():
-                _inverse_container.clear()
-                with _inverse_container:
-                    from frontend_nicegui.components.inverse_tab import render_inverse_panel
-                    render_inverse_panel(state)
-            _build_inverse()
-            state["_refresh_inverse"] = _build_inverse
-
-        # ── 実験計画タブ（コンテナ方式）──
-        with ui.tab_panel(doe_tab):
-            _doe_container = ui.column().classes("full-width")
-            def _build_doe():
-                _doe_container.clear()
-                with _doe_container:
-                    from frontend_nicegui.components.doe_tab import render_doe_tab
-                    render_doe_tab(state)
-            _build_doe()
-            state["_refresh_doe"] = _build_doe
-
-        # ── モデル管理タブ ──
-        with ui.tab_panel(model_tab):
-            from frontend_nicegui.pages.model_manager import render_model_manager
-            render_model_manager()
-
-        # ── レポートエクスポートタブ（コンテナ方式）──
-        with ui.tab_panel(export_tab):
-            _export_container = ui.column().classes("full-width")
-            def _build_export():
-                _export_container.clear()
-                with _export_container:
-                    from frontend_nicegui.pages.export_panel import render_export_panel
-                    render_export_panel(state)
-            _build_export()
-            state["_refresh_export"] = _build_export
-
-        # ── 実験ダッシュボードタブ（コンテナ方式）──
-        with ui.tab_panel(comparison_tab):
-            _comparison_container = ui.column().classes("full-width")
-            def _build_comparison():
-                _comparison_container.clear()
-                with _comparison_container:
-                    from frontend_nicegui.pages.experiment_comparison import render_experiment_comparison
-                    render_experiment_comparison(state)
-            _build_comparison()
-            state["_refresh_experiment_comparison"] = _build_comparison
-
-        # ── 混合物特徴量タブ（コンテナ方式）──
-        with ui.tab_panel(mixture_tab):
-            _mixture_container = ui.column().classes("full-width")
-            def _build_mixture():
-                _mixture_container.clear()
-                with _mixture_container:
-                    from frontend_nicegui.components.mixture_input_panel import render_mixture_panel
-                    render_mixture_panel(state)
-            _build_mixture()
-            state["_refresh_mixture"] = _build_mixture
-
-        # ── 計算管理タブ（コンテナ方式）──
-        with ui.tab_panel(computation_tab):
-            _computation_container = ui.column().classes("full-width")
-            def _build_computation():
-                _computation_container.clear()
-                with _computation_container:
-                    from frontend_nicegui.components.computation_progress import render_computation_progress
-                    render_computation_progress(state)
-            _build_computation()
-            state["_refresh_computation"] = _build_computation
-
-        # ── 量子化学特徴量エクスプローラータブ（コンテナ方式）──
-        with ui.tab_panel(quantum_tab):
-            _quantum_container = ui.column().classes("full-width")
-            def _build_quantum():
-                _quantum_container.clear()
-                with _quantum_container:
-                    from frontend_nicegui.components.quantum_feature_explorer import render_quantum_feature_explorer
-                    render_quantum_feature_explorer(state)
-            _build_quantum()
-            state["_refresh_quantum"] = _build_quantum
+            with ui.tab_panel("quantum"):
+                from frontend_nicegui.components.quantum_feature_explorer import render_quantum_feature_explorer
+                render_quantum_feature_explorer(state)
 
     # ── タブ遷移コールバック登録 ──
-    def _switch_to_inverse():
-        """結果タブ等から逆解析タブへ自動遷移する。"""
-        main_tabs.set_value("inverse")
-    state["_switch_to_inverse"] = _switch_to_inverse
+    state["_switch_to_inverse"] = lambda: main_tabs.set_value("inverse")
+    state["_switch_to_results"] = lambda: main_tabs.set_value("results")
+    state["_switch_to_data_smiles"] = lambda: main_tabs.set_value("data")
 
-    def _switch_to_results():
-        """解析完了後に結果タブへ自動遷移し再描画する。"""
-        main_tabs.set_value("results")
-        fn = state.get("_refresh_results")
-        if fn:
-            try:
-                fn()
-            except Exception:
-                pass
-    state["_switch_to_results"] = _switch_to_results
-
-    def _switch_to_data_smiles():
-        """記述子バーから SMILES特徴量タブへ遷移する。"""
-        main_tabs.set_value("data")
-    state["_switch_to_data_smiles"] = _switch_to_data_smiles
-
-    # ── タブクリック時に各コンテナを最新状態で再描画 ──
-    # 結果・エクスポート・実験比較タブは描画コストが高いため、
-    # タブが実際にアクティブになった瞬間にのみ再描画する。
     _REBUILD_MAP = {
         "eda":        "_refresh_eda_main",
-        "results":    "_refresh_results",
+        "results":    "_refresh_results", # results_view_container 内の refresh が必要かも
         "inverse":    "_refresh_inverse",
-        "export":     "_refresh_export",
-        "comparison": "_refresh_experiment_comparison",
-        "mixture":    "_refresh_mixture",
+        "doe":        "_refresh_doe",
         "computation": "_refresh_computation",
         "quantum":     "_refresh_quantum",
     }
 
     def _on_tab_change(e):
-        from frontend_nicegui.components.workflow_navigator import render_workflow_navigator
-        try:
-            render_workflow_navigator.refresh(state, main_tabs)
-        except Exception:
-            pass
-
         tab_val = getattr(e, "value", None) or str(e)
         key = _REBUILD_MAP.get(str(tab_val))
-        if key:
-            fn = state.get(key)
-            if fn:
-                try:
-                    fn()
-                except Exception:
-                    pass
-
+        if key and key in state:
+            state[key]()
+        
     main_tabs.on_value_change(_on_tab_change)
 
     # ── SMILES列がある場合、特徴量計算をバックグラウンドで自動実行 ──

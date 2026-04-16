@@ -123,6 +123,12 @@ def _init_session() -> None:
         "smiles_col": None,
         "step_eda_done": False,
         "step_preprocess_done": False,
+        "results": None,  # 互換性用
+        "col_role_exclude": [],
+        "col_role_info": [],
+        "col_role_weight": None,
+        "col_role_group": None,
+        "col_role_time": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -137,7 +143,8 @@ with st.sidebar:
 
     has_data   = st.session_state["df"] is not None
     has_target = bool(st.session_state.get("target_col"))
-    has_result = st.session_state["automl_result"] is not None
+    has_result = st.session_state.get("automl_result") is not None
+    has_pl     = st.session_state.get("pipeline_result") is not None
 
     # ステップインジケーター
     steps = [
@@ -169,8 +176,8 @@ with st.sidebar:
     if has_data and st.button("🚀 解析実行", use_container_width=True, key="sb_tab1"):
         st.session_state["active_tab_idx"] = 1
         st.rerun()
-    if has_result and st.button("📊 結果確認", use_container_width=True, key="sb_tab2"):
-        st.session_state["active_tab_idx"] = 2
+    if has_result and st.button("📊 結果確認（詳細）", use_container_width=True, key="sb_tab2"):
+        st.session_state["page"] = "evaluation"
         st.rerun()
 
     # 詳細ツールへの導線（折り畳み）
@@ -304,8 +311,8 @@ else:
                 )
             cc1, cc2 = st.columns(2)
             with cc1:
-                if st.button("📊 結果タブへ", use_container_width=True, key="view_res"):
-                    st.session_state["active_tab_idx"] = 1
+                if st.button("📊 結果を確認する", use_container_width=True, key="view_res"):
+                    st.session_state["page"] = "evaluation"
                     st.rerun()
             with cc2:
                 if st.button("🔄 データを変えてやり直す", use_container_width=True, key="reset"):
@@ -1903,8 +1910,48 @@ else:
                 unsafe_allow_html=True
             )
         else:
+            render_results_tab()
+
+def render_results_tab():
+    """解析結果タブの堅牢な描画関数（デバッグ・エラー監視機能付き）"""
+    import traceback
+    
+    # ── 1. 結果データの取得 ────────────────────────────────────
+    pr = st.session_state.get("pipeline_result")
+    ar = st.session_state.get("automl_result")
+    
+    # ── 2. デバッグ用：セッション状態の診断 ──────────────────────
+    with st.expander("🛠️ デバッグ・診断情報 (表示が空の場合に確認してください)", expanded=False):
+        st.write("### Session State Diagnostics")
+        st.write(f"- `pipeline_result` 存在: {pr is not None}")
+        st.write(f"- `automl_result` 存在: {ar is not None}")
+        st.write(f"- `df` 行数: {len(st.session_state['df']) if st.session_state.get('df') is not None else 'None'}")
+        st.write(f"- `target_col`: {st.session_state.get('target_col')}")
+        
+        # 内部データのキー一覧
+        st.write("- `session_state` keys:", list(st.session_state.keys()))
+        
+        if st.button("🔧 状態を強制再描画 (st.rerun)"):
+            st.rerun()
+
+    # ── 3. 描画の実行 ──────────────────────────────────────────
+    try:
+        if pr is not None:
+            # フルパイプライン結果 (EDA/PCA/SHAP/AutoML) を表示
+            from frontend_streamlit.pages.automl_page import _show_pipeline_result
+            _show_pipeline_result(pr)
+        elif ar is not None:
+            # 旧形式またはAutoMLのみの結果を表示
             from frontend_streamlit.pages.pipeline import evaluation_page
             evaluation_page.render()
+        else:
+            st.warning("⚠️ 解析結果をロードできませんでした。")
+            st.info("一度「① データ設定」に戻り、もう一度解析を実行してみてください。")
+            
+    except Exception as e:
+        st.error(f"❌ 結果の描画中にエラーが発生しました: {e}")
+        st.code(traceback.format_exc())
+        st.info("データの整合性が壊れている可能性があります。右上の「やり直す」ボタンで初期化を試みてください。")
 
 # ── フッター ──────────────────────────────────────────────────
 st.markdown("---")

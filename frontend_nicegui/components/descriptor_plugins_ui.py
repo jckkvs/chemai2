@@ -793,8 +793,8 @@ def _render_set_management_bar(state: dict) -> None:
                     state["active_descriptors"] = list(sets[name]["descriptors"])
                     state["selected_descriptors"] = list(sets[name]["descriptors"])
                 ui.notify(f"🔄 「{name}」", type="info")
-                if state.get("_refresh_tabs"):
-                    state["_refresh_tabs"]()
+                if state.get("_refresh_smiles_constraints"):
+                    state["_refresh_smiles_constraints"]()
 
             btn = ui.button(
                 f"{sn} ({s_count})",
@@ -1407,12 +1407,16 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                     s.update(ds)
                                     state["selected_descriptors"] = list(s)
                                     ui.notify(f"{len(ds)}個追加", type="positive")
+                                    if state.get("_refresh_smiles_constraints"):
+                                        state["_refresh_smiles_constraints"]()
 
                                 def _cat_all_off(ds=dc_valid):
                                     s = set(state.get("selected_descriptors", []))
                                     s -= set(ds)
                                     state["selected_descriptors"] = list(s)
                                     ui.notify(f"{len(ds)}個解除", type="info")
+                                    if state.get("_refresh_smiles_constraints"):
+                                        state["_refresh_smiles_constraints"]()
 
                                 ui.button("✓ 全選択", on_click=_cat_all_on).props(
                                     "outline size=xs no-caps color=cyan"
@@ -1442,6 +1446,8 @@ def _render_target_recommendations(state: dict, adapters: dict) -> None:
                                         else:
                                             s.discard(dn)
                                         state["selected_descriptors"] = list(s)
+                                        if state.get("_refresh_smiles_constraints"):
+                                            state["_refresh_smiles_constraints"]()
 
                                     with ui.row().classes(
                                         "items-center q-gutter-xs"

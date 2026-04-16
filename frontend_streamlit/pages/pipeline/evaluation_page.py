@@ -26,12 +26,25 @@ def _get_feature_df(df: "pd.DataFrame", target_col: str) -> "pd.DataFrame":
 def render() -> None:
     st.markdown("## 📊 モデル評価")
     result = st.session_state.get("automl_result")
-    if result is None:
-        st.warning("⚠️ まずAutoMLを実行してください。")
-        if st.button("🤖 AutoMLへ"):
-            st.session_state["page"] = "automl"
+    pr     = st.session_state.get("pipeline_result")
+    
+    if result is None and pr is None:
+        st.warning("⚠️ まだ解析結果がありません。まずAutoMLを実行してください。")
+        if st.button("🤖 AutoML解析へ", key="goto_automl_eval"):
+            st.session_state["page"] = "home"
             st.rerun()
         return
+
+    # pipeline_result がある場合は、より詳細な統合表示 (automl_page._show_pipeline_result) に委譲
+    if pr is not None:
+        from frontend_streamlit.pages.automl_page import _show_pipeline_result
+        try:
+            _show_pipeline_result(pr)
+            return
+        except Exception as e:
+            st.error(f"❌ 統合結果の表示中にエラーが発生しました: {e}")
+            st.info("簡易評価モードに切り替えます。")
+            # 続行して簡易表示を試みる
 
     df = st.session_state.get("df")
     target_col = st.session_state.get("target_col")

@@ -194,6 +194,19 @@ class AutoMLEngine:
         total_steps = 6
         cv_extra_params = cv_extra_params or {}
 
+        # ── 【強化】メタデータ辞書から単調性制約を抽出 ──
+        if self.column_meta_dict:
+            for col, meta in self.column_meta_dict.items():
+                # ColumnMeta オブジェクトまたは辞書の両方に対応
+                mono_val = getattr(meta, "monotonic", 0) if hasattr(meta, "monotonic") else meta.get("monotonic", 0)
+                if mono_val in (1, -1):
+                    # 明示的な指定がない場合のみ上書き（またはマージ）
+                    if col not in self.monotonic_constraints_dict:
+                        self.monotonic_constraints_dict[col] = int(mono_val)
+        
+        if self.monotonic_constraints_dict:
+            logger.info(f"[AutoMLEngine] 適用される単調性制約: {self.monotonic_constraints_dict}")
+
         # Step 1: データ品質チェック
         self.progress_callback(1, total_steps, "データ品質チェック中...")
         self._check_data_quality(df, target_col, warnings)

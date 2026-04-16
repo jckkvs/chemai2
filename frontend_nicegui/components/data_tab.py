@@ -53,8 +53,10 @@ def render_data_tab(state: dict[str, Any]) -> None:
 
     with ui.tabs().classes("full-width").props("dense active-color=cyan indicator-color=cyan") as sub_tabs:
         tab_load = ui.tab("load", label="📂 データ読込", icon="upload_file")
-        tab_cols = ui.tab("columns", label="🏷️ 列の役割", icon="settings")
+        tab_cols = ui.tab("columns", label="🏷️ 列の役割・単調性", icon="settings")
+        tab_constraints = ui.tab("constraints", label="📐 制約設定", icon="rule")
         tab_smiles = ui.tab("smiles", label="⚗️ SMILES特徴量", icon="science")
+        tab_mixture = ui.tab("mixture", label="🧪 混合物設定", icon="blender")
         tab_eda = ui.tab("eda", label="📊 EDA", icon="analytics")
 
     # ── @ui.refreshable を使った各タブの描画関数定義 ──
@@ -67,7 +69,13 @@ def render_data_tab(state: dict[str, Any]) -> None:
 
     @ui.refreshable
     def _tab_columns_view():
-        _render_column_roles(state)
+        from frontend_nicegui.components.column_role_panel import render_column_role_panel
+        render_column_role_panel(state)
+
+    @ui.refreshable
+    def _tab_constraints_view():
+        from frontend_nicegui.components.constraint_panel import render_constraint_panel
+        render_constraint_panel(state)
 
     # _tab_smiles_view は @ui.refreshable を使わず
     # コンテナ+タイマー方式で確実に描画する（後述）
@@ -96,6 +104,9 @@ def render_data_tab(state: dict[str, Any]) -> None:
         with ui.tab_panel(tab_cols):
             _tab_columns_view()
 
+        with ui.tab_panel(tab_constraints):
+            _tab_constraints_view()
+
         with ui.tab_panel(tab_smiles):
             # コンテナ方式で確実に描画（@ui.refreshable のサイレント失敗問題を回避）
             _smiles_container = ui.column().classes("full-width")
@@ -105,7 +116,8 @@ def render_data_tab(state: dict[str, Any]) -> None:
                 _smiles_container.clear()
                 with _smiles_container:
                     try:
-                        _render_smiles_features(state)
+                        from frontend_nicegui.components.smiles_feature_panel import render_smiles_feature_panel
+                        render_smiles_feature_panel(state)
                     except Exception as _e:
                         logger.error(
                             f"[DataTab] SMILES tab render error: {_e}",
@@ -114,6 +126,10 @@ def render_data_tab(state: dict[str, Any]) -> None:
                         ui.label(f"⚠️ 表示エラー: {_e}").classes("text-red q-pa-md")
 
             _rebuild_smiles()  # 初期描画
+
+        with ui.tab_panel(tab_mixture):
+            from frontend_nicegui.components.mixture_input_panel import render_mixture_panel
+            render_mixture_panel(state)
 
         with ui.tab_panel(tab_eda):
             _tab_eda_view()
@@ -219,106 +235,9 @@ def _render_data_load(state: dict) -> None:
     metrics_row = ui.row().classes("q-gutter-md q-mt-md full-width")
     _update_metrics(state, metrics_row)
 
-    # ── サンプルデータ（折りたたみ） ──
-    with ui.expansion("🧪 サンプルデータ / ベンチマーク", icon="science").classes("full-width q-mt-md"):
-
-        ui.label("デバッグ用サンプル").classes("text-subtitle2 q-mt-sm")
-        with ui.row().classes("q-gutter-sm"):
-
-            def _load_sample_regression():
-                np.random.seed(42)
-                n = 25
-                state["df"] = pd.DataFrame({
-                    "SMILES": np.random.choice(SAMPLE_SMILES, n),
-                    "solubility_logS": np.random.randn(n) * 2 - 2,
-                })
-                state["filename"] = "sample_regression.csv"
-                state["automl_result"] = None
-                state["pipeline_result"] = None
-                state["precalc_done"] = False
-                state["precalc_df"] = None
-                state["_chem_adapters"] = None
-                state["_applied_recommendation"] = None
-                _auto_detect_columns(state)
-                state["task_type"] = "regression"
-                upload_status.text = f"✅ 回帰サンプル ({n}行)"
-                upload_status.classes(remove="text-red", add="text-green")
-                _show_preview(state["df"], preview_container)
-                _update_metrics(state, metrics_row)
-                refresh = state.get("_refresh_tabs")
-
-                if refresh:
-
-                    refresh()
-
-                ui.notify("回帰サンプルデータを読み込みました", type="positive")
-
-            def _load_sample_classification():
-                np.random.seed(42)
-                n = 25
-                state["df"] = pd.DataFrame({
-                    "SMILES": np.random.choice(SAMPLE_SMILES, n),
-                    "is_toxic": np.random.randint(0, 2, n),
-                })
-                state["filename"] = "sample_classification.csv"
-                state["automl_result"] = None
-                state["pipeline_result"] = None
-                state["precalc_done"] = False
-                state["precalc_df"] = None
-                state["_chem_adapters"] = None
-                state["_applied_recommendation"] = None
-                _auto_detect_columns(state)
-                state["task_type"] = "classification"
-                upload_status.text = f"✅ 分類サンプル ({n}行)"
-                upload_status.classes(remove="text-red", add="text-green")
-                _show_preview(state["df"], preview_container)
-                _update_metrics(state, metrics_row)
-                refresh = state.get("_refresh_tabs")
-
-                if refresh:
-
-                    refresh()
-
-                ui.notify("分類サンプルデータを読み込みました", type="positive")
-
-            def _load_sample_numeric():
-                np.random.seed(42)
-                n = 30
-                state["df"] = pd.DataFrame({
-                    "temperature": np.random.uniform(20, 80, n),
-                    "pressure": np.random.exponential(5, n),
-                    "catalyst": np.random.choice(["A型", "B型", "C型"], n),
-                    "time_h": np.random.uniform(1, 24, n),
-                    "yield": np.random.randn(n) * 10 + 75,
-                })
-                state["filename"] = "sample_numeric.csv"
-                state["automl_result"] = None
-                state["pipeline_result"] = None
-                state["precalc_done"] = False
-                state["precalc_df"] = None
-                state["_chem_adapters"] = None
-                state["_applied_recommendation"] = None
-                _auto_detect_columns(state)
-                state["smiles_col"] = ""
-                state["task_type"] = "regression"
-                upload_status.text = f"✅ 数値サンプル ({n}行)"
-                upload_status.classes(remove="text-red", add="text-green")
-                _show_preview(state["df"], preview_container)
-                _update_metrics(state, metrics_row)
-                refresh = state.get("_refresh_tabs")
-
-                if refresh:
-
-                    refresh()
-
-                ui.notify("数値サンプルデータを読み込みました", type="positive")
-
-            ui.button("🧪 回帰 (SMILES)", on_click=_load_sample_regression).props("outline color=purple size=sm")
-            ui.button("🏷️ 分類 (SMILES)", on_click=_load_sample_classification).props("outline color=blue size=sm")
-            ui.button("📊 数値のみ", on_click=_load_sample_numeric).props("outline color=teal size=sm")
-
-        # ── 新規: デバッグ専用詳細セレクター ──
-        ui.separator().classes("q-my-md")
+    # ── サンプルデータ（統合セレクター） ──
+    with ui.expansion("🧪 デバッグ用サンプルデータ", icon="science").classes("full-width q-mt-md").props("default-opened"):
+        ui.label("開発・検証用のサンプルデータを選択してロードできます。").classes("text-caption text-grey-6 q-mb-md")
         
         def handle_debug_data_loaded(df, task_type, target_col, filename):
             """デバッグセレクターからのデータ読み込みハンドラ"""
@@ -332,7 +251,6 @@ def _render_data_load(state: dict) -> None:
             state["_applied_recommendation"] = None
             
             # 内部の自動判定ロジックを呼ぶ
-            from frontend_nicegui.components.data_tab import _auto_detect_columns, _show_preview, _update_metrics
             _auto_detect_columns(state)
             
             # セレクターで定義された情報を優先適用
@@ -397,177 +315,7 @@ def _render_data_load(state: dict) -> None:
 # ================================================================
 # サブタブ2: 列の役割設定
 # ================================================================
-def _render_column_roles(state: dict) -> None:
-    """目的変数・SMILES列・除外列などの設定UI"""
-
-    def _build_ui():
-        container.clear()
-        with container:
-            if state["df"] is None:
-                ui.label("⚠️ まず「📂 データ読込」タブでデータを読み込んでください").classes("text-amber q-pa-md")
-                return
-
-            df = state["df"]
-            all_cols = list(df.columns)
-
-            with ui.row().classes("full-width"):
-                ui.label("列の役割設定 (データフレーム形式)").classes("text-subtitle1 text-bold")
-                
-            ui.label("表の「役割」セルをダブルクリックして変更してください（複数選択不要、1つずつ設定可能）。").classes("text-caption text-grey-5 q-mb-md")
-
-            # タスク種別
-            cur_target = state.get("target_col") or all_cols[-1]
-            if "target_col" not in state:
-                state["target_col"] = cur_target
-            
-            with ui.row().classes("items-center q-gutter-md q-mb-md"):
-                ui.label(f"🎯 現在の目的変数: {state.get('target_col', '未設定')}").classes("text-subtitle2 text-cyan")
-                ui.select(
-                    options={"auto": "自動判定", "regression": "回帰", "classification": "分類"},
-                    label="タスクタイプ",
-                    value=state.get("task_type", "auto"),
-                    on_change=lambda e: state.update({"task_type": e.value}),
-                ).classes("w-48").props("dense outlined")
-                
-            # AG Gridのデータ準備
-            row_data = []
-            for col in all_cols:
-                role = "説明変数"
-                if col == state.get("target_col"):
-                    role = "目的変数"
-                elif col in state.get("exclude_cols", []):
-                    role = "除外"
-                elif col == state.get("group_col"):
-                    role = "グループID"
-                elif col == state.get("time_col"):
-                    role = "時系列"
-                elif col == state.get("weight_col"):
-                    role = "Sample Weight"
-                
-                na_count = int(df[col].isna().sum())
-                na_pct = round(na_count / len(df) * 100, 1) if len(df) > 0 else 0
-                n_unique = int(df[col].nunique(dropna=True))
-                
-                row_data.append({
-                    "col_name": col,
-                    "dtype": str(df[col].dtype),
-                    "n_unique": n_unique,
-                    "na_pct": na_pct,
-                    "role": role
-                })
-
-            grid_options = {
-                "columnDefs": [
-                    {"headerName": "列名", "field": "col_name", "editable": False, "sortable": True, "filter": True, "width": 250},
-                    {"headerName": "データ型", "field": "dtype", "editable": False, "sortable": True, "width": 120},
-                    {"headerName": "ユニーク数", "field": "n_unique", "editable": False, "sortable": True, "width": 120},
-                    {"headerName": "欠損率(%)", "field": "na_pct", "editable": False, "sortable": True, "width": 120},
-                    {
-                        "headerName": "役割 (ダブルクリックで変更)", 
-                        "field": "role", 
-                        "editable": True,
-                        "cellEditor": "agSelectCellEditor",
-                        "cellEditorParams": {
-                            "values": ["説明変数", "目的変数", "除外", "グループID", "時系列", "Sample Weight"]
-                        },
-                        "sortable": True,
-                        "filter": True,
-                        "width": 250,
-                        "cellStyle": {"backgroundColor": "rgba(0, 188, 212, 0.1)", "cursor": "pointer", "fontWeight": "bold"}
-                    }
-                ],
-                "rowData": row_data,
-                "rowSelection": "single",
-                "stopEditingWhenCellsLoseFocus": True,
-                "suppressRowClickSelection": True,
-            }
-            
-            def handle_cell_change(e):
-                col_name = e.args.get("data", {}).get("col_name")
-                new_role = e.args.get("value")
-                if not col_name or not new_role: return
-                
-                # 前の役割をクリア
-                if col_name == state.get("target_col"): state["target_col"] = ""
-                if col_name in state.get("exclude_cols", []): state["exclude_cols"].remove(col_name)
-                if col_name == state.get("group_col"): state["group_col"] = ""
-                if col_name == state.get("time_col"): state["time_col"] = ""
-                if col_name == state.get("weight_col"): state["weight_col"] = ""
-                
-                # 新しい役割を設定
-                if new_role == "目的変数":
-                    _on_target_change(col_name, state)
-                    _build_ui()
-                    return
-                elif new_role == "除外":
-                    if "exclude_cols" not in state: state["exclude_cols"] = []
-                    if col_name not in state["exclude_cols"]: state["exclude_cols"].append(col_name)
-                elif new_role == "グループID":
-                    state["group_col"] = col_name
-                elif new_role == "時系列":
-                    state["time_col"] = col_name
-                elif new_role == "Sample Weight":
-                    state["weight_col"] = col_name
-                    
-                state["precalc_done"] = False
-                
-            ui.aggrid(grid_options).classes("full-width").style("height: 480px;").on('cellValueChanged', handle_cell_change)
-
-            # SMILES混合成分のUIは保持
-            ui.separator().classes("q-my-md")
-            with ui.expansion("🧬 SMILES / 混合成分設定", icon="science").classes("full-width bg-dark"):
-                if "smiles_components" not in state:
-                    scol = state.get("smiles_col", "")
-                    if scol and scol in all_cols:
-                        state["smiles_components"] = [{"smiles_col": scol, "fraction_col": "（なし）"}]
-                    else:
-                        state["smiles_components"] = []
-
-                comps_container = ui.column().classes("full-width q-gutter-xs")
-                
-                def _render_comps():
-                    comps_container.clear()
-                    with comps_container:
-                        smiles_opts = ["（なし）"] + all_cols
-                        frac_opts = ["（なし）"] + all_cols
-                        
-                        for i, comp in enumerate(state["smiles_components"]):
-                            with ui.row().classes("items-center full-width justify-between no-wrap"):
-                                def _on_s(e, idx=i):
-                                    state["smiles_components"][idx]["smiles_col"] = e.value
-                                    state["precalc_done"] = False
-                                    if idx == 0:
-                                        state["smiles_col"] = e.value if e.value != "（なし）" else ""
-                                def _on_f(e, idx=i):
-                                    state["smiles_components"][idx]["fraction_col"] = e.value
-                                    state["precalc_done"] = False
-                                    
-                                s_val = comp.get("smiles_col", "（なし）")
-                                f_val = comp.get("fraction_col", "（なし）")
-                                
-                                ui.select(smiles_opts, value=s_val if s_val in smiles_opts else "（なし）", 
-                                          label=f"SMILES {i+1}", on_change=_on_s).classes("col-5").props("dense")
-                                ui.select(frac_opts, value=f_val if f_val in frac_opts else "（なし）",
-                                          label=f"割合(%) {i+1}", on_change=_on_f).classes("col-5").props("dense")
-                                          
-                                def _del(idx=i):
-                                    state["smiles_components"].pop(idx)
-                                    if len(state["smiles_components"]) == 0:
-                                        state["smiles_col"] = ""
-                                    _render_comps()
-                                ui.button(icon="close", on_click=_del).props("flat dense color=red").classes("col-1")
-                                
-                        with ui.row().classes("items-center full-width justify-between q-mt-xs"):
-                            ui.button("＋ 成分追加", on_click=lambda: (state["smiles_components"].append({"smiles_col": "（なし）", "fraction_col": "（なし）"}), _render_comps())).props("outline dense color=cyan size=sm")
-                            
-                            ui.radio({"wt": "wt%", "mol": "mol%"}, value=state.get("fraction_type", "wt"),
-                                     on_change=lambda e: state.update({"fraction_type": e.value})).props("dense inline").tooltip("割合の単位 (wt% / mol%)")
-                            
-                _render_comps()
-                ui.label("構成成分を追加し、加重平均による混合系の特徴量を自動計算します").classes("text-caption text-grey-5 q-mb-md")
-
-    container = ui.column().classes("full-width")
-    _build_ui()
+    pass  # Logic moved to frontend_nicegui/components/column_role_panel.py
 
 
 def _on_target_change(val: str, state: dict) -> None:
@@ -587,40 +335,7 @@ def _on_target_change(val: str, state: dict) -> None:
 # ================================================================
 # サブタブ3: SMILES特徴量
 # ================================================================
-def _render_smiles_features(state: dict) -> None:
-    """SMILES記述子プラグイン管理UI"""
-
-    if state["df"] is None:
-        ui.label("⚠️ まずデータを読み込んでください").classes("text-amber q-pa-md")
-        return
-
-    if not state.get("smiles_col"):
-        with ui.card().classes("glass-card q-pa-lg"):
-            ui.icon("info", color="cyan", size="md")
-            ui.label("SMILES列が設定されていません").classes("text-subtitle1")
-            ui.label("「🏷️ 列の役割」タブでSMILES列を指定してください。\n"
-                     "SMILES列がない場合、このステップはスキップできます。").classes("text-grey-5")
-        return
-
-    # ── プラグイン管理UI（動的生成） ──
-    from frontend_nicegui.components.descriptor_plugins_ui import render_descriptor_plugins
-    render_descriptor_plugins(state)
-
-    # ── 計算ステータス表示 ──
-    if state.get("precalc_done") and state.get("precalc_df") is not None:
-        precalc = state["precalc_df"]
-        ui.label(f"✅ {len(precalc.columns)}個の記述子が計算済みです").classes("q-mt-md text-positive")
-        results_container = ui.column().classes("full-width q-mt-sm")
-        _show_descriptor_summary(state, results_container)
-
-        # ── 特徴量セット比較ダッシュボード (追加) ──
-        if state.get("automl_results"):
-             with ui.expansion("📊 特徴量セット比較ダッシュボード", icon="analytics").classes("full-width q-mt-md").style(
-                 "border: 1px solid rgba(0,212,255,0.2); border-radius: 12px;"
-             ):
-                 render_feature_comparison_dashboard(state)
-    else:
-        ui.label("⏳ SMILES検出後、記述子は自動計算されます").classes("q-mt-md text-grey-5")
+    pass  # Logic moved to frontend_nicegui/components/smiles_feature_panel.py
 
 
 def _show_descriptor_summary(state: dict, container) -> None:
