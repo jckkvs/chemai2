@@ -92,8 +92,8 @@ def dim_reduction_panel(state: dict):
 
             # t-SNE用パラメータ
             with ui.row().classes("q-gutter-sm").bind_visibility_from(method_select, 'value', lambda v: v == 't-SNE'):
-                ui.number(label="Perplexity", value=5.0, min=1.0, max=50.0).classes("w-32").props("dense outlined")
-                ui.number(label="LR", value=200.0).classes("w-32").props("dense outlined")
+                perp_input = ui.number(label="Perplexity", value=5.0, min=1.0, max=50.0).classes("w-32").props("dense outlined")
+                lr_input = ui.number(label="LR", value=200.0).classes("w-32").props("dense outlined")
         
         # 実行ボタン
         ui.button(
@@ -104,7 +104,9 @@ def dim_reduction_panel(state: dict):
                 method_select.value,
                 n_components_select.value,
                 state,
-                color_select
+                color_select,
+                perplexity=perp_input.value if method_select.value == 't-SNE' else None,
+                learning_rate=lr_input.value if method_select.value == 't-SNE' else None
             )
         ).props("unelevated color=primary icon=play_arrow").classes("q-mt-md full-width")
     
@@ -118,7 +120,9 @@ def dim_reduction_panel(state: dict):
 
 
 def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: str, 
-                                     n_components: int, state: dict, color_select_ui):
+                                     n_components: int, state: dict, color_select_ui,
+                                     perplexity: Optional[float] = None,
+                                     learning_rate: Optional[float] = None):
     """次元削減を実行し、結果を更新"""
     if not features or len(features) < 2:
         ui.notify("2つ以上の特徴量を選択してください", type="warning")
@@ -132,7 +136,20 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
         ui.label(f"🔄 {method} 実行中...").classes("text-bold")
         progress_bar = ui.linear_progress(value=0, show_value=False).classes("w-full")
         status = ui.label("計算準備中...").classes("text-xs text-grey-5")
+        log_area = ui.label("").classes("text-xs text-grey-500 font-mono q-mt-xs bg-grey-9 q-pa-xs full-width")
     
+    # 🔍 デバッグ情報：データ形状を取得
+    X_for_shape = df[features].dropna()
+    n_samples, n_features = X_for_shape.shape
+    log_area.text = f"🔍 Data Shape: {n_samples} samples × {n_features} features"
+    print(f"[DimReduction DEBUG] {method} START. Shape: {X_for_shape.shape}")
+
+    # t-SNE特有のチェック
+    if method == 't-SNE' and perplexity is not None:
+        if perplexity >= n_samples:
+            ui.notify(f"Perplexity ({perplexity}) はサンプル数 ({n_samples}) 未満である必要があります。", type="negative")
+            return
+
     def on_finished(result_df, explained):
         progress_bar.value = 1.0
         status.text = "✅ 完了"
@@ -156,7 +173,14 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
         try:
             from backend.data.eda_core import compute_dimensionality_reduction
             X = df[features].dropna()
-            coords, explained = compute_dimensionality_reduction(X.values, method=method.lower(), n_components=n_components)
+            
+            # パラメータを渡す
+            params = {}
+            if method == 't-SNE':
+                if perplexity is not None: params['perplexity'] = perplexity
+                if learning_rate is not None: params['learning_rate'] = learning_rate
+
+            coords, explained = compute_dimensionality_reduction(X.values, method=method.lower(), n_components=n_components, **params)
             
             # 結果を結合
             coord_cols = [f"{method}_dim{i+1}" for i in range(n_components)]

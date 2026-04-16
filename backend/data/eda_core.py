@@ -82,11 +82,11 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
     import sys
     import time
 
-    print(f"[DimReduction] 開始: method={method}, shape={X.shape}, n_components={n_components}", file=sys.stderr)
+    print(f"[DimReduction Backend] method={method}, input_shape={X.shape}, n_components={n_components}", flush=True)
     start_time = time.time()
     
     if X is None or X.shape[0] == 0:
-        print(f"[DimReduction] エラー: データが空です", file=sys.stderr)
+        print(f"[DimReduction Backend] エラー: データが空です", flush=True)
         return None
     
     n_samples, n_features = X.shape
@@ -97,25 +97,25 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
         return None
     
     # 標準化
-    print(f"[DimReduction] 標準化実行...", file=sys.stderr)
+    print(f"[DimReduction Backend] 標準化実行...", flush=True)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    print(f"[DimReduction] 標準化完了 ({time.time() - start_time:.2f}秒)", file=sys.stderr)
+    print(f"[DimReduction Backend] 標準化完了 ({time.time() - start_time:.2f}秒)", flush=True)
     
     try:
         if method == 'pca':
             # PCA
-            print(f"[DimReduction] PCA実行中...", file=sys.stderr)
+            print(f"[DimReduction Backend] PCA実行中...", flush=True)
             actual_components = min(n_components, n_samples - 1, n_features)
             pca = PCA(n_components=actual_components)
             coords = pca.fit_transform(X_scaled)
             explained_var = pca.explained_variance_ratio_
-            print(f"[DimReduction] PCA完了 ({time.time() - start_time:.2f}秒), explained_variance={explained_var}", file=sys.stderr)
+            print(f"[DimReduction Backend] PCA完了 ({time.time() - start_time:.2f}秒), explained_variance={explained_var}", flush=True)
             return coords, explained_var
         
         elif method == 'tsne':
             # t-SNE
-            print(f"[DimReduction] t-SNE実行中...", file=sys.stderr)
+            print(f"[DimReduction Backend] t-SNE Fitting開始...", flush=True)
             # Perplexity の自動調整（データ数に応じて制限）
             perplexity = kwargs.get('perplexity', 5.0)
             
@@ -131,7 +131,7 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
             # 学習率の設定
             learning_rate = kwargs.get('learning_rate', 'auto')
             
-            print(f"[DimReduction] t-SNEパラメータ: perplexity={safe_perplexity}, learning_rate={learning_rate}, n_iter=1000", file=sys.stderr)
+            print(f"[DimReduction Backend] t-SNE Params: perplexity={safe_perplexity}, learning_rate={learning_rate}", flush=True)
             
             tsne = TSNE(
                 n_components=min(n_components, n_samples - 1),
@@ -144,9 +144,8 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
                 verbose=2  # 詳細ログ出力
             )
             
-            print(f"[DimReduction] t-SNE fit_transform開始...", file=sys.stderr)
             coords = tsne.fit_transform(X_scaled)
-            print(f"[DimReduction] t-SNE完了 ({time.time() - start_time:.2f}秒)", file=sys.stderr)
+            print(f"[DimReduction Backend] t-SNE Fitting完了 ({time.time() - start_time:.2f}秒)", flush=True)
             return coords, None
         
         elif method == 'umap':
