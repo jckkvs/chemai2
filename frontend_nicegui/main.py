@@ -596,8 +596,14 @@ def main_page():
 
             ui.separator().classes("q-mx-md")
 
-            # --- 専門解析ツール ---
+            # --- 専門ツール・設定 ---
             with ui.column().classes("full-width q-pa-sm"):
+                ui.label("⚙️ 専門ツール・設定").classes("text-caption text-grey-5 q-ml-sm q-mt-sm")
+                
+                # 🔥 混合物設定をサイドバーへ移動
+                ui.button("🧪 混合物・テンプレート設定", icon="blender", on_click=lambda: ui.navigate.to("/mixture_template")) \
+                    .props("flat align=left no-caps").classes("full-width text-white hover-bounce")
+
                 with ui.expansion("🔬 専門解析", icon="science").classes("full-width text-white").props("dense"):
                     nav_item("find_replace", "逆解析・最適", "inverse").classes("q-pl-lg")
                     nav_item("biotech", "実験計画 (DoE)", "doe").classes("q-pl-lg")
@@ -728,20 +734,62 @@ def main_page():
                 def _build_eda():
                     _eda_container.clear()
                     with _eda_container:
-                        from frontend_nicegui.components.eda_panel import render_eda_panel
-                        render_eda_panel(state)
+                        try:
+                            from frontend_nicegui.components.eda_panel import render_eda_panel
+                            render_eda_panel(state)
+                        except Exception as e:
+                            import traceback
+                            ui.label("❌ EDAコンポーネントの読込エラー").classes("text-h6 text-red")
+                            ui.markdown(f"```python\n{traceback.format_exc()}\n```").classes("text-caption full-width")
                 _build_eda()
                 state["_refresh_eda_main"] = _build_eda
 
             # 3. 🤖 機械学習
+            @ui.refreshable
+            def _refresh_ml_tab():
+                try:
+                    from frontend_nicegui.components.ml_workflow import render_ml_workflow
+                    render_ml_workflow(state)
+                except Exception as e:
+                    import traceback
+                    ui.label("❌ MLワークフローの読込エラー").classes("text-h6 text-red")
+                    ui.markdown(f"```python\n{traceback.format_exc()}\n```").classes("text-caption full-width")
+
             with ui.tab_panel("ml"):
-                from frontend_nicegui.components.ml_workflow import render_ml_workflow
-                render_ml_workflow(state)
+                _refresh_ml_tab()
+            
+            state["_refresh_ml"] = _refresh_ml_tab.refresh
 
             # 4. 📑 結果・レポート
+            @ui.refreshable
+            def _refresh_results_tab():
+                try:
+                    from frontend_nicegui.components.results_view_container import render_results_view_container
+                    render_results_view_container(state)
+                except Exception as e:
+                    import traceback
+                    ui.label("❌ 結果タブの読込エラー").classes("text-h6 text-red")
+                    ui.markdown(f"```python\n{traceback.format_exc()}\n```").classes("text-caption full-width")
+
             with ui.tab_panel("results"):
-                from frontend_nicegui.components.results_view_container import render_results_view_container
-                render_results_view_container(state)
+                _refresh_results_tab()
+                
+                # ── 自動監視 Fail-Safe ──
+                # 解析完了フラグが立っているのに表示が更新されていないケースへの対策
+                def _watch_results_state():
+                    if state.get("analysis_complete") and not state.get("analysis_running"):
+                        # 完了フラグがあるが、まだリフレッシュしていない場合
+                        if not state.get("_results_refreshed_by_timer"):
+                            _refresh_results_tab.refresh()
+                            state["_results_refreshed_by_timer"] = True
+                    elif state.get("analysis_running"):
+                         # 解析中になったらリフレッシュ済みフラグをリセット
+                         state["_results_refreshed_by_timer"] = False
+                
+                ui.timer(1.0, _watch_results_state)
+
+            # リフレッシュ関数を登録
+            state["_refresh_results"] = _refresh_results_tab.refresh
 
             # --- 専門ツールパネル (Hidden Tabs) ---
             with ui.tab_panel("inverse"):
@@ -767,11 +815,17 @@ def main_page():
     # ── タブ遷移コールバック登録 ──
     state["_switch_to_inverse"] = lambda: main_tabs.set_value("inverse")
     state["_switch_to_results"] = lambda: main_tabs.set_value("results")
+    state["_switch_to_data"] = lambda: main_tabs.set_value("data")
     state["_switch_to_data_smiles"] = lambda: main_tabs.set_value("data")
+    
+    # 目的変数設定（データタブ内のサブタブは data_tab 側で制御される可能性があるが、
+    # ここでは「データ管理」タブ自体をアクティブにする）
+    state["_switch_to_column_role"] = lambda: main_tabs.set_value("data")
 
     _REBUILD_MAP = {
         "eda":        "_refresh_eda_main",
-        "results":    "_refresh_results", # results_view_container 内の refresh が必要かも
+        "ml":         "_refresh_ml",
+        "results":    "_refresh_results",
         "inverse":    "_refresh_inverse",
         "doe":        "_refresh_doe",
         "computation": "_refresh_computation",
@@ -1106,7 +1160,53 @@ def help_descriptors_page():
         from frontend_nicegui.components.descriptor_help_page import render_descriptor_help
         render_descriptor_help()
 
-# Plot viewer moved to plot_utils
+
+# ═══════════════════════════════════════════════════════════
+# 混合物・テンプレート設定専用ページ (Item 14)
+# ═══════════════════════════════════════════════════════════
+@ui.page('/mixture_template')
+def mixture_template_page():
+    """混合物設定・テンプレート管理ページ"""
+    from frontend_nicegui.main import CUSTOM_CSS 
+    ui.add_head_html(f"<style>{CUSTOM_CSS}</style>")
+    
+    # 仮設ステート (本来は app.storage.user 等で同期すべきだが、まずは構造を優先)
+    # main_page の state とは現時点では独立
+    page_state = {"df": None} 
+
+    with ui.header().classes('bg-slate-800 shadow-md'):
+        with ui.row().classes('items-center q-px-md q-py-sm full-width justify-between'):
+            with ui.row().classes('items-center gap-2'):
+                ui.icon('blender', color='cyan').classes('text-h5')
+                ui.label('🧪 混合物・テンプレート設定').classes('text-xl font-bold text-white')
+            ui.button('戻る', icon='arrow_back', on_click=lambda: ui.navigate.to('/')).props('flat color=white no-caps')
+    
+    with ui.column().classes('w-full q-pa-lg max-w-5xl mx-auto'):
+        ui.markdown("""
+        ### 🧪 混合物設定とデータテンプレート
+        普段の解析フローとは切り離し、特殊なデータ形式や混合物計算のプリセットを管理します。
+        """).classes('text-grey-4 q-mb-md')
+        
+        with ui.tabs().classes('w-full glass-card') as mix_tabs:
+            tab_mix = ui.tab('mixture', label='🧪 混合物設定', icon='science')
+            tab_tmp = ui.tab('template', label='📄 テンプレート管理', icon='description')
+        
+        with ui.tab_panels(mix_tabs, value='mixture').classes('w-full bg-transparent'):
+            with ui.tab_panel('mixture'):
+                from frontend_nicegui.components.mixture_input_panel import render_mixture_panel
+                render_mixture_panel(page_state)
+            
+            with ui.tab_panel('template'):
+                with ui.card().classes('full-width q-pa-md glass-card'):
+                    ui.label("解析用列役割テンプレート").classes("text-lg font-bold text-cyan")
+                    ui.label("CSVのヘッダー形式やデフォルトの列役割（目的変数など）をテンプレートとして保存し、読込時に自動適用できます。").classes("text-sm text-grey-5 q-mb-md")
+                    
+                    with ui.row().classes('q-gutter-sm'):
+                        ui.button("新規テンプレート作成", icon="add").props("unelevated color=indigo no-caps")
+                        ui.button("既存をインポート", icon="file_upload").props("outline color=grey no-caps")
+                    
+                    ui.separator().classes('q-my-md')
+                    ui.label("登録済みテンプレート: なし").classes("text-caption text-grey-6")
 # ─────────────────────────────────────────────
 # エントリーポイント
 # ─────────────────────────────────────────────

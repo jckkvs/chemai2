@@ -188,6 +188,7 @@ def _update_role(state: dict, col: str, role: str):
     elif role == "weight": state["weight_col"] = col
     
     ui.notify(f"'{col}' の役割を更新しました", type="positive", timeout=800)
+    logger.info(f"Column '{col}' role updated to '{role}'. target_col='{state.get('target_col')}'")
     state["precalc_done"] = False
     
     # 全体リフレッシュ

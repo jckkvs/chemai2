@@ -9,13 +9,40 @@ from __future__ import annotations
 from typing import Any
 from nicegui import ui
 
+@ui.refreshable
 def render_ml_workflow(state: dict[str, Any]) -> None:
     """機械学習ワークフロー設定タブ全体を描画する。"""
     
-    if state.get("df") is None:
-        with ui.card().classes("glass-card q-pa-lg items-center justify-center text-center"):
-            ui.icon("info", color="amber", size="md")
-            ui.label("⚠️ まず「📁 データ管理」タブでデータを読み込んでください").classes("text-amber")
+    # ── 🔍 診断ログ (サーバーコンソール) ──
+    df = state.get("df")
+    target_col = state.get("target_col")
+    print(f"🔍 [ML Workflow Render] df_exists={df is not None}, target_col='{target_col}', "
+          f"cv_key='{state.get('cv_key')}', models={len(state.get('selected_models', []))}")
+
+    # 1. データ未読込
+    if df is None:
+        with ui.card().classes("glass-card q-pa-xl items-center justify-center text-center full-width"):
+            ui.icon("info", color="amber", size="xl").classes("q-mb-md")
+            ui.label("⚠️ データを読み込んでください").classes("text-h6 text-amber")
+            ui.label("機械学習を行うには、まずデータ管理タブでファイルをアップロードしてください。").classes("text-grey-6 q-mb-md")
+            
+            ui.button(
+                "📁 データ管理へ移動", 
+                on_click=lambda: state.get("_switch_to_data", lambda: None)()
+            ).props("unelevated color=cyan-9 no-caps")
+        return
+
+    # 2. 目的変数未設定
+    if not target_col:
+        with ui.card().classes("glass-card q-pa-xl items-center justify-center text-center full-width"):
+            ui.icon("label_important", color="cyan", size="xl").classes("q-mb-md")
+            ui.label("🎯 目的変数が未設定です").classes("text-h6 text-cyan")
+            ui.label("どの列を予測するか「列の役割」タブで設定してください。").classes("text-grey-6 q-mb-md")
+            
+            ui.button(
+                "🏷️ 列の役割を設定する", 
+                on_click=lambda: state.get("_switch_to_column_role", lambda: None)()
+            ).props("unelevated color=cyan-9 no-caps")
         return
 
     with ui.tabs().classes("full-width").props("dense active-color=cyan indicator-color=cyan") as sub_tabs:
