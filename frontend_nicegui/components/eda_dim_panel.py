@@ -1,17 +1,16 @@
 """
-EDA - 次元削減パネル（変数別色分け機能付き）
+EDA - 次元削減パネル（変数別色分け機能・特徴量選択機能完全実装）
 """
-import logging
-import threading
-import time
-import traceback
-from typing import Dict, Any, Optional, List
-
-import numpy as np
 import pandas as pd
+import numpy as np
 from nicegui import ui
 import plotly.graph_objects as go
 import plotly.express as px
+from typing import Dict, Any, Optional, List
+import time
+import traceback
+import threading
+import logging
 
 from backend.data.eda_core import compute_dimensionality_reduction
 
@@ -24,8 +23,12 @@ def dim_reduction_panel(state: dict):
     
     ui.markdown("""
     高次元データを2次元または3次元に圧縮して可視化します。
-    **説明変数をクリック**すると、その変数の値に応じてサンプルを色分け表示できます。
     データのクラスタリングや外れ値の検出に役立ちます。
+    
+    **新機能**:
+    - **特徴量選択**: 次元削減に使用する変数を個別に選択可能
+    - **動的色分け**: プロット後の結果を各変数（数値・カテゴリ）で瞬時に色分け
+    - **正方形プロット**: 物理的距離を正確に保つアスペクト比
     """).classes("text-body2 text-grey-7 q-mb-md")
     
     # データが読み込まれているか確認
@@ -34,7 +37,6 @@ def dim_reduction_panel(state: dict):
         return
     
     df = state["df"]
-    # state["column_roles"] がない場合はデフォルトで全数値列を feature とする
     column_roles = state.get("column_roles", {col: "feature" for col in df.select_dtypes(include=[np.number]).columns})
     
     # 数値列のみを抽出（目的変数を除く説明変数）
@@ -50,20 +52,29 @@ def dim_reduction_panel(state: dict):
     with ui.card().classes("w-full q-mb-md"):
         ui.label("⚙️ 設定").classes("text-lg font-semibold q-mb-sm")
         
-        with ui.row().classes("w-full q-gutter-md"):
-            # 手法選択
-            method_select = ui.select(
-                options=["PCA", "t-SNE", "UMAP"],
-                label="次元削減手法",
-                value="PCA"
-            ).classes("w-48")
-            
-            # 次元数
-            n_components_select = ui.select(
-                options=[2, 3],
-                label="出力次元数",
-                value=2
-            ).classes("w-32")
+        with ui.column().classes("w-full q-gutter-y-md"):
+            with ui.row().classes("w-full q-gutter-md"):
+                # 手法選択
+                method_select = ui.select(
+                    options=["PCA", "t-SNE", "UMAP"],
+                    label="次元削減手法",
+                    value="PCA"
+                ).classes("w-48")
+                
+                # 次元数
+                n_components_select = ui.select(
+                    options=[2, 3],
+                    label="出力次元数",
+                    value=2
+                ).classes("w-32")
+                
+                # 使用する特徴量
+                selected_features = ui.select(
+                    options=numeric_cols,
+                    label="使用する特徴量（複数選択可）",
+                    multiple=True,
+                    value=numeric_cols[:min(10, len(numeric_cols))]
+                ).classes("flex-grow").props("use-chips")
 
             # t-SNE用パラメータ
             with ui.row().classes("q-gutter-sm").bind_visibility_from(method_select, 'value', lambda v: v == 't-SNE'):
@@ -86,7 +97,7 @@ def dim_reduction_panel(state: dict):
             "📊 次元削減を実行",
             on_click=lambda: _run_dim_reduction_with_progress(
                 df,
-                numeric_cols,
+                selected_features.value,
                 method_select.value,
                 n_components_select.value,
                 perplexity_input.value if method_select.value == 't-SNE' else None,
@@ -99,9 +110,9 @@ def dim_reduction_panel(state: dict):
     progress_container = ui.column().classes("w-full q-mt-md")
     state["_dim_reduction_progress"] = progress_container
     
-    # 結果表示領域
+    # 結果表示領域（キャッシュから復元）
     if "dim_reduction_results" in state:
-        _render_results_with_coloring(state, numeric_cols, categorical_cols)
+        _render_multiple_results_with_coloring(state["dim_reduction_results"], numeric_cols, categorical_cols, state)
 
 
 def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: str, 
@@ -116,7 +127,7 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
     progress_container = state.get("_dim_reduction_progress")
     if not progress_container:
         return
-
+    
     progress_container.clear()
     
     # 進捗UIを初期化
@@ -124,8 +135,8 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
         ui.label(f"🔄 {method} 実行中...").classes("text-lg font-bold q-mb-sm")
         progress_bar = ui.linear_progress(value=0, show_value=True).classes("w-full")
         status_label = ui.label("データ前処理中...").classes("text-grey q-mt-sm")
-        with ui.expansion("📝 詳細ログ", icon="terminal").classes("w-full q-mt-sm"):
-            log_area = ui.label("").classes("text-xs text-grey-500 font-mono q-mt-sm whitespace-pre-wrap")
+        with ui.expansion("📝 詳細ログ", icon="terminal").classes("w-full q-mt-sm border border-grey-8"):
+            log_area = ui.label("").classes("text-xs text-grey-500 font-mono q-pa-sm whitespace-pre-wrap")
     
     try:
         # 特徴量データを準備（欠損値除去）
@@ -153,16 +164,14 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
         
         def run_in_thread():
             try:
-                status_label.set_text("標準化実行中...")
-                progress_bar.set_value(0.2)
-                
+                # 注: set_textなどはメインスレッド外で呼ぶと警告が出る場合があるが、NiceGUIの仕様を確認
+                # ここでは安全のため値の更新のみ
                 result = compute_dimensionality_reduction(
                     X.values,
                     method=method.lower(),
                     n_components=n_components,
                     **params
                 )
-                
                 result_container['result'] = result
             except Exception as e:
                 result_container['error'] = str(e)
@@ -172,7 +181,7 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
         thread = threading.Thread(target=run_in_thread, daemon=True)
         thread.start()
         
-        # タイムアウト監視（t-SNEは最大5分、その他は2分）
+        # タイムアウト監視
         timeout_seconds = 300 if method == 't-SNE' else 120
         start_time = time.time()
         
@@ -187,7 +196,7 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
             progress = min(0.9, 0.2 + (elapsed / timeout_seconds) * 0.7)
             progress_bar.set_value(progress)
             status_label.set_text(f"計算中... {elapsed:.1f}秒経過（最大{timeout_seconds}秒）")
-            ui.sleep(0.5)  # UI更新のため待機
+            ui.sleep(0.5)
         
         # 結果チェック
         if result_container['error']:
@@ -204,11 +213,15 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
         
         coords, explained_variance = result
         
+        # 進捗更新
+        status_label.text = "結果を保存中..."
+        progress_bar.value = 0.95
+        
         # 結果をデータフレームに変換
         coord_cols = [f"{method}_dim{i+1}" for i in range(n_components)]
         result_df = pd.DataFrame(coords, columns=coord_cols, index=X.index)
         
-        # 元の特徴量値も保持（色分け用）
+        # 元のデータと結合（色分け用に全特徴量を保持）
         viz_df = pd.concat([X, result_df], axis=1)
         
         # 結果を保存
@@ -221,8 +234,7 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
             'n_components': n_components,
             'data': viz_df,
             'features': features,
-            'explained_variance': explained_variance,
-            'original_indices': X.index.tolist()
+            'explained_variance': explained_variance
         }
         
         # 完了
@@ -232,7 +244,7 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
         
         ui.notify(f"{method} 計算完了", color="positive")
         # 画面更新
-        if state.get("_refresh_tabs"): state["_refresh_tabs"]()
+        _render_multiple_results_with_coloring(state["dim_reduction_results"], features, [], state)
         
     except Exception as e:
         status_label.text = "❌ 予期せぬエラー"
@@ -240,48 +252,40 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
         ui.error(f"システムエラー: {str(e)}")
 
 
-def _render_results_with_coloring(state: dict, numeric_cols: List[str], 
-                                   categorical_cols: List[str]):
-    """色分け機能付きで結果を表示"""
+def _render_multiple_results_with_coloring(results: Dict[str, Any], numeric_cols: List[str], 
+                                           categorical_cols: List[str], state: dict):
+    """色分け機能付きで複数の次元削減結果を表示"""
     
     ui.separator().classes("q-my-md")
     ui.label("📈 可視化結果（変数別色分け）").classes("text-xl font-bold q-mb-md text-cyan")
     
     ui.markdown("""
     **左パネルの変数をクリック**すると、その変数の値に応じてサンプルを色分け表示します。
-    - **連続変数**: 青 (低) → 赤 (高) のグラデーション
+    - **連続変数**: 青（低）→ 赤（高）のグラデーション
     - **カテゴリ変数**: カテゴリごとに異なる色
     """).classes("text-sm text-grey-5 q-mb-md")
     
-    results = state.get("dim_reduction_results", {})
-    if not results:
-        return
-    
     # 結果タブ
-    with ui.tabs().classes("w-full q-mb-md") as results_tabs:
-        tab_refs = {}
-        for key, res in results.items():
-            method_name = res['method']
-            n_c = res['n_components']
-            tab_refs[key] = ui.tab(key, label=f"{method_name} ({n_c}D)")
+    with ui.tabs().classes("w-full q-mb-md") as tabs:
+        tab_list = []
+        for key, result in results.items():
+            method = result['method']
+            n_comp = result['n_components']
+            tab_list.append(ui.tab(key, label=f"{method} ({n_comp}D)"))
     
-    # 初期タブを選択（最後に追加されたもの）
-    initial_tab = list(tab_refs.values())[-1]
-    
-    with ui.tab_panels(results_tabs, value=initial_tab).classes("w-full bg-transparent"):
-        for key, res in results.items():
-            with ui.tab_panel(tab_refs[key]):
-                _render_single_result_with_coloring(res, numeric_cols, categorical_cols, state)
+    with ui.tab_panels(tabs, value=tab_list[-1]).classes("w-full bg-transparent"):
+        for i, (key, result) in enumerate(results.items()):
+            with ui.tab_panel(tab_list[i]):
+                _render_single_result_with_coloring(result, numeric_cols, categorical_cols, state)
 
 
-def _render_single_result_with_coloring(result: Dict[str, Any], 
-                                         numeric_cols: List[str],
-                                         categorical_cols: List[str],
-                                         state: dict):
+def _render_single_result_with_coloring(result: Dict[str, Any], numeric_cols: List[str],
+                                         categorical_cols: List[str], state: dict):
     """単一の次元削減結果を色分け機能付きで表示"""
     
     method = result['method']
     viz_df = result['data']
+    features = result['features']
     explained_variance = result.get('explained_variance', None)
     n_components = result['n_components']
     
@@ -298,7 +302,6 @@ def _render_single_result_with_coloring(result: Dict[str, Any],
         with ui.column().classes("w-64 q-pr-md border-r border-grey-8"):
             ui.label("🎨 色分け変数").classes("text-sm font-bold q-mb-sm text-grey-4")
             
-            # 手法・次元ごとのユニークなIDを作成
             plot_id = f"{method}_{n_components}d"
             
             with ui.scroll_area().classes("h-96"):
@@ -335,11 +338,11 @@ def _render_single_result_with_coloring(result: Dict[str, Any],
         # 右パネル：散布図
         with ui.column().classes("flex-grow"):
             # プロットコンテナ（動的更新用）
-            plot_container_key = f"_scatter_plot_container_{plot_id}"
-            state[plot_container_key] = ui.column().classes("w-full")
+            container_key = f"_scatter_plot_container_{plot_id}"
+            state[container_key] = ui.column().classes("w-full")
             
             # 初期表示（均一色）
-            with state[plot_container_key]:
+            with state[container_key]:
                 _create_scatter_plot(viz_df, method, n_components, color_var=None, color_type='uniform')
     
     # データテーブル
@@ -371,15 +374,13 @@ def _update_scatter_color(variable: Optional[str], color_type: str,
 def _create_scatter_plot(df: pd.DataFrame, method: str, n_components: int,
                          color_var: Optional[str] = None, 
                          color_type: str = 'uniform'):
-    """色分け機能付き散布図を作成"""
+    """色分け機能付き散布図を作成（正方形プロット）"""
     
     dim_cols = [col for col in df.columns if col.startswith(f"{method}_dim")]
     
     if n_components == 3 and len(dim_cols) >= 3:
-        # 3Dプロット
         fig = _create_3d_scatter(df, dim_cols, color_var, color_type)
     else:
-        # 2Dプロット
         fig = _create_2d_scatter(df, dim_cols, color_var, color_type)
     
     ui.plotly(fig).classes("w-full h-[600px]")
@@ -387,22 +388,16 @@ def _create_scatter_plot(df: pd.DataFrame, method: str, n_components: int,
 
 def _create_2d_scatter(df: pd.DataFrame, dim_cols: List[str],
                        color_var: Optional[str], color_type: str) -> go.Figure:
-    """2D散布図を作成"""
+    """2D正方形散布図を作成"""
     
     x_col, y_col = dim_cols[0], dim_cols[1]
     fig = go.Figure()
     
     if color_type == 'uniform' or color_var is None:
-        # 均一色
         fig.add_trace(go.Scatter(
-            x=df[x_col],
-            y=df[y_col],
+            x=df[x_col], y=df[y_col],
             mode='markers',
-            marker=dict(
-                size=10,
-                color='rgba(0, 188, 212, 0.7)',
-                line=dict(width=1, color='rgba(0, 188, 212, 1)')
-            ),
+            marker=dict(size=10, color='rgba(0, 188, 212, 0.7)', line=dict(width=1, color='rgba(0, 188, 212, 1)')),
             name='Samples',
             text=[f"Index: {idx}" for idx in df.index],
             hovertemplate="%{text}<br>X: %{x:.3f}<br>Y: %{y:.3f}<extra></extra>"
@@ -410,26 +405,13 @@ def _create_2d_scatter(df: pd.DataFrame, dim_cols: List[str],
         title = f"{method_label(x_col)} vs {method_label(y_col)}"
     
     elif color_type == 'continuous':
-        # 連続変数で色分け（RdBu: 青→白→赤）
-        v_min, v_max = df[color_var].min(), df[color_var].max()
         fig.add_trace(go.Scatter(
-            x=df[x_col],
-            y=df[y_col],
+            x=df[x_col], y=df[y_col],
             mode='markers',
             marker=dict(
-                size=12,
-                color=df[color_var],
-                colorscale='RdBu_r',  # Red-Blue reversed (Red High)
-                reversescale=True,     # Blue Low, Red High
-                colorbar=dict(
-                    title=color_var,
-                    thickness=15,
-                    len=0.7,
-                    titlefont=dict(size=10, color="white"),
-                    tickfont=dict(size=8, color="white")
-                ),
-                line=dict(width=0.5, color='white'),
-                showscale=True
+                size=12, color=df[color_var], colorscale='RdBu_r', reversescale=True,
+                colorbar=dict(title=color_var, thickness=15, len=0.7, titlefont=dict(color="white"), tickfont=dict(color="white")),
+                line=dict(width=0.5, color='white'), showscale=True
             ),
             text=df[color_var],
             hovertemplate=f"Val: %{{text:.4f}}<br>X: %{{x:.3f}}<br>Y: %{{y:.3f}}<extra></extra>",
@@ -438,70 +420,43 @@ def _create_2d_scatter(df: pd.DataFrame, dim_cols: List[str],
         title = f"Colored by {color_var}"
     
     elif color_type == 'categorical':
-        # カテゴリ変数で色分け
         categories = df[color_var].unique()
-        # カテゴリごとに異なる色を割り当て
         colors = px.colors.qualitative.Plotly
-        
         for i, category in enumerate(categories):
             mask = df[color_var] == category
             category_df = df[mask]
-            
             fig.add_trace(go.Scatter(
-                x=category_df[x_col],
-                y=category_df[y_col],
-                mode='markers',
-                marker=dict(
-                    size=10,
-                    color=colors[i % len(colors)],
-                    line=dict(width=0.5, color='white'),
-                    opacity=0.8
-                ),
+                x=category_df[x_col], y=category_df[y_col], mode='markers',
+                marker=dict(size=10, color=colors[i % len(colors)], line=dict(width=0.5, color='white'), opacity=0.8),
                 name=str(category),
                 hovertemplate=f"Cat: {category}<br>X: %{{x:.3f}}<br>Y: %{{y:.3f}}<extra></extra>"
             ))
         title = f"Colored by {color_var}"
     
     fig.update_layout(
-        title=dict(text=title, font=dict(size=14, color="white")),
+        title=dict(text=title, font=dict(color="white")),
         xaxis=dict(
-            title=x_col, 
-            gridcolor="rgba(255,255,255,0.05)", 
-            zerolinecolor="rgba(255,255,255,0.1)", 
-            tickfont=dict(color="grey"),
-            scaleanchor="y",  # Y軸にスケールを固定
-            scaleratio=1      # 1:1の比率
+            title=x_col, gridcolor="rgba(255,255,255,0.05)", zerolinecolor="rgba(255,255,255,0.1)", 
+            tickfont=dict(color="grey"), scaleanchor="y", scaleratio=1
         ),
-        yaxis=dict(
-            title=y_col, 
-            gridcolor="rgba(255,255,255,0.05)", 
-            zerolinecolor="rgba(255,255,255,0.1)", 
-            tickfont=dict(color="grey")
-        ),
+        yaxis=dict(title=y_col, gridcolor="rgba(255,255,255,0.05)", zerolinecolor="rgba(255,255,255,0.1)", tickfont=dict(color="grey")),
         showlegend=(color_type == 'categorical'),
-        legend=dict(font=dict(size=10, color="white"), bgcolor="rgba(0,0,0,0)"),
-        hovermode='closest',
-        width=600,   # 正方形
-        height=600,  # 正方形
-        margin=dict(l=40, r=40, t=50, b=40),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        template='plotly_dark'
+        legend=dict(font=dict(color="white"), bgcolor="rgba(0,0,0,0)"),
+        width=600, height=600, template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
     )
     return fig
 
 
 def _create_3d_scatter(df: pd.DataFrame, dim_cols: List[str],
                        color_var: Optional[str], color_type: str) -> go.Figure:
-    """3D散布図を作成"""
+    """3D正方形散布図を作成"""
     
     x_col, y_col, z_col = dim_cols[0], dim_cols[1], dim_cols[2]
     fig = go.Figure()
     
     if color_type == 'uniform' or color_var is None:
         fig.add_trace(go.Scatter3d(
-            x=df[x_col], y=df[y_col], z=df[z_col],
-            mode='markers',
+            x=df[x_col], y=df[y_col], z=df[z_col], mode='markers',
             marker=dict(size=5, color='rgba(0, 188, 212, 0.7)', opacity=0.8),
             name='Samples'
         ))
@@ -509,15 +464,8 @@ def _create_3d_scatter(df: pd.DataFrame, dim_cols: List[str],
     
     elif color_type == 'continuous':
         fig.add_trace(go.Scatter3d(
-            x=df[x_col], y=df[y_col], z=df[z_col],
-            mode='markers',
-            marker=dict(
-                size=6,
-                color=df[color_var],
-                colorscale='RdBu_r',
-                colorbar=dict(title=color_var, thickness=15),
-                opacity=0.8
-            ),
+            x=df[x_col], y=df[y_col], z=df[z_col], mode='markers',
+            marker=dict(size=6, color=df[color_var], colorscale='RdBu_r', colorbar=dict(title=color_var), opacity=0.8),
             name=color_var
         ))
         title = f"3D Colored by {color_var}"
@@ -529,26 +477,21 @@ def _create_3d_scatter(df: pd.DataFrame, dim_cols: List[str],
             mask = df[color_var] == category
             category_df = df[mask]
             fig.add_trace(go.Scatter3d(
-                x=category_df[x_col], y=category_df[y_col], z=category_df[z_col],
-                mode='markers',
+                x=category_df[x_col], y=category_df[y_col], z=category_df[z_col], mode='markers',
                 marker=dict(size=5, color=colors[i % len(colors)], opacity=0.8),
                 name=str(category)
             ))
         title = f"3D Colored by {color_var}"
     
     fig.update_layout(
-        title=dict(text=title, font=dict(size=14, color="white")),
+        title=dict(text=title, font=dict(color="white")),
         scene=dict(
             xaxis=dict(title=x_col, backgroundcolor="rgba(0,0,0,0)", gridcolor="rgba(255,255,255,0.05)"),
             yaxis=dict(title=y_col, backgroundcolor="rgba(0,0,0,0)", gridcolor="rgba(255,255,255,0.05)"),
             zaxis=dict(title=z_col, backgroundcolor="rgba(0,0,0,0)", gridcolor="rgba(255,255,255,0.05)"),
-            aspectmode='cube'  # 立方体（正方形3D）
+            aspectmode='cube'
         ),
-        width=600,   # 正方形
-        height=600,  # 正方形
-        paper_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=0, r=0, b=0, t=30),
-        template='plotly_dark'
+        width=600, height=600, template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)'
     )
     return fig
 
