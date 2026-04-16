@@ -91,9 +91,9 @@ def render_smiles_feature_panel(state: dict[str, Any]) -> None:
         ui.label("ℹ️ SMILES列が設定されていません。数値データのみの場合はそのまま EDA タブへ進んでください。").classes("text-grey-5 q-pa-md")
         return
 
-    # ── 2. 記述子プラグイン設定 ──
-    from frontend_nicegui.components.descriptor_plugins_ui import render_descriptor_plugins
-    render_descriptor_plugins(state)
+    # ── 2. 記述子選択ワークフロー ──
+    from frontend_nicegui.components.descriptor_selector import render_descriptor_selector
+    render_descriptor_selector(state)
 
     # ── 3. (REMOVED) 化学的ドメイン知見設定 ──
     # ここに配置されていたドメイン知見設定は、論理的整合性のために「制約設定」タブへ移動されました。

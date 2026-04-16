@@ -68,7 +68,7 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
                                      n_components: int = 2,
                                      **kwargs) -> Optional[Tuple[np.ndarray, Optional[np.ndarray]]]:
     """
-    次元削減を実行
+    次元削減を実行（詳細ログ出力付き）
     
     Args:
         X: 入力データ (n_samples, n_features)
@@ -79,8 +79,14 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
     Returns:
         (coordinates, explained_variance) または None
     """
+    import sys
+    import time
+
+    print(f"[DimReduction] 開始: method={method}, shape={X.shape}, n_components={n_components}", file=sys.stderr)
+    start_time = time.time()
     
     if X is None or X.shape[0] == 0:
+        print(f"[DimReduction] エラー: データが空です", file=sys.stderr)
         return None
     
     n_samples, n_features = X.shape
@@ -91,20 +97,25 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
         return None
     
     # 標準化
+    print(f"[DimReduction] 標準化実行...", file=sys.stderr)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
+    print(f"[DimReduction] 標準化完了 ({time.time() - start_time:.2f}秒)", file=sys.stderr)
     
     try:
         if method == 'pca':
             # PCA
+            print(f"[DimReduction] PCA実行中...", file=sys.stderr)
             actual_components = min(n_components, n_samples - 1, n_features)
             pca = PCA(n_components=actual_components)
             coords = pca.fit_transform(X_scaled)
             explained_var = pca.explained_variance_ratio_
+            print(f"[DimReduction] PCA完了 ({time.time() - start_time:.2f}秒), explained_variance={explained_var}", file=sys.stderr)
             return coords, explained_var
         
         elif method == 'tsne':
             # t-SNE
+            print(f"[DimReduction] t-SNE実行中...", file=sys.stderr)
             # Perplexity の自動調整（データ数に応じて制限）
             perplexity = kwargs.get('perplexity', 5.0)
             
@@ -120,6 +131,8 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
             # 学習率の設定
             learning_rate = kwargs.get('learning_rate', 'auto')
             
+            print(f"[DimReduction] t-SNEパラメータ: perplexity={safe_perplexity}, learning_rate={learning_rate}, n_iter=1000", file=sys.stderr)
+            
             tsne = TSNE(
                 n_components=min(n_components, n_samples - 1),
                 perplexity=safe_perplexity,
@@ -127,14 +140,18 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
                 random_state=42,
                 n_iter=1000,
                 init='pca',
-                method='barnes_hut' if n_samples > 100 else 'exact'
+                method='barnes_hut' if n_samples > 100 else 'exact',
+                verbose=2  # 詳細ログ出力
             )
             
+            print(f"[DimReduction] t-SNE fit_transform開始...", file=sys.stderr)
             coords = tsne.fit_transform(X_scaled)
+            print(f"[DimReduction] t-SNE完了 ({time.time() - start_time:.2f}秒)", file=sys.stderr)
             return coords, None
         
         elif method == 'umap':
             # UMAP（オプション）
+            print(f"[DimReduction] UMAP実行中...", file=sys.stderr)
             try:
                 import umap
                 
@@ -150,18 +167,23 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
                 )
                 
                 coords = reducer.fit_transform(X_scaled)
+                print(f"[DimReduction] UMAP完了 ({time.time() - start_time:.2f}秒)", file=sys.stderr)
                 return coords, None
             
             except ImportError:
                 warnings.warn("UMAP requires 'umap-learn' package. Install with: pip install umap-learn")
+                print(f"[DimReduction] エラー: umap-learnがインストールされていません", file=sys.stderr)
                 return None
         
         else:
             warnings.warn(f"Unknown method: {method}")
+            print(f"[DimReduction] エラー: 不明な手法 {method}", file=sys.stderr)
             return None
     
     except Exception as e:
-        warnings.warn(f"{method.upper()} error: {str(e)}")
+        print(f"[DimReduction] エラー: {str(e)}", file=sys.stderr)
+        import traceback
+        print(traceback.format_exc(), file=sys.stderr)
         return None
 
 
