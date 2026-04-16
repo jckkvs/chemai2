@@ -23,8 +23,8 @@ def render_smiles_integrated_panel(state: dict[str, Any]) -> None:
 
     with ui.tabs().classes("full-width").props("dense active-color=cyan indicator-color=cyan text-color=grey") as inner_tabs:
         tab_gen = ui.tab("gen", label="🔬 特徴量生成", icon="auto_fix_normal")
-        tab_sets = ui.tab("sets", label="📦 特徴量セット管理", icon="table_chart")
-        tab_cons = ui.tab("cons", label="📐 制約設定", icon="straighten")
+        tab_sets = ui.tab("sets", label="📦 特徴量セット管理", icon="folder_open")
+        tab_cons = ui.tab("cons", label="📐 制約設定", icon="science")
 
     with ui.tab_panels(inner_tabs, value="gen").classes("full-width"):
         

@@ -24,14 +24,56 @@ from nicegui import ui, app
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────
-# アプリ起動時: 設定を環境変数に適用
-# ─────────────────────────────────────────────
 try:
     from backend.config.settings_manager import SettingsManager as _SM
     _SM.get_instance().apply_to_environment()
 except Exception as _e:
     logger.warning("設定の自動適用に失敗しました: %s", _e)
+
+# ─────────────────────────────────────────────
+# グローバル状態管理 (AppState)
+# ─────────────────────────────────────────────
+class AppState:
+    """アプリケーション状態を管理するクラス。"""
+    def __init__(self):
+        # UIモード
+        self.user_mode = "beginner"
+        # データ
+        self.df = None
+        self.filename = None
+        # 列役割
+        self.target_col = None
+        self.smiles_col = None
+        self.task_type = "regression"
+        self.exclude_cols = []
+        self.group_col = None
+        self.time_col = None
+        self.weight_col = None
+        # 特徴量計算
+        self.precalc_df = None
+        self.precalc_done = False
+        self.selected_descriptors = []
+        self.calc_summary = {}
+        self._applied_recommendation = None
+        # 実行フラグ
+        self.analysis_running = False
+        self.analysis_complete = False
+        self.ml_result = None
+        self.automl_result = None
+        # 制約
+        self.monotonicity_constraints = {
+            "_global": {"default_direction": "none", "default_strength": 0.5},
+            "_by_feature": {},
+            "_by_set": {}
+        }
+        # 回避的なキー
+        self.available_categories = []
+        self.metric_evaluator = None
+        self.metric_cache = {}
+
+# 単一ユーザー環境用のグローバルインスタンス (マルチユーザー時は app.storage.user を利用)
+state_obj = AppState()
+state = state_obj.__dict__ 
 
 # ─────────────────────────────────────────────
 # プレミアム ダークテーマ CSS

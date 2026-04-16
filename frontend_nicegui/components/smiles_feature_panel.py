@@ -95,45 +95,8 @@ def render_smiles_feature_panel(state: dict[str, Any]) -> None:
     from frontend_nicegui.components.descriptor_plugins_ui import render_descriptor_plugins
     render_descriptor_plugins(state)
 
-    # ── 3. 進化した化学的ドメイン知見設定 (User Request) ──
-    with ui.card().classes("full-width glass-card q-mt-md p-4"):
-        with ui.row().classes("items-center q-gutter-sm mb-2"):
-            ui.icon("psychology", color="pink", size="sm")
-            ui.label("🧪 化学的ドメイン知見の自動適用").classes("text-md font-bold text-white")
-            ui.switch(value=state.get("auto_domain_knowledge", True), 
-                      on_change=lambda e: state.update({"auto_domain_knowledge": e.value})).props("dense")
-        
-        ui.label("生成された記述子（MW, LogP等）に対し、物理化学的妥当性を考慮した単調性制約を自動的に提案・適用します。").classes("text-caption text-grey-5")
-        
-        if state.get("auto_domain_knowledge", True):
-            with ui.row().classes("q-gutter-sm q-mt-sm"):
-                ui.chip("MW ↘", color="pink-9", text_color="white").tooltip("分子量が増えると水溶性は下がる傾向 (Solubility予測時)")
-                ui.chip("LogP ↘", color="pink-9", text_color="white").tooltip("脂溶性が高いと水溶性は下がる")
-                ui.chip("TPSA ↗", color="pink-9", text_color="white").tooltip("極性面積が大きいと水溶性は上がる")
-            
-            def _apply_suggestions():
-                applied_count = 0
-                all_feature_cols = all_cols
-                if state.get("precalc_df") is not None:
-                    all_feature_cols = list(state["precalc_df"].columns)
-                
-                for col in all_feature_cols:
-                    for s_key, info in CHEMICAL_RATIONALES.items():
-                        if s_key.lower() in col.lower() and info["suggest"] != 0:
-                            _set_meta(state, col, "monotonic", info["suggest"])
-                            applied_count += 1
-                            break
-                ui.notify(f"✅ {applied_count} 個の記述子にドメイン知見に基づく制約を提案しました。", type="positive")
-                if state.get("_refresh_tabs"): state["_refresh_tabs"]()
-
-            ui.button("✨ 推奨制約を今すぐ適用", on_click=_apply_suggestions).props("outline no-caps size=sm color=pink").classes("q-mt-sm")
-
-    # ── 4. 📐 詳細な制約設定への案内 ──
-    with ui.card().classes("full-width glass-card q-mt-md p-4"):
-        with ui.row().classes("items-center q-gutter-sm"):
-            ui.icon("straighten", color="cyan", size="sm")
-            ui.label("📐 詳細な制約設定は「制約設定」タブから可能です").classes("text-md font-bold text-white")
-            ui.button("制約設定へ", on_click=lambda: ui.notify("上の「制約設定」サブタブを選択してください")).props("flat dense color=cyan size=sm")
+    # ── 3. (REMOVED) 化学的ドメイン知見設定 ──
+    # ここに配置されていたドメイン知見設定は、論理的整合性のために「制約設定」タブへ移動されました。
 
     # ── 5. 計算結果サマリー ──
     if state.get("precalc_done") and state.get("precalc_df") is not None:
