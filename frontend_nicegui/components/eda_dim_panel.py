@@ -144,11 +144,27 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
     log_area.text = f"🔍 Data Shape: {n_samples} samples × {n_features} features"
     print(f"[DimReduction DEBUG] {method} START. Shape: {X_for_shape.shape}")
 
-    # t-SNE特有のチェック
-    if method == 't-SNE' and perplexity is not None:
-        if perplexity >= n_samples:
-            ui.notify(f"Perplexity ({perplexity}) はサンプル数 ({n_samples}) 未満である必要があります。", type="negative")
-            return
+    # ──────────────────────────────────────────
+    # 🔧 t-SNE perplexity の自動調整ロジック
+    # ──────────────────────────────────────────
+    tsne_params = {}
+    if method == 't-SNE':
+        default_perplexity = perplexity if perplexity is not None else 5.0
+        # sklearn推奨: perplexity < n_samples. 安全のため n_samples/2 を上限とする
+        max_perplexity = max(1.0, n_samples / 2 - 1e-5)
+        safe_perplexity = min(default_perplexity, max_perplexity)
+        # 下限値を1.0に固定
+        safe_perplexity = max(1.0, safe_perplexity)
+        
+        tsne_params['perplexity'] = safe_perplexity
+        if learning_rate is not None:
+            tsne_params['learning_rate'] = learning_rate
+            
+        # UIにフィードバック
+        if abs(safe_perplexity - default_perplexity) > 1e-4:
+            log_area.text += f"\n⚠️ perplexity 自動調整: {default_perplexity} → {safe_perplexity:.2f} (n_samples={n_samples})"
+            print(f"[DimReduction] t-SNE perplexity adjusted: {default_perplexity} → {safe_perplexity:.2f}")
+    # ──────────────────────────────────────────
 
     def on_finished(result_df, explained):
         progress_bar.value = 1.0
@@ -174,13 +190,13 @@ def _run_dim_reduction_with_progress(df: pd.DataFrame, features: list, method: s
             from backend.data.eda_core import compute_dimensionality_reduction
             X = df[features].dropna()
             
-            # パラメータを渡す
-            params = {}
-            if method == 't-SNE':
-                if perplexity is not None: params['perplexity'] = perplexity
-                if learning_rate is not None: params['learning_rate'] = learning_rate
-
-            coords, explained = compute_dimensionality_reduction(X.values, method=method.lower(), n_components=n_components, **params)
+            # 自動調整済みのパラメータを使用
+            coords, explained = compute_dimensionality_reduction(
+                X.values, 
+                method=method.lower(), 
+                n_components=n_components, 
+                **tsne_params
+            )
             
             # 結果を結合
             coord_cols = [f"{method}_dim{i+1}" for i in range(n_components)]

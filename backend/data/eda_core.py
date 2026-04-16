@@ -114,38 +114,32 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
             return coords, explained_var
         
         elif method == 'tsne':
-            # t-SNE
-            print(f"[DimReduction Backend] t-SNE Fitting開始...", flush=True)
-            # Perplexity の自動調整（データ数に応じて制限）
+            print(f"[DimReduction Backend] t-SNE fitting...", flush=True)
+            
+            # perplexity の最終チェック（フロントエンドでも調整済みだが念のため）
             perplexity = kwargs.get('perplexity', 5.0)
-            
-            # perplexity は n_samples - 1 より小さくなければならない
-            max_perplexity = max(1.0, n_samples - 1 - 1e-5)
+            # sklearnのTSNEは perplexity < n_samples である必要がある。
+            # より安全な目安として n_samples / 2 を上限とする。
+            max_perplexity = max(1.0, n_samples / 2 - 1e-5)
             safe_perplexity = min(perplexity, max_perplexity)
+            # 下限値を1.0に固定
+            safe_perplexity = max(1.0, safe_perplexity)
             
-            # データ数が極端に少ない場合は早期リターン
-            if n_samples < 2:
-                warnings.warn("t-SNE: データが少なすぎます（2サンプル以上必要）")
-                return None
-            
-            # 学習率の設定
-            learning_rate = kwargs.get('learning_rate', 'auto')
-            
-            print(f"[DimReduction Backend] t-SNE Params: perplexity={safe_perplexity}, learning_rate={learning_rate}", flush=True)
+            print(f"[DimReduction Backend] t-SNE params: perplexity={safe_perplexity:.4f}, n_samples={n_samples}", flush=True)
             
             tsne = TSNE(
                 n_components=min(n_components, n_samples - 1),
                 perplexity=safe_perplexity,
-                learning_rate=learning_rate,
+                learning_rate=kwargs.get('learning_rate', 'auto'),
                 random_state=42,
                 n_iter=1000,
                 init='pca',
                 method='barnes_hut' if n_samples > 100 else 'exact',
-                verbose=2  # 詳細ログ出力
+                verbose=0
             )
             
             coords = tsne.fit_transform(X_scaled)
-            print(f"[DimReduction Backend] t-SNE Fitting完了 ({time.time() - start_time:.2f}秒)", flush=True)
+            print(f"[DimReduction Backend] t-SNE finished in {time.time() - start_time:.2f}s", flush=True)
             return coords, None
         
         elif method == 'umap':
