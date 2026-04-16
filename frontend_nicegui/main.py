@@ -777,8 +777,8 @@ def main_page():
                     _eda_container.clear()
                     with _eda_container:
                         try:
-                            from frontend_nicegui.components.eda_panel import render_eda_panel
-                            render_eda_panel(state)
+                            from frontend_nicegui.components.eda_tab import render_eda_tab
+                            render_eda_tab(state)
                         except Exception as e:
                             import traceback
                             ui.label("❌ EDAコンポーネントの読込エラー").classes("text-h6 text-red")
