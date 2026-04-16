@@ -35,7 +35,10 @@ TYPE_DETECTOR_OUTLIER_IQR_FACTOR: float = 1.5   # IQR外れ値判定係数
 # ============================================================
 AUTOML_CV_FOLDS: int = 5
 AUTOML_TIMEOUT_SECONDS: int = 600               # 最大学習時間(秒)
-AUTOML_N_JOBS: int = -1                         # 並列数(-1=全コア)
+# Windows環境での並列処理制約
+IS_WINDOWS: bool = (os.name == "nt")
+
+AUTOML_N_JOBS: int = 1 if IS_WINDOWS else -1  # Windowsでは1（直列）, 他は全コア
 
 # ============================================================
 # SHAP 設定

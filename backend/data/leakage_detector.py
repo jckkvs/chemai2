@@ -25,6 +25,7 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
+from backend.utils.config import AUTOML_N_JOBS
 
 logger = logging.getLogger(__name__)
 
@@ -154,14 +155,14 @@ def compute_rf_proximity(
             rf = RandomForestRegressor(
                 n_estimators=n_estimators,
                 random_state=random_state,
-                n_jobs=-1,
+                n_jobs=AUTOML_N_JOBS,
                 max_features="sqrt",
             )
         else:
             rf = RandomForestClassifier(
                 n_estimators=n_estimators,
                 random_state=random_state,
-                n_jobs=-1,
+                n_jobs=AUTOML_N_JOBS,
                 max_features="sqrt",
             )
         rf.fit(X, y)
@@ -176,7 +177,7 @@ def compute_rf_proximity(
         rf = RandomForestClassifier(
             n_estimators=n_estimators,
             random_state=random_state,
-            n_jobs=-1,
+            n_jobs=AUTOML_N_JOBS,
         )
         rf.fit(X_combined, y_combined)
 

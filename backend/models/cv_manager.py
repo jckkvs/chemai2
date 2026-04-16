@@ -34,7 +34,7 @@ from sklearn.model_selection import (
     cross_validate,
 )
 
-from backend.utils.config import RANDOM_STATE
+from backend.utils.config import RANDOM_STATE, AUTOML_N_JOBS
 
 logger = logging.getLogger(__name__)
 
@@ -472,7 +472,7 @@ def run_cross_validation(
     cv_config: CVConfig,
     scoring: str | list[str] | dict[str, Any],
     groups: np.ndarray | pd.Series | None = None,
-    n_jobs: int = -1,
+    n_jobs: int = AUTOML_N_JOBS,
     return_train_score: bool = True,
     fit_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:

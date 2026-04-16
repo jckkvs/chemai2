@@ -45,7 +45,7 @@ def _execute_prediction_pipeline(
     from sklearn.model_selection import cross_val_predict
     try:
         oof_preds = cross_val_predict(
-            estimator, X_train, y_arr, cv=cv_obj, n_jobs=1,
+            estimator, X_train, y_arr, cv=cv_obj, n_jobs=AUTOML_N_JOBS,
             method="predict"
         )
     except Exception as e:
@@ -75,7 +75,7 @@ from backend.models.factory import get_model, get_default_automl_models
 from backend.models.cv_manager import CVConfig, run_cross_validation
 from backend.chem.rdkit_adapter import RDKitAdapter
 from backend.chem.smiles_transformer import SmilesDescriptorTransformer
-from backend.utils.config import RANDOM_STATE, AUTOML_CV_FOLDS
+from backend.utils.config import RANDOM_STATE, AUTOML_CV_FOLDS, AUTOML_N_JOBS
 
 logger = logging.getLogger(__name__)
 
@@ -353,6 +353,11 @@ class AutoMLEngine:
                     )
                     cv_key = "stratified_kfold" if task == "classification" else "kfold"
                     groups = None
+        
+        # サンプル数が少ない場合は cv_folds を強制的に調整
+        n_samples_final = len(df)
+        if n_samples_final < self.cv_folds:
+            self.cv_folds = max(2, n_samples_final)
 
         model_scores: Dict[str, float] = {}
         model_details: Dict[str, Dict[str, Any]] = {}
@@ -445,7 +450,7 @@ class AutoMLEngine:
                     pipeline, X_for_cv, y, cv_config,
                     scoring=scoring,
                     groups=groups,
-                    n_jobs=1,
+                    n_jobs=AUTOML_N_JOBS,
                 )
                 score_key = f"test_{scoring}"
                 if score_key in result:
@@ -530,7 +535,7 @@ class AutoMLEngine:
             preproc_report = PreprocessingReport()
             preproc_report.original_features_count = X_for_eda.shape[1]
             if preprocess_cfg:
-                preproc_report.scaler_used = preprocess_cfg.scaler
+                preproc_report.scaler_used = getattr(preprocess_cfg, "numeric_scaler", "auto")
                 
             # SMILES変換ありの場合: best_pipeline は [smiles_vars, main_pipe] のネスト構造。
             # best_pipeline[:-1] だと smiles_vars のみになり、変換後DFを入力すると壊れる。
@@ -583,7 +588,7 @@ class AutoMLEngine:
             # 1. CV (OOF) 予測
             oof_preds = cross_val_predict(
                 best_pipeline, X_for_eda if _smiles_transformer_for_cv is None else X, y,
-                cv=_cv_splitter, method=_cv_method, n_jobs=1,
+                cv=_cv_splitter, method=_cv_method, n_jobs=AUTOML_N_JOBS,
                 groups=groups,
             )
 
@@ -829,8 +834,8 @@ class AutoMLEngine:
         warnings: list[str],
     ) -> None:
         """データ品質の基本チェックを実施して警告リストに追記する。"""
-        if len(df) < 10:
-            raise ValueError(f"データが少なすぎます（{len(df)}行）。最低10行必要です。")
+        if len(df) < 2:
+            raise ValueError(f"データが少なすぎます（{len(df)}行）。最低2行必要です。")
         if target_col not in df.columns:
             raise ValueError(f"目的変数列 '{target_col}' が存在しません。")
 

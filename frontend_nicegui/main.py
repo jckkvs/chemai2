@@ -369,8 +369,8 @@ def _preflight_check(state: dict) -> list[str]:
 
     # サンプル数チェック
     n_valid = df[target_col].notna().sum()
-    if n_valid < 10:
-        issues.append(f"⚠️ 有効サンプル数が {n_valid}件と少なすぎます（最低10件必要）")
+    if n_valid < 2:
+        issues.append(f"❌ 有効サンプル数が {n_valid}件と少なすぎます（最低2件必要）")
 
     # 定数目的変数チェック
     if df[target_col].nunique() <= 1:
@@ -1111,12 +1111,14 @@ def help_descriptors_page():
 # エントリーポイント
 # ─────────────────────────────────────────────
 if __name__ in {"__main__", "__mp_main__"}:
+    from backend.utils.config import IS_WINDOWS
     ui.run(
         title="ChemAI Nexus",
         dark=True,
         port=8085,
         reload=False,
+        workers=1,  # Windowsでの安定性のためにワーカーを1に制限
         storage_secret="chemai-v3-clean",
-        reconnect_timeout=120,  # 記述子計算などの重い処理中の再接続タイムアウトを120秒に延長
+        reconnect_timeout=120,
     )
 

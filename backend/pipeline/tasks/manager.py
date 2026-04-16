@@ -8,7 +8,8 @@ backend/pipeline/tasks/manager.py
 
 import uuid
 from typing import Callable, Dict, Any, Optional
-from concurrent.futures import ProcessPoolExecutor, Future
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Future
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,13 @@ class TaskManager:
         if self._initialized:
             return
             
-        self.executor = ProcessPoolExecutor(max_workers=max_workers)
+        # Windowsではプロセス再起動（spawn）によるオーバーヘッドとPickleエラーを防ぐため ThreadPool を使用
+        from backend.utils.config import IS_WINDOWS
+        if IS_WINDOWS:
+            logger.info("Windows detected: Using ThreadPoolExecutor instead of ProcessPoolExecutor.")
+            self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        else:
+            self.executor = ProcessPoolExecutor(max_workers=max_workers)
         self.tasks: Dict[str, Dict[str, Any]] = {}
         self._initialized = True
         logger.info(f"TaskManager initialized with {max_workers} workers.")

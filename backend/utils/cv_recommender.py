@@ -207,9 +207,16 @@ def recommend_cv_strategy(
     detected["size_assessment"] = size_result
 
     if size_result["is_small"]:
-        logger.info(f"[CV推薦] 小サンプルデータ: {size_result['reason']}")
-
-        if n_samples <= 20:
+        if n_samples < 5:
+            return CVRecommendation(
+                recommended_cv="kfold",
+                confidence=0.80,
+                reason=f"📏 サンプル数({n_samples}件)に合わせて 2-fold CV を実行します。",
+                alternative_cvs=["loo"],
+                detected_features=detected,
+                recommended_params={"n_splits": 2},
+            )
+        elif n_samples <= 20:
             return CVRecommendation(
                 recommended_cv="loo",
                 confidence=0.85,
@@ -548,11 +555,17 @@ def _assess_sample_size(
         "n_per_feature": round(n_per_feature, 2),
     }
 
-    if n_samples <= 20:
+    if n_samples < 2:
+        result.update({
+            "is_small": True,
+            "category": "too_small",
+            "reason": f"サンプル数({n_samples}件)が不足しています",
+        })
+    elif n_samples <= 10:
         result.update({
             "is_small": True,
             "category": "very_small",
-            "reason": f"サンプル数が{n_samples}件と非常に少ない",
+            "reason": f"サンプル数が{n_samples}件です",
         })
     elif n_samples <= 50:
         result.update({
@@ -587,10 +600,11 @@ def _recommend_n_splits(n_samples: int) -> int:
         return 5
     elif n_samples >= 200:
         return 5
-    elif n_samples >= 50:
+    elif n_samples >= 10:
         return 3
     else:
-        return min(n_samples, 2)
+        # 3-9件の場合は 2-split (1個削ると学習データが少なすぎるため)
+        return 2
 
 
 def _recommend_ts_splits(n_samples: int) -> int:

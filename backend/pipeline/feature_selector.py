@@ -39,7 +39,7 @@ from sklearn.feature_selection import (
 )
 from sklearn.linear_model import LassoCV, RidgeCV
 
-from backend.utils.config import RANDOM_STATE
+from backend.utils.config import RANDOM_STATE, AUTOML_N_JOBS
 from backend.utils.optional_import import safe_import
 
 logger = logging.getLogger(__name__)
@@ -202,7 +202,8 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
         from sklearn.preprocessing import StandardScaler
         X_fit = StandardScaler().fit_transform(X_arr)
 
-        selector = self._build_selector(cfg, X_fit, y_arr)
+        n_samples = X_fit.shape[0]
+        selector = self._build_selector(cfg, X_fit, y_arr, n_samples=n_samples)
 
         if selector is None:
             # フォールバック: SelectFromModel(RF)
@@ -305,15 +306,24 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
         cfg: FeatureSelectorConfig,
         X: np.ndarray,
         y: np.ndarray | None,
+        n_samples: int | None = None,
     ) -> Any:
-        """メソッド名に応じてセレクタを返す。利用不可の場合は None。"""
+        """手法に応じて sklearn のセレクタを構築する。"""
+        # 小サンプル時の強制的な max_features 調整
+        if n_samples is not None and n_samples < 10:
+            current_max = cfg.max_features if cfg.max_features is not None else X.shape[1]
+            adjusted_max = max(1, min(current_max, n_samples - 2))
+            if cfg.method in ("lasso", "ridge", "rfr", "rfc", "xgb", "select_from_model"):
+                cfg.max_features = adjusted_max
+            elif cfg.method == "select_kbest":
+                 if isinstance(cfg.k, int) and cfg.k > adjusted_max:
+                     cfg.k = adjusted_max
+
         method = cfg.method
-
         if method == "lasso":
-            return self._build_sfm_lasso(cfg)
-
-        elif method == "ridge":
-            return self._build_sfm_ridge(cfg)
+            return self._build_sfm_lasso(cfg, n_samples=n_samples)
+        if method == "ridge":
+            return self._build_sfm_ridge(cfg, n_samples=n_samples)
 
         elif method in ("rfr", "rfc"):
             return self._build_sfm_rf(cfg)
@@ -350,14 +360,20 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
     # SelectFromModel ファミリー
     # ----------------------------------------------------------
 
-    def _build_sfm_lasso(self, cfg: FeatureSelectorConfig) -> SelectFromModel:
-        estimator = LassoCV(cv=5, random_state=RANDOM_STATE, n_jobs=-1)
+    def _build_sfm_lasso(self, cfg: FeatureSelectorConfig, n_samples: int | None = None) -> SelectFromModel:
+        cv = 5
+        if n_samples is not None and n_samples < 10:
+            cv = max(2, n_samples // 2)
+        estimator = LassoCV(cv=cv, random_state=RANDOM_STATE, n_jobs=AUTOML_N_JOBS)
         return SelectFromModel(
             estimator, threshold=cfg.threshold, max_features=cfg.max_features
         )
 
-    def _build_sfm_ridge(self, cfg: FeatureSelectorConfig) -> SelectFromModel:
-        estimator = RidgeCV(cv=5)
+    def _build_sfm_ridge(self, cfg: FeatureSelectorConfig, n_samples: int | None = None) -> SelectFromModel:
+        cv = 5
+        if n_samples is not None and n_samples < 10:
+            cv = max(2, n_samples // 2)
+        estimator = RidgeCV(cv=cv)
         return SelectFromModel(
             estimator, threshold=cfg.threshold, max_features=cfg.max_features
         )
@@ -365,11 +381,11 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
     def _build_sfm_rf(self, cfg: FeatureSelectorConfig) -> SelectFromModel:
         if cfg.task == "classification":
             estimator: Any = RandomForestClassifier(
-                n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1
+                n_estimators=100, random_state=RANDOM_STATE, n_jobs=AUTOML_N_JOBS
             )
         else:
             estimator = RandomForestRegressor(
-                n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1
+                n_estimators=100, random_state=RANDOM_STATE, n_jobs=AUTOML_N_JOBS
             )
         return SelectFromModel(
             estimator, threshold=cfg.threshold, max_features=cfg.max_features
@@ -474,13 +490,13 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
             base_rf: Any = RandomForestClassifier(
                 n_estimators=cfg.boruta_n_estimators,
                 random_state=RANDOM_STATE,
-                n_jobs=-1,
+                n_jobs=AUTOML_N_JOBS,
             )
         else:
             base_rf = RandomForestRegressor(
                 n_estimators=cfg.boruta_n_estimators,
                 random_state=RANDOM_STATE,
-                n_jobs=-1,
+                n_jobs=AUTOML_N_JOBS,
             )
         return BorutaPy(
             estimator=base_rf,
@@ -515,7 +531,7 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
                 scoring=scoring,
                 population_size=cfg.genetic_n_population,
                 generations=cfg.genetic_n_generations,
-                n_jobs=-1,
+                n_jobs=AUTOML_N_JOBS,
             )
         except Exception as e:
             logger.warning(f"GeneticSelection の構築失敗: {e} → 利用不可")
@@ -576,10 +592,10 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
         """タスクに応じたデフォルト RF を返す。"""
         if cfg.task == "classification":
             return RandomForestClassifier(
-                n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1
+                n_estimators=100, random_state=RANDOM_STATE, n_jobs=AUTOML_N_JOBS
             )
         return RandomForestRegressor(
-            n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1
+            n_estimators=100, random_state=RANDOM_STATE, n_jobs=AUTOML_N_JOBS
         )
 
 

@@ -41,7 +41,7 @@ from sklearn.naive_bayes import GaussianNB, BernoulliNB
 from sklearn.neural_network import MLPRegressor, MLPClassifier
 from sklearn.cross_decomposition import PLSRegression
 
-from backend.utils.config import RANDOM_STATE
+from backend.utils.config import RANDOM_STATE, AUTOML_N_JOBS
 from backend.utils.optional_import import safe_import, is_available
 
 logger = logging.getLogger(__name__)
@@ -423,14 +423,14 @@ _REGRESSION_REGISTRY: dict[str, dict[str, Any]] = {
     "rf": {
         "name": "Random Forest",
         "class": RandomForestRegressor,
-        "default_params": {"n_estimators": 100, "random_state": RANDOM_STATE, "n_jobs": -1},
+        "default_params": {"n_estimators": 100, "random_state": RANDOM_STATE, "n_jobs": AUTOML_N_JOBS},
         "available": True,
         "tags": ["ensemble", "tree"],
     },
     "et": {
         "name": "Extra Trees",
         "class": ExtraTreesRegressor,
-        "default_params": {"n_estimators": 100, "random_state": RANDOM_STATE, "n_jobs": -1},
+        "default_params": {"n_estimators": 100, "random_state": RANDOM_STATE, "n_jobs": AUTOML_N_JOBS},
         "available": True,
         "tags": ["ensemble", "tree"],
     },
@@ -458,7 +458,7 @@ _REGRESSION_REGISTRY: dict[str, dict[str, Any]] = {
     "bagging": {
         "name": "Bagging Regressor",
         "class": BaggingRegressor,
-        "default_params": {"n_estimators": 10, "random_state": RANDOM_STATE, "n_jobs": -1},
+        "default_params": {"n_estimators": 10, "random_state": RANDOM_STATE, "n_jobs": AUTOML_N_JOBS},
         "available": True,
         "tags": ["ensemble"],
     },
@@ -674,14 +674,14 @@ _CLASSIFICATION_REGISTRY: dict[str, dict[str, Any]] = {
     "rf_c": {
         "name": "Random Forest",
         "class": RandomForestClassifier,
-        "default_params": {"n_estimators": 100, "random_state": RANDOM_STATE, "n_jobs": -1},
+        "default_params": {"n_estimators": 100, "random_state": RANDOM_STATE, "n_jobs": AUTOML_N_JOBS},
         "available": True,
         "tags": ["ensemble", "tree"],
     },
     "et_c": {
         "name": "Extra Trees",
         "class": ExtraTreesClassifier,
-        "default_params": {"n_estimators": 100, "random_state": RANDOM_STATE, "n_jobs": -1},
+        "default_params": {"n_estimators": 100, "random_state": RANDOM_STATE, "n_jobs": AUTOML_N_JOBS},
         "available": True,
         "tags": ["ensemble", "tree"],
     },
@@ -709,7 +709,7 @@ _CLASSIFICATION_REGISTRY: dict[str, dict[str, Any]] = {
     "bagging_c": {
         "name": "Bagging Classifier",
         "class": BaggingClassifier,
-        "default_params": {"n_estimators": 10, "random_state": RANDOM_STATE, "n_jobs": -1},
+        "default_params": {"n_estimators": 10, "random_state": RANDOM_STATE, "n_jobs": AUTOML_N_JOBS},
         "available": True,
         "tags": ["ensemble"],
     },
