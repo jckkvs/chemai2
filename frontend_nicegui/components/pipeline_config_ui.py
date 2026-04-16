@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 from nicegui import ui
-from frontend_nicegui.components.monotonicity_config import render_monotonicity_config
+from frontend_nicegui.components.monotonicity_constraint_panel import render_monotonicity_constraint_panel
 
 
 # ═══════════════════════════════════════════════════════════
@@ -910,8 +910,8 @@ def render_pipeline_config(state: dict) -> None:
 
     _render_estimator_selector()
 
-    from frontend_nicegui.components.monotonicity_config import render_monotonicity_config
-    render_monotonicity_config(state)
+    from frontend_nicegui.components.monotonicity_constraint_panel import render_monotonicity_constraint_panel
+    render_monotonicity_constraint_panel(state)
 
     # ═══════════════════════════════════════════════════════
     # 🔧 前処理設定（折りたたみ・コンパクト・目立たない）

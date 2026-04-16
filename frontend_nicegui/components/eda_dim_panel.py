@@ -1,182 +1,265 @@
 """
-frontend_nicegui/components/eda_dim_panel.py
-【プレミアム版】次元削減パネル
-- t-SNE / PCA / UMAP 対応
-- 2D / 3D 可視化サポート
-- 手動特徴量選択・パラメータ調整機能
+EDA - 次元削減パネル
 """
-import logging
 import pandas as pd
 import numpy as np
 from nicegui import ui
 import plotly.graph_objects as go
-from typing import Dict, Any, Optional, List
-
+from typing import Dict, Any, Optional
 from backend.data.eda_core import compute_dimensionality_reduction
 
-logger = logging.getLogger(__name__)
 
-@ui.refreshable
-def dim_reduction_panel(df: pd.DataFrame, target_col: Optional[str] = None, state: Optional[dict] = None, scale: bool = True):
-    """次元削減用統合パネル"""
-    state = state or {}
+def dim_reduction_panel(state: dict):
+    """次元削減パネル（t-SNE, PCA, UMAP）"""
     
-    with ui.column().classes("w-full q-gutter-md"):
-        # ヘッダー領域
-        with ui.row().classes("w-full items-center justify-between"):
-            with ui.column():
-                ui.label("📊 次元削減・高次元可視化").classes("text-h6 text-bold text-cyan")
-                ui.label("特徴量を2次元または3次元に圧縮して、データの構造を可視化します。").classes("text-caption text-grey")
-
-        # 数値列の抽出
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        if len(numeric_cols) < 2:
-            ui.label("⚠️ 次元削減には最低2つの数値列が必要です").classes("text-amber q-pa-md")
-            return
-
-        # 設定カード
-        with ui.card().classes("w-full p-4 glass-card border-cyan/20"):
-            with ui.row().classes("w-full q-gutter-sm items-end"):
-                method = ui.select(
-                    options=["PCA", "t-SNE", "UMAP"], 
-                    label="手法", value="PCA"
-                ).classes("w-32")
-                
-                n_comp = ui.select(
-                    options=[2, 3], label="次元", value=2
-                ).classes("w-20")
-                
-                features = ui.select(
-                    options=numeric_cols, 
-                    label="使用する特徴量", 
-                    multiple=True,
-                    value=numeric_cols[:min(12, len(numeric_cols))]
-                ).classes("flex-grow").props("use-chips")
-
-                with ui.row().classes("items-center mb-2"):
-                    scale_toggle = ui.switch("標準化", value=scale).classes("mr-4")
-
-                with ui.row().classes("items-center mb-2").bind_visibility_from(method, 'value', value='t-SNE'):
-                    perplexity = ui.number("Perplexity", value=30, min=1).classes("w-24")
-                
-                ui.button("実行", icon="play_arrow", 
-                          on_click=lambda: _run_and_refresh(
-                              df, features.value, method.value, n_comp.value, 
-                              state, perplexity.value if method.value == 't-SNE' else None,
-                              scale_toggle.value
-                          )).props("unelevated color=cyan")
-
-        # 結果表示領域
-        result_key = "_dim_res"
-        if result_key in state:
-            _render_results(state[result_key])
-        else:
-            with ui.column().classes("w-full items-center q-pa-xl opacity-30"):
-                ui.icon("insights", size="64px")
-                ui.label("「実行」ボタンをクリックして分析を開始してください")
-
-def _run_and_refresh(df, features, method, n_components, state, perplexity=None, scale=True):
-    if not features or len(features) < 2:
-        ui.notify("2つ以上の特徴量を選択してください", type="warning")
+    ui.label("📊 次元削減・可視化").classes("text-2xl font-bold q-mb-md")
+    
+    ui.markdown("""
+    高次元データを2次元または3次元に圧縮して可視化します。
+    データのクラスタリングや外れ値の検出に役立ちます。
+    """).classes("text-body2 text-grey-7 q-mb-md")
+    
+    # データが読み込まれているか確認
+    if "df" not in state or state["df"] is None:
+        ui.warning("先にデータを読み込んでください")
         return
+    
+    df = state["df"]
+    
+    # 数値列のみを抽出
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    
+    if len(numeric_cols) < 2:
+        ui.error("次元削減には2つ以上の数値列が必要です")
+        return
+    
+    # 設定UI
+    with ui.card().classes("w-full q-mb-md"):
+        ui.label("⚙️ 設定").classes("text-lg font-semibold q-mb-sm")
+        
+        with ui.row().classes("w-full q-gutter-md"):
+            # 手法選択
+            method = ui.select(
+                options=["PCA", "t-SNE", "UMAP"],
+                label="次元削減手法",
+                value="PCA"
+            ).classes("w-48")
+            
+            # 次元数
+            n_components = ui.select(
+                options=[2, 3],
+                label="出力次元数",
+                value=2
+            ).classes("w-32")
+            
+            # 使用する特徴量
+            selected_features = ui.select(
+                options=numeric_cols,
+                label="使用する特徴量（複数選択可）",
+                multiple=True,
+                value=numeric_cols[:min(10, len(numeric_cols))]
+            ).classes("flex-grow")
+            
+            # t-SNE用パラメータ
+            with ui.column().classes("q-gutter-sm"):
+                perplexity = ui.number(
+                    label="t-SNE Perplexity",
+                    value=5.0,
+                    min=1.0,
+                    max=50.0
+                ).classes("w-48").bind_visibility_from(method, 'value', lambda v: v == 't-SNE')
+                
+                learning_rate = ui.number(
+                    label="学習率",
+                    value=200.0,
+                    min=10.0,
+                    max=1000.0
+                ).classes("w-48").bind_visibility_from(method, 'value', lambda v: v == 't-SNE')
+        
+        # 実行ボタン
+        ui.button(" 次元削減を実行", on_click=lambda: _run_dim_reduction(
+            df,
+            selected_features.value,
+            method.value,
+            n_components.value,
+            perplexity.value if method.value == 't-SNE' else None,
+            learning_rate.value if method.value == 't-SNE' else None,
+            state
+        )).props("unelevated color=primary").classes("q-mt-md")
+    
+    # 結果表示領域（キャッシュから復元）
+    if "dim_reduction_results" in state:
+        _render_multiple_results(state["dim_reduction_results"])
 
-    # 計算中表示
-    loading = ui.notification("計算中...", spinner=True, timeout=None)
+
+def _run_dim_reduction(df: pd.DataFrame, features: list, method: str, 
+                       n_components: int, perplexity: Optional[float] = None,
+                       learning_rate: Optional[float] = None, state: dict = None):
+    """次元削減を実行"""
+    
+    if not features or len(features) < 2:
+        ui.error("2つ以上の特徴量を選択してください")
+        return
+    
+    # 特徴量データを準備（欠損値除去）
+    X = df[features].dropna()
+    
+    if len(X) < 2:
+        ui.error("有効なデータが少なすぎます")
+        return
+    
+    # パラメータ準備
+    params = {}
+    if method == 't-SNE':
+        if perplexity is not None:
+            params['perplexity'] = perplexity
+        if learning_rate is not None:
+            params['learning_rate'] = learning_rate
+    
+    with ui.spinner(size='3em').classes('q-ma-md'):
+        ui.label(f"{method} 計算中...").classes('text-grey')
     
     try:
-        X = df[features].dropna()
-        if X.empty:
-            ui.notify("有効なデータがありません", type="warning")
-            return
-
-        params = {'scale': scale}
-        if perplexity: params['perplexity'] = perplexity
-        
-        # Core演算
-        res = compute_dimensionality_reduction(
-            X.values, method=method.lower(), n_components=n_components, **params
+        # 次元削減実行
+        result = compute_dimensionality_reduction(
+            X.values,
+            method=method.lower(),
+            n_components=n_components,
+            **params
         )
         
-        if res is None:
-            ui.notify(f"{method} の計算に失敗しました", type="negative")
+        if result is None:
+            ui.error("次元削減に失敗しました")
             return
-
-        coords, explained_var = res
         
-        # 結果の保存
-        state["_dim_res"] = {
-            "method": method,
-            "coords": coords,
-            "explained_var": explained_var,
-            "index": X.index.tolist(),
-            "n_components": n_components,
-            "features": features
+        coords, explained_variance = result
+        
+        # 結果をデータフレームに変換
+        coord_cols = [f"{method}_dim{i+1}" for i in range(n_components)]
+        result_df = pd.DataFrame(coords, columns=coord_cols, index=X.index)
+        
+        # 元のデータと結合
+        viz_df = pd.concat([X.reset_index(drop=True), result_df.reset_index(drop=True)], axis=1)
+        
+        # 結果を保存
+        if "dim_reduction_results" not in state:
+            state["dim_reduction_results"] = {}
+        
+        result_key = f"{method}_{n_components}d"
+        state["dim_reduction_results"][result_key] = {
+            'method': method,
+            'n_components': n_components,
+            'data': viz_df,
+            'features': features,
+            'explained_variance': explained_variance
         }
         
-        loading.dismiss()
-        ui.notify(f"{method} 計算完了", type="positive")
-        dim_reduction_panel.refresh()
+        ui.notify(f"{method} を成功させました", color="positive")
+        
+        # 結果を表示
+        _render_multiple_results(state["dim_reduction_results"])
         
     except Exception as e:
-        loading.dismiss()
-        logger.error(f"DimReduction UI Error: {e}")
-        ui.notify(f"エラー: {e}", type="negative")
+        ui.error(f"エラー: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
-def _render_results(res: dict):
-    method = res["method"]
-    n_comp = res["n_components"]
-    coords = np.array(res["coords"])
-    explained_var = res["explained_var"]
+
+def _render_multiple_results(results: Dict[str, Any]):
+    """複数の次元削減結果を表示"""
     
-    with ui.card().classes("w-full q-pa-md bg-slate-900/40 border-slate-700"):
-        ui.label(f"{method} ({n_comp}次元) 可視化結果").classes("text-subtitle2 text-bold q-mb-sm")
-        
-        # Plotly Figure 作成
-        fig = go.Figure()
-        
-        if n_comp == 3:
-            fig.add_trace(go.Scatter3d(
-                x=coords[:, 0], y=coords[:, 1], z=coords[:, 2],
-                mode='markers',
-                marker=dict(size=4, color='cyan', opacity=0.7, line=dict(width=0.5, color='white')),
-                text=res["index"], hoverinfo='text'
-            ))
-            fig.update_layout(
-                scene=dict(xaxis_title="Comp1", yaxis_title="Comp2", zaxis_title="Comp3"),
-                margin=dict(l=0, r=0, b=0, t=0)
+    ui.separator().classes("q-my-md")
+    ui.label("📈 可視化結果").classes("text-xl font-bold q-mb-md")
+    
+    # 結果タブ
+    with ui.tabs().classes("w-full") as tabs:
+        tab_list = []
+        for key, result in results.items():
+            method = result['method']
+            n_comp = result['n_components']
+            tab_list.append(ui.tab(f"{method} ({n_comp}D)"))
+    
+    with ui.tab_panels(tabs, value=tab_list[0]).classes("w-full"):
+        for i, (key, result) in enumerate(results.items()):
+            with ui.tab_panel(tab_list[i]):
+                _render_single_result(result)
+
+
+def _render_single_result(result: Dict[str, Any]):
+    """単一の次元削減結果を表示"""
+    
+    method = result['method']
+    viz_df = result['data']
+    features = result['features']
+    explained_variance = result.get('explained_variance', None)
+    
+    # 説明分散率の表示（PCAの場合）
+    if explained_variance is not None and method == 'PCA':
+        with ui.row().classes("w-full q-gutter-md"):
+            for i, var in enumerate(explained_variance[:2]):
+                ui.label(f"第{i+1}主成分: {var:.2%}").classes("text-sm text-grey-7")
+    
+    # 3Dかどうか判定
+    n_components = len([col for col in viz_df.columns if col.startswith(f"{method}_dim")])
+    is_3d = n_components == 3
+    
+    # Plotlyで可視化
+    fig = _create_scatter_plot(viz_df, method, is_3d)
+    
+    # NiceGUIで表示
+    ui.plotly(fig).classes("w-full")
+    
+    # データテーブル
+    with ui.expansion("📋 データ詳細", icon="table").classes("w-full q-mt-md"):
+        ui.table.from_pandas(viz_df.head(10)).classes("w-full").props("dense")
+
+
+def _create_scatter_plot(df: pd.DataFrame, method: str, is_3d: bool = False) -> go.Figure:
+    """散布図を作成"""
+    
+    dim_cols = [col for col in df.columns if col.startswith(f"{method}_dim")]
+    
+    if is_3d and len(dim_cols) >= 3:
+        fig = go.Figure(data=[go.Scatter3d(
+            x=df[dim_cols[0]],
+            y=df[dim_cols[1]],
+            z=df[dim_cols[2]],
+            mode='markers',
+            marker=dict(
+                size=5,
+                color='blue',
+                opacity=0.8
             )
-        else:
-            fig.add_trace(go.Scatter(
-                x=coords[:, 0], y=coords[:, 1],
-                mode='markers',
-                marker=dict(size=8, color='rgba(0, 188, 212, 0.6)', line=dict(width=1, color='rgba(0, 188, 212, 1)')),
-                text=res["index"], hoverinfo='text'
-            ))
-            fig.update_layout(
-                xaxis_title="Dimension 1", yaxis_title="Dimension 2",
-                hovermode='closest'
-            )
+        )])
         
-        # 共通レイアウト
         fig.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            height=500,
-            margin=dict(l=20, r=20, t=40, b=20)
+            scene=dict(
+                xaxis_title=dim_cols[0],
+                yaxis_title=dim_cols[1],
+                zaxis_title=dim_cols[2]
+            ),
+            title=f"{method} 3D Visualization",
+            margin=dict(l=0, r=0, b=0, t=30)
         )
+    else:
+        fig = go.Figure(data=[go.Scatter(
+            x=df[dim_cols[0]],
+            y=df[dim_cols[1]],
+            mode='markers',
+            marker=dict(
+                size=8,
+                color='blue',
+                opacity=0.6,
+                line=dict(width=1, color='darkblue')
+            )
+        )])
         
-        if explained_var is not None and method == "PCA":
-            var_sum = sum(explained_var[:n_comp])
-            fig.update_layout(title=f"累積寄与率: {var_sum:.1%}")
-
-        ui.plotly(fig).classes("w-full")
-
-        # 詳細情報の拡張
-        with ui.expansion("📊 使用した特徴量と詳細", icon="list").classes("w-full opacity-60"):
-            ui.label(f"特徴量数: {len(res['features'])}").classes("text-caption")
-            ui.label(", ".join(res["features"])).classes("text-caption q-mb-md")
-            if explained_var is not None:
-                ui.label("各主成分の寄与率:").classes("text-caption font-bold")
-                for i, v in enumerate(explained_var):
-                    ui.label(f"PC{i+1}: {v:.4f}").classes("text-caption ml-4")
+        fig.update_layout(
+            xaxis_title=dim_cols[0],
+            yaxis_title=dim_cols[1],
+            title=f"{method} 2D Visualization",
+            showlegend=False,
+            hovermode='closest'
+        )
+    
+    return fig

@@ -253,7 +253,7 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         model_params = model_params or None
 
         # ── 新しい単調性制約システムの反映 ──
-        monotonic_constraints = state.get("feature_constraints", {})
+        monotonic_constraints = state.get("monotonicity_constraints", state.get("feature_constraints", {}))
         
         try:
             from frontend_nicegui.components.column_meta_editor import build_column_meta_dict

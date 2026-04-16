@@ -57,8 +57,8 @@ def render_ml_workflow(state: dict[str, Any]) -> None:
 
         # --- 2. 単調性制約 ---
         with ui.tab_panel(tab_monotonic):
-            from frontend_nicegui.components.monotonicity_config import render_monotonicity_config
-            render_monotonicity_config(state)
+            from frontend_nicegui.components.monotonicity_constraint_panel import render_monotonicity_constraint_panel
+            render_monotonicity_constraint_panel(state)
 
         # --- 3. 解析履歴 ---
         with ui.tab_panel(tab_history):
