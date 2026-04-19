@@ -623,3 +623,145 @@ def perform_clustering(
     except Exception as e:
         import traceback
         return {"error": f"クラスタリング実行エラー: {str(e)}\n{traceback.format_exc()}"}
+
+
+# ============================================================
+# 特徴量セット分析 (Blueprint仕様)
+# ============================================================
+
+def analyze_feature_sets(
+    merged_result: Any, # MergedDataResult (回避的型ヒント)
+    target_column: Optional[str] = None,
+    set_filter: Optional[str] = None,
+) -> Dict:
+    """
+    特徴量セットごとのEDAを実行
+    """
+    df = merged_result.features.copy()
+    results = {}
+    
+    # 対象列の決定
+    if set_filter and set_filter in merged_result.feature_set_info:
+        target_cols = merged_result.feature_set_info[set_filter]
+    else:
+        target_cols = df.columns.tolist()
+    
+    # 基本統計量
+    results['statistics'] = df[target_cols].describe().to_dict()
+    
+    # 相関分析
+    if len(target_cols) > 1:
+        corr = df[target_cols].corr()
+        results['correlation'] = {
+            'matrix': corr.values.tolist(),
+            'columns': corr.columns.tolist(),
+        }
+    
+    # 目的変数との相関
+    if target_column and target_column in df.columns:
+        target_corr = df[target_cols].corrwith(df[target_column].dropna())
+        results['target_correlation'] = target_corr.dropna().to_dict()
+    
+    # 特徴量セットごとの要約
+    for set_name, cols in merged_result.feature_set_info.items():
+        if set_filter and set_name != set_filter:
+            continue
+        if not cols:
+            continue
+        
+        subset = df[cols].dropna()
+        if len(subset) < 2:
+            continue
+            
+        results[f'set_summary_{set_name}'] = {
+            'n_features': len(cols),
+            'mean_abs_corr': float(subset.corr().abs().mean().mean()) if len(cols) > 1 else 0.0,
+            'missing_ratio': float(subset.isna().mean().mean()),
+            'variance_mean': float(subset.var().mean()),
+        }
+    
+    return results
+
+
+def plot_feature_set_comparison(
+    merged_result: Any,
+    plot_type: Literal['correlation', 'distribution', 'pca'] = 'correlation',
+) -> Any:
+    """
+    特徴量セット間の比較可視化 (Plotly Figure)
+    """
+    try:
+        import plotly.express as px
+    except ImportError:
+        return None
+    
+    df = merged_result.features
+    
+    if plot_type == 'correlation':
+        # 各セットの内部相関の平均を比較
+        data = []
+        for set_name, cols in merged_result.feature_set_info.items():
+            if len(cols) < 2:
+                continue
+            corr_mean = float(df[cols].corr().abs().mean().mean())
+            data.append({
+                'set': set_name, 
+                'mean_corr': corr_mean, 
+                'n_features': len(cols)
+            })
+        
+        if not data:
+            return None
+            
+        plot_df = pd.DataFrame(data)
+        fig = px.bar(
+            plot_df,
+            x='set', y='mean_corr',
+            title='特徴量セット間の内部相関比較',
+            labels={'mean_corr': '平均絶対相関', 'set': '特徴量セット'},
+            color='n_features',
+            color_continuous_scale='Blues'
+        )
+        return fig
+    
+    elif plot_type == 'pca':
+        # 各セットのPCA結果を2Dプロット
+        from sklearn.decomposition import PCA
+        from sklearn.preprocessing import StandardScaler
+        results = []
+        
+        for set_name, cols in merged_result.feature_set_info.items():
+            valid_cols = [c for c in cols if c in df.columns]
+            if len(valid_cols) < 2:
+                continue
+            X = df[valid_cols].dropna()
+            if len(X) < 5:
+                continue
+            try:
+                X_scaled = StandardScaler().fit_transform(X)
+                n_comp = min(2, X_scaled.shape[1])
+                pca = PCA(n_components=n_comp)
+                pcs = pca.fit_transform(X_scaled)
+                
+                res_df = pd.DataFrame(pcs, columns=[f'PC{i+1}' for i in range(n_comp)])
+                res_df['feature_set'] = set_name
+                if n_comp < 2: res_df['PC2'] = 0.0
+                results.append(res_df)
+            except Exception:
+                continue
+        
+        if not results:
+            return None
+            
+        plot_df = pd.concat(results, ignore_index=True)
+        fig = px.scatter(
+            plot_df, 
+            x='PC1', y='PC2', 
+            color='feature_set',
+            title='特徴量セット別PCAプロット',
+            opacity=0.6,
+            hover_data=['feature_set']
+        )
+        return fig
+    
+    return None

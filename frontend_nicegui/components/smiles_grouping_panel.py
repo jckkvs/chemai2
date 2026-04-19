@@ -32,18 +32,22 @@ def render_smiles_grouping_panel(state: dict):
     # もし空なら、既存の feature_sets から取得を試みる
     if not generated_features and "feature_sets" in state:
         all_feats = set()
-        feature_sets = state["feature_sets"]
-        # feature_sets が dict 型の場合と list 型の場合の両方に対応
-        if isinstance(feature_sets, dict):
-            items_to_iterate = feature_sets.values()
-        elif isinstance(feature_sets, list):
-            items_to_iterate = feature_sets
+        fsets = state["feature_sets"]
+        
+        # dict 型 (new arch) と list 型 (compat) の両方に対応
+        if isinstance(fsets, dict):
+            items_to_iterate = fsets.values()
+        elif isinstance(fsets, list):
+            items_to_iterate = fsets
         else:
             items_to_iterate = []
+            
         for sinfo in items_to_iterate:
-            if isinstance(sinfo, dict):
-                all_feats.update(sinfo.get("features", []))
-        generated_features = list(all_feats)
+            if isinstance(sinfo, dict) and "features" in sinfo:
+                all_feats.update(sinfo["features"])
+        
+        generated_features = sorted(list(all_feats))
+        state["generated_smiles_features"] = generated_features
 
     if not generated_features:
         ui.notify("まず「特徴量生成」タブでSMILES記述子を生成してください", type="info")

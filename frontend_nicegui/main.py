@@ -22,6 +22,9 @@ import logging
 import pandas as pd
 from nicegui import ui, app
 
+# テーマ設定のインポートと適用
+from frontend_nicegui.theme import setup_theme
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -617,44 +620,154 @@ def main_page():
                 _update_sidebar()
                 ui.timer(5.0, _update_sidebar)
 
-    # ── プレミアム CSS スタイル定義 (シンプル & プロフェッショナル) ──
+    # ── プレミアム CSS スタイル定義 (改良版) ──
     ui.add_css('''
-        .nicegui-header {
-            background-color: #1e293b !important;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
-        }
-        
-        .nicegui-drawer {
-            background-color: #0f172a !important;
-            border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
-        }
-        
-        .app-title {
-            color: #ffffff;
-            font-weight: 700;
-            letter-spacing: 0.02em;
-        }
-        
-        .start-button {
-            background-color: rgba(255, 255, 255, 0.05) !important;
-            border: 1px solid rgba(255, 255, 255, 0.1) !important;
-            transition: all 0.2s ease !important;
-        }
-        
-        .start-button:hover {
-            background-color: rgba(255, 255, 255, 0.12) !important;
-            transform: translateY(-1px);
-        }
-    ''')
+/* ダークテーマベースのカラーパレット */
+:root {
+    --bg-primary: #1a1a2e;
+    --bg-secondary: #16213e;
+    --bg-tertiary: #0f3460;
+    --text-primary: #e8e8e8;
+    --text-secondary: #b8b8b8;
+    --accent-primary: #e94560;
+    --accent-secondary: #533483;
+    --border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* 全体の背景をダークに */
+body {
+    background-color: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+}
+
+/* NiceGUIコンテナ */
+.nicegui-content {
+    background-color: var(--bg-primary) !important;
+}
+
+/* ヘッダー */
+.nicegui-header {
+    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+}
+
+/* サイドバー */
+.nicegui-drawer {
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%) !important;
+    border-right: 1px solid var(--border-color) !important;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* アプリタイトル - 落ち着いた白系に修正 */
+.app-title {
+    background: linear-gradient(135deg, #ffffff 0%, #c8d6e5 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-shadow: none;
+}
+
+/* 解析開始ボタン */
+.start-button {
+    background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%) !important;
+    border: none !important;
+    color: white !important;
+    font-weight: 600;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 12px rgba(233, 69, 96, 0.3) !important;
+}
+
+.start-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(233, 69, 96, 0.4) !important;
+}
+
+/* タブ */
+.nicegui-tabs {
+    background-color: var(--bg-secondary) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+}
+
+/* パネル背景 */
+.nicegui-tab-panel {
+    background-color: var(--bg-primary) !important;
+    border-radius: 8px;
+    padding: 16px;
+}
+
+/* カード・コンテナ */
+.q-card {
+    background-color: var(--bg-secondary) !important;
+    border: 1px solid var(--border-color) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* 入力フィールド */
+.q-field__control {
+    background-color: var(--bg-tertiary) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 4px;
+}
+
+/* テキスト色 */
+.text-primary {
+    color: var(--text-primary) !important;
+}
+
+.text-secondary {
+    color: var(--text-secondary) !important;
+}
+
+/* ホバーエフェクト */
+.hover-bounce:hover {
+    background-color: rgba(255, 255, 255, 0.08) !important;
+    transform: translateX(4px);
+}
+
+/* スクロールバー */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-secondary);
+}
+
+/* 通知 */
+.q-notification {
+    background-color: var(--bg-secondary) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+
+/* ダイアログ */
+.q-dialog__card {
+    background-color: var(--bg-secondary) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+''')
 
     # ── プレミアム ヘッダー (トップレベルに配置必須) ──
-    with ui.header().classes('bg-slate-800 shadow-sm'):
+    with ui.header().classes('nicegui-header'):
         with ui.row().classes('w-full items-center justify-between q-pa-md'):
             # ロゴ・タイトル
             with ui.row().classes('items-center gap-3 cursor-pointer').on('click', lambda: main_tabs.set_value('data')):
                 ui.icon('science', size='32px', color='white').classes('opacity-80')
-                ui.label('ChemAI Nexus').classes('text-2xl font-bold text-white app-title')
+                ui.label('ChemAI Nexus').classes('text-2xl font-bold app-title')
             
             # 右側アクション
             with ui.row().classes('items-center gap-4'):
@@ -667,8 +780,9 @@ def main_page():
     # ═══════════════════════════════════════════════════════════
     with ui.column().classes("full-width items-stretch"):
     
-        # ── メインタブ (4つに削減) ──
+        # ── メインタブ ──
         with ui.tabs().classes("full-width q-px-md").props("active-color=cyan indicator-color=cyan align=left") as main_tabs:
+            tab_unified = ui.tab("unified", label="🚀 統合分析", icon="rocket_launch")
             tab_data = ui.tab("data", label="📁 データ管理", icon="folder")
             tab_eda = ui.tab("eda", label="📊 EDA・可視化", icon="analytics")
             tab_ml = ui.tab("ml", label="🤖 機械学習", icon="psychology")
@@ -682,6 +796,11 @@ def main_page():
             tab_quantum = ui.tab("quantum").classes("hidden")
 
         with ui.tab_panels(main_tabs, value="data").classes("full-width q-pa-md bg-transparent") as panels:
+            
+            # 0. 🚀 統合分析
+            with ui.tab_panel("unified"):
+                from frontend_nicegui.pages.unified_analysis_page import render_unified_analysis_page
+                render_unified_analysis_page(ui.column().classes("full-width"))
             
             # 1. 📁 データ管理
             with ui.tab_panel("data"):

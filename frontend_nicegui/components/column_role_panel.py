@@ -56,13 +56,7 @@ def render_column_role_panel(state: dict[str, Any]):
         ui.markdown("列名をクリックして役割を設定（説明変数/目的変数/除外）").classes("text-sm text-grey-7 q-mb-sm")
         _render_column_role_table(state)
     
-    # ─────────────────────────────────────────────
-    # 2. 単調性制約設定
-    # ─────────────────────────────────────────────
-    with ui.card().classes("w-full q-mb-md"):
-        ui.label("2️⃣ 単調性制約設定").classes("text-lg font-bold q-mb-sm")
-        ui.markdown("特徴量と目的変数の間の単調性関係を定義（化学的知見の反映）").classes("text-sm text-grey-7 q-mb-sm")
-        _render_monotonicity_section(state)
+    # (単調性制約設定は「SMILES特徴量・制約」タブの統合パネルに集約されました)
     
     # ─────────────────────────────────────────────
     # 3. 特徴量グルーピング設定
@@ -147,44 +141,4 @@ def _render_column_role_table(state: dict):
     table.on("cell-edit", on_cell_edit)
 
 
-def _render_monotonicity_section(state: dict):
-    """単調性制約設定セクション"""
-    column_roles = state.get("column_roles", {})
-    feature_cols = [col for col, role in column_roles.items() if role == "feature"]
-    
-    if not feature_cols:
-        ui.notify("説明変数が設定されていません", type="info")
-        return
-    
-    # 既存の column_meta か monotonicity_constraints から取得
-    from frontend_nicegui.components.column_meta_editor import _get_meta, _set_meta
-    
-    with ui.grid(columns=3).classes("w-full q-gutter-md"):
-        for col in feature_cols:
-            with ui.card().classes("w-full"):
-                ui.label(col).classes("font-bold text-sm")
-                meta = _get_meta(state, col)
-                current_mono_val = meta.get("monotonic", 0)
-                
-                # 表示用ラベルへの変換
-                val_to_key = {0: "none", 1: "increasing", -1: "decreasing"}
-                key_to_val = {"none": 0, "increasing": 1, "decreasing": -1}
-                current = val_to_key.get(current_mono_val, "none")
-                
-                select = ui.select(
-                    options=[
-                        ("none", "－ 制約なし"),
-                        ("increasing", "↗ 単調増加"),
-                        ("decreasing", "↘ 単調減少"),
-                    ],
-                    value=current,
-                    label="単調性"
-                ).props("dense outlined").classes("w-full")
-                
-                def on_change(e, col_name=col):
-                    new_val = key_to_val.get(e.value, 0)
-                    _set_meta(state, col_name, "monotonic", new_val)
-                    labels = {"none": "制約なし", "increasing": "増加 ↗", "decreasing": "減少 ↘"}
-                    ui.notify(f"'{col_name}' → {labels[e.value]}", color="positive", timeout=1000)
-                
-                select.on("change", on_change)
+# ( _render_monotonicity_section は削除されました。 UnifiedConstraintsPanel を使用してください。)
