@@ -48,7 +48,6 @@ def _run_engine_sync(
     monotonic_constraints: dict[str, int] | None = None,
     column_meta_dict: dict | None = None,
     count_normalization: str = "density",
-    feature_set_configs: list[dict] | None = None, # 追加
 ) -> Any:
     """
     バックグラウンドスレッドで AutoMLEngine を実行する同期関数。
@@ -85,7 +84,6 @@ def _run_engine_sync(
         target_col=target_col,
         smiles_col=smiles_col,
         group_col=group_col,
-        feature_set_configs=feature_set_configs, # 連携
     )
 
     return result
@@ -259,64 +257,29 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         model_params = model_params or None
 
         # ── 新しい単調性制約システムの反映 ──
-        # Blueprint準拠: UnifiedConstraintManager から全制約を取得
-        monotonic_constraints = {}
-        if 'constraint_manager' in state and state['constraint_manager']:
-            # get_constraints_for_model は {col: info_dict} を返す
-            # Info dict から direction (-1, 0, 1) に変換
-            all_info = state['constraint_manager'].to_dict().get('monotonic_constraints', {})
-            for col, info in all_info.items():
-                direction = info.get('direction', 'none')
-                if direction in ['positive', 'increasing']:
-                    monotonic_constraints[col] = 1
-                elif direction in ['negative', 'decreasing']:
-                    monotonic_constraints[col] = -1
-        else:
-            # フォールバック
-            monotonic_constraints = state.get("monotonicity_constraints", state.get("feature_constraints", {}))
+        monotonic_constraints = state.get("monotonicity_constraints", state.get("feature_constraints", {}))
         
         try:
             from frontend_nicegui.components.column_meta_editor import build_column_meta_dict
             column_meta_dict = build_column_meta_dict(state)
         except Exception as _e:
             logger.warning(f"column_meta の変換に失敗: {_e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             column_meta_dict = None
         cv_key = state.get("cv_key", "auto")
 
         # ══════════════════════════════════════════════════════
         # 複数セット対応: active=True のセットをループ
         # ══════════════════════════════════════════════════════
-        # ── 新アーキテクチャ: feature_sets (Manager管理) ──
-        feature_set_configs = []
-        if "feature_sets" in state:
-            for sid, sinfo in state["feature_sets"].items():
-                if isinstance(sinfo, dict):
-                    # 各セットの設定をAutoMLに渡す
-                    # Blueprintに合わせてエンジンフラグを整形
-                    feature_set_configs.append({
-                        "name": sinfo.get("name", sid),
-                        "engine_flags": sinfo.get("engines", {"use_mordred": False}), # TODO: キー名変換
-                        "molai_n_components": sinfo.get("molai_n_components", 32)
-                    })
-        elif "merged_result" in state and state["merged_result"]:
-            # すでに計算済みの場合はメタデータから抽出
-            meta = state["merged_result"].metadata
-            if "descriptor_set" in meta:
-                # 簡略化して1つ追加
-                feature_set_configs.append({"name": meta["descriptor_set"]})
-
-        # ── 旧アーキテクチャ互換性: descriptor_sets (平行実行用) ──
         desc_sets = state.get("descriptor_sets", {})
         active_sets = {
             name: info for name, info in desc_sets.items()
             if info.get("active", True)
         }
 
-        # もし新アーキテクチャのセットがあり、かつ旧セットがない場合は新アーキテクチャ優先で1回実行
-        # (AutoMLEngine.run 内で DataMerger が処理する)
-        if feature_set_configs and not active_sets:
-            active_sets = {"unified_merged_set": {"descriptors": None}}
-        elif not active_sets:
+        # activeセットがなければ現在の選択で1回実行
+        if not active_sets:
             active_sets = {"デフォルト": {"descriptors": state.get("selected_descriptors")}}
 
         all_results: dict[str, Any] = {}
@@ -404,7 +367,6 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                     monotonic_constraints=monotonic_constraints,
                     column_meta_dict=column_meta_dict,
                     count_normalization=state.get("count_normalization", "density"),
-                    feature_set_configs=feature_set_configs, # 新機能
                 )
                 all_results[set_name] = result
 

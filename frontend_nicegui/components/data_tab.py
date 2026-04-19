@@ -53,8 +53,8 @@ def render_data_tab(state: dict[str, Any]) -> None:
 
     with ui.tabs().classes("full-width").props("dense active-color=cyan indicator-color=cyan") as sub_tabs:
         tab_load = ui.tab("load", label="📂 データ読込", icon="upload_file")
-        tab_cols = ui.tab("columns", label="📋 列の役割・グルーピング", icon="rule")
-        tab_smiles = ui.tab("smiles", label="🚀 統合特徴量・制約", icon="rocket_launch")
+        tab_cols = ui.tab("columns", label="📋 列の役割・単調性", icon="rule")
+        tab_smiles = ui.tab("smiles", label="⚗️ SMILES特徴量・制約", icon="science")
         tab_quick_eda = ui.tab("quick_eda", label="📈 クイックEDA", icon="insights")
         tab_eda = ui.tab("eda", label="📊 EDA", icon="analytics")
 
@@ -205,22 +205,6 @@ def _render_data_load(state: dict) -> None:
             state["automl_result"] = None
             state["pipeline_result"] = None
             _auto_detect_columns(state)
-            
-            # ---> 新しいAnalysisStateへの同期
-            try:
-                from frontend_nicegui.state.analysis_state import state as unified_state
-                unified_state.raw_data = df_loaded
-                unified_state.smiles_column = state.get("smiles_col")
-                excl = state.get('exclude_cols', [])
-                unified_state.numeric_columns = [
-                    c for c in df_loaded.select_dtypes(include='number').columns 
-                    if c != state.get("target_col") and c not in excl
-                ]
-                unified_state.target_column = state.get("target_col")
-            except Exception as e:
-                logger.warning(f"AnalysisStateへの同期に失敗: {e}")
-            # <---
-            
             df = state["df"]
             upload_status.text = f"✅ {name} 読み込み完了 ({len(df)}行 × {len(df.columns)}列)"
             upload_status.classes(remove="text-red", add="text-green")
@@ -268,21 +252,6 @@ def _render_data_load(state: dict) -> None:
             # セレクターで定義された情報を優先適用
             state["task_type"] = task_type
             state["target_col"] = target_col
-            
-            # ---> 新しいAnalysisStateへの同期
-            try:
-                from frontend_nicegui.state.analysis_state import state as unified_state
-                unified_state.raw_data = df
-                unified_state.smiles_column = state.get("smiles_col")
-                excl = state.get('exclude_cols', [])
-                unified_state.numeric_columns = [
-                    c for c in df.select_dtypes(include='number').columns 
-                    if c != target_col and c not in excl
-                ]
-                unified_state.target_column = target_col
-            except Exception as e:
-                logger.warning(f"AnalysisStateへの同期に失敗: {e}")
-            # <---
             
             # UI更新
             upload_status.text = f"✅ {filename} 読み込み完了 ({len(df)}行)"
