@@ -28,7 +28,7 @@ def dim_reduction_panel(state: dict):
     
     # データが読み込まれているか確認
     if "df" not in state or state["df"] is None:
-        ui.warning("先にデータを読み込んでください")
+        ui.notify("先にデータを読み込んでください", type="warning")
         return
     
     df = state["df"]
@@ -45,7 +45,7 @@ def dim_reduction_panel(state: dict):
     all_color_options = [opt for opt in all_color_options if opt is not None]
 
     if len(numeric_cols) < 2:
-        ui.error("次元削減には2つ以上の数値説明変数が必要です")
+        ui.notify("次元削減には2つ以上の数値説明変数が必要です", type="negative")
         return
     
     # 設定UI

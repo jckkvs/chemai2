@@ -13,7 +13,7 @@ def render_eda_advanced_panel(state: dict):
     target_col = state.get("target_col")
     
     if df is None:
-        ui.warning("データを読み込んでください")
+        ui.notify("データを読み込んでください", type="warning")
         return
 
     ui.label("🔬 物理的妥当性・コンフリクト解析").classes("text-h5 font-bold q-mb-md")

@@ -16,7 +16,7 @@ def render_data_sandbox(state: dict):
     """Data Sandbox のメインレンダラー"""
     df = state.get("df")
     if df is None:
-        ui.warning("データを読み込んでください")
+        ui.notify("データを読み込んでください", type="warning")
         return
 
     # インスタンスの初期化（stateに保持して共有）

@@ -37,7 +37,7 @@ def render_smiles_grouping_panel(state: dict):
         generated_features = list(all_feats)
 
     if not generated_features:
-        ui.info("まず「特徴量生成」タブでSMILES記述子を生成してください")
+        ui.notify("まず「特徴量生成」タブでSMILES記述子を生成してください", type="info")
         return
     
     # 状態初期化
@@ -252,18 +252,18 @@ def _apply_ring_systems_template(features: List[str], state: dict):
 def _add_smiles_group(group_name: str, features: List[str], state: dict):
     """SMILES特徴量グループを追加"""
     if not group_name or not group_name.strip():
-        ui.error("グループ名を入力してください")
+        ui.notify("グループ名を入力してください", type="negative")
         return
     
     if not features:
-        ui.error("特徴量を1つ以上選択してください")
+        ui.notify("特徴量を1つ以上選択してください", type="negative")
         return
     
     if "smiles_feature_groups" not in state:
         state["smiles_feature_groups"] = {}
     
     if group_name in state["smiles_feature_groups"]:
-        ui.warning(f"グループ '{group_name}' は既に存在します")
+        ui.notify(f"グループ '{group_name}' は既に存在します", type="warning")
         return
     
     state["smiles_feature_groups"][group_name] = features
@@ -298,14 +298,14 @@ def _edit_smiles_group_dialog(group_name: str, state: dict, available_features: 
 def _update_smiles_group(old_name: str, new_name: str, features: List[str], state: dict, dialog=None):
     """SMILES特徴量グループを更新"""
     if not new_name or not features:
-        ui.error("グループ名と特徴量を入力してください")
+        ui.notify("グループ名と特徴量を入力してください", type="negative")
         return
     
     if "smiles_feature_groups" not in state:
         state["smiles_feature_groups"] = {}
     
     if old_name != new_name and new_name in state["smiles_feature_groups"]:
-        ui.warning(f"グループ '{new_name}' は既に存在します")
+        ui.notify(f"グループ '{new_name}' は既に存在します", type="warning")
         return
     
     if old_name != new_name:
@@ -337,7 +337,7 @@ def _clear_smiles_groups(state: dict):
 def _apply_smiles_group_settings(state: dict):
     """SMILES特徴量設定を保存"""
     if not state.get("smiles_feature_groups"):
-        ui.warning("SMILES特徴量グループが定義されていません")
+        ui.notify("SMILES特徴量グループが定義されていません", type="warning")
         return
     
     ui.notify(

@@ -26,7 +26,7 @@ def render_feature_grouping_panel(state: dict):
     """).classes("text-sm text-grey-7 q-mb-md")
     
     if "df" not in state or state["df"] is None:
-        ui.warning("先にデータを読み込んでください")
+        ui.notify("先にデータを読み込んでください", type="warning")
         return
     
     df = state["df"]
@@ -44,7 +44,7 @@ def render_feature_grouping_panel(state: dict):
     numeric_cols = [col for col in feature_cols if col in df.select_dtypes(include=['number']).columns]
     
     if not numeric_cols:
-        ui.info("数値説明変数が見つかりません")
+        ui.notify("数値説明変数が見つかりません", type="info")
         return
     
     # 状態初期化
@@ -268,11 +268,11 @@ def _edit_group_dialog(group_name: str, state: dict, available_features: List[st
 def _add_group(group_name: str, features: List[str], state: dict, dialog=None):
     """グループを追加"""
     if not group_name or not group_name.strip():
-        ui.error("グループ名を入力してください")
+        ui.notify("グループ名を入力してください", type="negative")
         return
     
     if not features:
-        ui.error("特徴量を1つ以上選択してください")
+        ui.notify("特徴量を1つ以上選択してください", type="negative")
         return
     
     if "feature_groups" not in state:
@@ -280,7 +280,7 @@ def _add_group(group_name: str, features: List[str], state: dict, dialog=None):
     
     # 重複チェック
     if group_name in state["feature_groups"]:
-        ui.warning(f"グループ '{group_name}' は既に存在します")
+        ui.notify(f"グループ '{group_name}' は既に存在します", type="warning")
         return
     
     state["feature_groups"][group_name] = features
@@ -293,11 +293,11 @@ def _add_group(group_name: str, features: List[str], state: dict, dialog=None):
 def _update_group(old_name: str, new_name: str, features: List[str], state: dict, dialog=None):
     """グループを更新"""
     if not new_name or not new_name.strip():
-        ui.error("グループ名を入力してください")
+        ui.notify("グループ名を入力してください", type="negative")
         return
     
     if not features:
-        ui.error("特徴量を1つ以上選択してください")
+        ui.notify("特徴量を1つ以上選択してください", type="negative")
         return
     
     if "feature_groups" not in state:
@@ -305,7 +305,7 @@ def _update_group(old_name: str, new_name: str, features: List[str], state: dict
     
     # 名前変更の場合
     if old_name != new_name and new_name in state["feature_groups"]:
-        ui.warning(f"グループ '{new_name}' は既に存在します")
+        ui.notify(f"グループ '{new_name}' は既に存在します", type="warning")
         return
     
     if old_name != new_name:
@@ -337,7 +337,7 @@ def _auto_detect_groups(df: pd.DataFrame, numeric_cols: List[str], state: dict):
     detected = auto_detect_groups(feature_subset, verbose=True)
     
     if not detected:
-        ui.info("自動検出可能なグループが見つかりませんでした")
+        ui.notify("自動検出可能なグループが見つかりませんでした", type="info")
         return
     
     if "feature_groups" not in state:
@@ -370,7 +370,7 @@ def _apply_group_settings(state: dict):
     from backend.preprocessing.group_scaler import GroupStandardScaler
     
     if not state.get("feature_groups"):
-        ui.warning("グループが定義されていません")
+        ui.notify("グループが定義されていません", type="warning")
         return
     
     # スケーラーを作成（必要時に初期化）
