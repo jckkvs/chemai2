@@ -32,8 +32,17 @@ def render_smiles_grouping_panel(state: dict):
     # もし空なら、既存の feature_sets から取得を試みる
     if not generated_features and "feature_sets" in state:
         all_feats = set()
-        for sinfo in state["feature_sets"].values():
-            all_feats.update(sinfo.get("features", []))
+        feature_sets = state["feature_sets"]
+        # feature_sets が dict 型の場合と list 型の場合の両方に対応
+        if isinstance(feature_sets, dict):
+            items_to_iterate = feature_sets.values()
+        elif isinstance(feature_sets, list):
+            items_to_iterate = feature_sets
+        else:
+            items_to_iterate = []
+        for sinfo in items_to_iterate:
+            if isinstance(sinfo, dict):
+                all_feats.update(sinfo.get("features", []))
         generated_features = list(all_feats)
 
     if not generated_features:
