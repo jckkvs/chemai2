@@ -782,7 +782,6 @@ body {
     
         # ── メインタブ ──
         with ui.tabs().classes("full-width q-px-md").props("active-color=cyan indicator-color=cyan align=left") as main_tabs:
-            tab_unified = ui.tab("unified", label="🚀 統合分析", icon="rocket_launch")
             tab_data = ui.tab("data", label="📁 データ管理", icon="folder")
             tab_eda = ui.tab("eda", label="📊 EDA・可視化", icon="analytics")
             tab_ml = ui.tab("ml", label="🤖 機械学習", icon="psychology")
@@ -797,11 +796,7 @@ body {
 
         with ui.tab_panels(main_tabs, value="data").classes("full-width q-pa-md bg-transparent") as panels:
             
-            # 0. 🚀 統合分析
-            with ui.tab_panel("unified"):
-                from frontend_nicegui.pages.unified_analysis_page import render_unified_analysis_page
-                render_unified_analysis_page(ui.column().classes("full-width"))
-            
+
             # 1. 📁 データ管理
             with ui.tab_panel("data"):
                 from frontend_nicegui.components.data_tab import render_data_tab
