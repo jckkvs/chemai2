@@ -76,171 +76,142 @@ state_obj = AppState()
 state = state_obj.__dict__ 
 
 # ─────────────────────────────────────────────
-# プレミアム ダークテーマ CSS
+# シンプル & ホワイトテーマ CSS
 # ─────────────────────────────────────────────
 CUSTOM_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;700&display=swap');
 
 :root {
-    --bg-primary: #0d0d1a;
-    --bg-secondary: #1a1a2e;
-    --bg-card: rgba(255, 255, 255, 0.05);
-    --border: rgba(255, 255, 255, 0.12);
-    --text-primary: #e0e0f0;
-    --text-secondary: #a0a0c0;
-    --accent-blue: #00d4ff;
-    --accent-purple: #7b2ff7;
-    --accent-green: #4ade80;
-    --accent-amber: #fbbf24;
+ --bg-primary: #ffffff;
+ --bg-secondary: #f5f5f5;
+ --bg-card: #ffffff;
+ --border: #e0e0e0;
+ --text-primary: #212121;
+ --text-secondary: #757575;
+ --accent-blue: #1976d2;
+ --accent-purple: #7b1fa2;
+ --accent-green: #388e3c;
+ --accent-amber: #f57c00;
 
-    /* F-06: フォント設定 — 科学ツールとしての信頼感 */
-    --font-sans: 'Inter', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+ --font-sans: 'Inter', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+ --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 
-    /* F-05: セマンティックカラー — 状態別 */
-    --status-success: #4ade80;
-    --status-warning: #fbbf24;
-    --status-error: #f87171;
-    --status-info: #60a5fa;
-    --status-cancel: #fb923c;
+ --status-success: #388e3c;
+ --status-warning: #f57c00;
+ --status-error: #d32f2f;
+ --status-info: #1976d2;
+ --status-cancel: #fb923c;
 
-    /* F-05: タブカテゴリ別カラー */
-    --tab-data: #60a5fa;
-    --tab-eda: #34d399;
-    --tab-pipeline: #a78bfa;
-    --tab-results: #fbbf24;
-    --tab-inverse: #f472b6;
+ --tab-data: #1976d2;
+ --tab-eda: #388e3c;
+ --tab-pipeline: #7b1fa2;
+ --tab-results: #f57c00;
+ --tab-inverse: #c2185b;
 }
 
 body {
-    font-family: 'Inter', sans-serif !important;
-    background: linear-gradient(135deg, var(--bg-primary), var(--bg-secondary), #16213e) !important;
+ font-family: 'Inter', sans-serif !important;
+ background: var(--bg-primary) !important;
 }
 
 .nicegui-content { max-width: 1600px; margin: 0 auto; }
 
 .hero-gradient {
-    background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple), #ff6b9d);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
+ color: var(--text-primary);
 }
 
 .glass-card {
-    background: var(--bg-card) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 12px !important;
-    backdrop-filter: blur(10px) !important;
+ background: var(--bg-card) !important;
+ border: 1px solid var(--border) !important;
+ border-radius: 12px !important;
 }
 
-/* Primary ボタン: グラデーション */
 .btn-primary {
-    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)) !important;
-    color: white !important;
-    font-weight: 600 !important;
-    border-radius: 8px !important;
-    transition: all 0.3s ease !important;
+ background: var(--accent-blue) !important;
+ color: white !important;
+ font-weight: 600 !important;
+ border-radius: 8px !important;
+ transition: all 0.3s ease !important;
 }
 .btn-primary:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 8px 25px rgba(0,212,255,0.3) !important;
+ background: #1565c0 !important;
+ box-shadow: 0 4px 12px rgba(25,118,210,0.3) !important;
 }
 
-/* サイドバー ステップインジケーター */
 .step-indicator {
-    display: flex;
-    align-items: center;
-    padding: 6px 12px;
-    margin: 4px 0;
-    border-radius: 8px;
-    transition: background 0.2s;
+ display: flex;
+ align-items: center;
+ padding: 6px 12px;
+ margin: 4px 0;
+ border-radius: 8px;
+ transition: background 0.2s;
 }
 .step-indicator:hover {
-    background: rgba(255,255,255,0.05);
+ background: rgba(0,0,0,0.05);
 }
 .step-done { color: var(--accent-green); }
-.step-pending { color: #555577; }
+.step-pending { color: #999; }
 
-/* メインタブのアンダーライン */
 .q-tabs__content { border-bottom: 1px solid var(--border); }
 
-/* ダークスクロールバー */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
 
-/* 展開パネルのスタイル */
 .q-expansion-item { border-radius: 8px !important; margin-bottom: 4px; }
 
-/* F-02: フォントサイズ14px下限 — 漢字視認性保証 */
-.text-caption { font-size: 0.82rem !important; }  /* 13px → 下限保証 */
+.text-caption { font-size: 0.82rem !important; }
 .q-field__label { font-size: 0.88rem !important; }
 
-/* F-08: 解析開始ボタン — パルスアニメーション */
-@keyframes pulse-glow {
-    0% { box-shadow: 0 0 5px rgba(0,212,255,0.4); }
-    50% { box-shadow: 0 0 20px rgba(0,212,255,0.7), 0 0 40px rgba(123,47,247,0.3); }
-    100% { box-shadow: 0 0 5px rgba(0,212,255,0.4); }
-}
 .btn-run-analysis {
-    animation: pulse-glow 2s ease-in-out infinite !important;
-    font-size: 1.1rem !important;
-    padding: 10px 28px !important;
-    border-radius: 12px !important;
+ font-size: 1.1rem !important;
+ padding: 10px 28px !important;
+ border-radius: 12px !important;
+ background: var(--accent-blue) !important;
+ color: white !important;
 }
 .btn-run-analysis:hover {
-    animation: none !important;
-    transform: scale(1.05) !important;
-    box-shadow: 0 8px 30px rgba(0,212,255,0.5) !important;
+ background: #1565c0 !important;
+ box-shadow: 0 8px 30px rgba(25,118,210,0.4) !important;
 }
 
-/* F-04: ローディングスピナー */
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-spinner {
-    display: inline-block;
-    width: 16px; height: 16px;
-    border: 2px solid rgba(255,255,255,0.2);
-    border-top-color: var(--accent-blue);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin-right: 6px;
+ display: inline-block;
+ width: 16px; height: 16px;
+ border: 2px solid rgba(0,0,0,0.1);
+ border-top-color: var(--accent-blue);
+ border-radius: 50%;
+ animation: spin 0.8s linear infinite;
+ margin-right: 6px;
 }
 
-/* F-07: タブ別テーマカラー（F-05セマンティック変数使用） */
 .tab-data .q-tab--active { color: var(--tab-data) !important; }
 .tab-eda .q-tab--active { color: var(--tab-eda) !important; }
 .tab-pipeline .q-tab--active { color: var(--tab-pipeline) !important; }
 .tab-results .q-tab--active { color: var(--tab-results) !important; }
 .tab-inverse .q-tab--active { color: var(--tab-inverse) !important; }
 
-/* F-15: サイドバー解析ステータスバー */
 .sidebar-status-bar {
-    background: rgba(0, 212, 255, 0.08);
-    border: 1px solid rgba(0, 212, 255, 0.2);
-    border-radius: 8px;
-    padding: 8px 10px;
-    margin: 6px 0;
+ background: rgba(25, 118, 210, 0.08);
+ border: 1px solid rgba(25, 118, 210, 0.2);
+ border-radius: 8px;
+ padding: 8px 10px;
+ margin: 6px 0;
 }
 .sidebar-status-bar.running {
-    border-color: rgba(0, 212, 255, 0.4);
-    background: rgba(0, 212, 255, 0.1);
-    animation: status-pulse 2s ease-in-out infinite;
+ border-color: rgba(25, 118, 210, 0.4);
+ background: rgba(25, 118, 210, 0.1);
 }
 .sidebar-status-bar.cancelled {
-    border-color: rgba(251, 146, 60, 0.4);
-    background: rgba(251, 146, 60, 0.08);
+ border-color: rgba(251, 146, 60, 0.4);
+ background: rgba(251, 146, 60, 0.08);
 }
 .sidebar-status-bar.done {
-    border-color: rgba(74, 222, 128, 0.4);
-    background: rgba(74, 222, 128, 0.08);
-}
-@keyframes status-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.7; }
+ border-color: rgba(56, 142, 60, 0.4);
+ background: rgba(56, 142, 60, 0.08);
 }
 
-/* F-03: WCAG 2.1 色覚対応 — コントラスト比4.5:1以上 */
-/* 色覚多様性(CVD)対応: 赤/緑の区別に依存しないよう形状・アイコンで補完 */
 .color-safe-success { color: var(--status-success); }
 .color-safe-success::before { content: "✅ "; }
 .color-safe-warning { color: var(--status-warning); }
@@ -250,130 +221,77 @@ body {
 .color-safe-info { color: var(--status-info); }
 .color-safe-info::before { content: "ℹ️ "; }
 
-/* F-03: 高コントラストモード（OSの設定連携） */
-@media (prefers-contrast: high) {
-    :root {
-        --bg-card: rgba(255, 255, 255, 0.12);
-        --border: rgba(255, 255, 255, 0.3);
-        --text-primary: #ffffff;
-    }
-    .glass-card { border-width: 2px !important; }
-}
-
-/* F-06: フォントファミリーの統一 */
 body, .q-page, .q-drawer, .q-dialog {
-    font-family: var(--font-sans) !important;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+ font-family: var(--font-sans) !important;
+ -webkit-font-smoothing: antialiased;
+ -moz-osx-font-smoothing: grayscale;
 }
 code, pre, .text-monospace, .q-field__native {
-    font-family: var(--font-mono) !important;
+ font-family: var(--font-mono) !important;
 }
-/* 日本語テキストの最小フォントサイズ保証 (F-02: 文字の大きさ) */
 .text-caption { font-size: max(13px, 0.82rem) !important; }
-.text-body2  { font-size: max(14px, 0.88rem) !important; }
-.text-body1  { font-size: max(15px, 0.94rem) !important; }
+.text-body2 { font-size: max(14px, 0.88rem) !important; }
+.text-body1 { font-size: max(15px, 0.94rem) !important; }
 
-/* ── フォントサイズ全体的な引き上げ（ユーザー要望） ── */
 body, .nicegui-content, .q-page {
-    font-size: 16px !important;
+ font-size: 16px !important;
 }
 .q-item__label, .q-field__label, .q-field__native {
-    font-size: 15px !important;
+ font-size: 15px !important;
 }
 .q-btn:not(.q-btn--size-xs):not(.q-btn--size-sm) {
-    font-size: 15px !important;
+ font-size: 15px !important;
 }
 .q-table tbody td, .q-table thead th {
-    font-size: 14px !important;
+ font-size: 14px !important;
 }
 .q-tab__label {
-    font-size: 14px !important;
-    font-weight: 600;
+ font-size: 14px !important;
+ font-weight: 600;
 }
-/* サイドバーステップラベル */
 .q-drawer .q-item__label {
-    font-size: 15px !important;
+ font-size: 15px !important;
 }
-/* キャプション下限 13px で日本語可読性保証 */
 .text-caption, .text-overline {
-    font-size: 13px !important;
+ font-size: 13px !important;
 }
 
-/* F-14: Material Icon統一ルール */
-/* アイコンサイズの一貫性: ボタン=20px, ラベル=16px, タイトル=24px */
 .q-btn .q-icon { font-size: 20px !important; }
 .text-caption .q-icon { font-size: 16px !important; }
 .text-h5 .q-icon, .text-h6 .q-icon { font-size: 24px !important; }
 
-    /* ── F-22: UI拡張 (ワクワク感とフィードバック) ── */
-    @keyframes slide-up-fade {
-        0% { opacity: 0; transform: translateY(30px); }
-        100% { opacity: 1; transform: translateY(0); }
-    }
-    .animate-slide-up {
-        animation: slide-up-fade 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
-    }
-    .delay-100 { animation-delay: 0.1s; }
-    .delay-200 { animation-delay: 0.2s; }
-    .delay-300 { animation-delay: 0.3s; }
-    .delay-400 { animation-delay: 0.4s; }
-    .delay-500 { animation-delay: 0.5s; }
+.hover-bounce {
+ transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.hover-bounce:hover {
+ transform: scale(1.03) translateY(-2px) !important;
+ box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15) !important;
+}
 
-    .hover-bounce {
-        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
-    }
-    .hover-bounce:hover {
-        transform: scale(1.03) translateY(-4px) !important;
-        box-shadow: 0 12px 35px rgba(0, 212, 255, 0.25) !important;
-        z-index: 10;
-    }
+.app-title {
+ color: var(--text-primary);
+ text-shadow: none;
+}
 
-    @keyframes success-glow {
-        0% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.3); }
-        50% { box-shadow: 0 0 25px rgba(74, 222, 128, 0.6), inset 0 0 10px rgba(74, 222, 128, 0.1); border-color: rgba(74, 222, 128, 0.7); }
-        100% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.3); }
-    }
-    .best-model-glow {
-        animation: success-glow 3s infinite;
-        background: linear-gradient(135deg, rgba(74, 222, 128, 0.08), rgba(0, 212, 255, 0.05)) !important;
-    }
+.glass-card {
+ background: var(--bg-card);
+ backdrop-filter: none;
+ border: 1px solid var(--border);
+}
 
-    @keyframes shake-warning {
-        0%, 100% { transform: translateX(0); }
-        10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
-        20%, 40%, 60%, 80% { transform: translateX(4px); }
-    }
-    .animate-shake {
-        animation: shake-warning 0.6s cubic-bezier(.36,.07,.19,.97) both;
-    }
+.nicegui-drawer {
+ background: var(--bg-secondary) !important;
+ border-right: 1px solid var(--border) !important;
+}
 
-    /* ── モダンなヘッダーデザイン ── */
-    .app-title {
-        background: linear-gradient(to right, #ffffff, #e0e7ff);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        text-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    
-    .glass-card {
-        background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    
-    /* サイドバーのグラデーション */
-    .nicegui-drawer {
-        background: linear-gradient(180deg, #1a1a2e 0%, #0d0d1a 100%) !important;
-        border-right: 1px solid var(--border) !important;
-    }
-    
-    .q-header {
-        background: linear-gradient(to right, #4f46e5, #9333ea, #db2777) !important; /* Indigo via Purple to Pink */
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    }
-    """
+.q-header {
+ background: var(--bg-secondary) !important;
+ border-bottom: 2px solid var(--border);
+ box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+"""
+
+
 
 
 # ─────────────────────────────────────────────
