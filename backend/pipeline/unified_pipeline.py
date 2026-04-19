@@ -60,10 +60,10 @@ class UnifiedAnalysisPipeline:
     def run(
         self,
         df: pd.DataFrame,
+        target_column: str,
         smiles_column: Optional[str] = None,
         numeric_columns: Optional[List[str]] = None,
         descriptor_set: Optional[DescriptorSet] = None,
-        target_column: str,
         constraints: Optional[UnifiedConstraintManager] = None,
         model_type: str = 'lightgbm',
         cv_folds: int = 5,
