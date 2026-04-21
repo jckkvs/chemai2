@@ -91,15 +91,98 @@ def render_smiles_feature_panel(state: dict[str, Any]) -> None:
         ui.label("ℹ️ SMILES列が設定されていません。数値データのみの場合はそのまま EDA タブへ進んでください。").classes("text-grey-5 q-pa-md")
         return
 
-    # ── 2. 記述子選択ワークフロー ──
-    from frontend_nicegui.components.descriptor_selector import render_descriptor_selector
-    render_descriptor_selector(state)
+    # ── 2. 記述子プラグイン設定 ──
+    from frontend_nicegui.components.descriptor_plugins_ui import render_descriptor_plugins
+    render_descriptor_plugins(state)
 
-    # ── 3. (REMOVED) 化学的ドメイン知見設定 ──
-    # ここに配置されていたドメイン知見設定は、論理的整合性のために「制約設定」タブへ移動されました。
+    # ── 3. 進化した化学的ドメイン知見設定 (User Request) ──
+    with ui.card().classes("full-width glass-card q-mt-md p-4"):
+        with ui.row().classes("items-center q-gutter-sm mb-2"):
+            ui.icon("psychology", color="pink", size="sm")
+            ui.label("🧪 化学的ドメイン知見の自動適用").classes("text-md font-bold text-white")
+            ui.switch(value=state.get("auto_domain_knowledge", True), 
+                      on_change=lambda e: state.update({"auto_domain_knowledge": e.value})).props("dense")
+        
+        ui.label("生成された記述子（MW, LogP等）に対し、物理化学的妥当性を考慮した単調性制約を自動的に提案・適用します。").classes("text-caption text-grey-5")
+        
+        if state.get("auto_domain_knowledge", True):
+            with ui.row().classes("q-gutter-sm q-mt-sm"):
+                ui.chip("MW ↘", color="pink-9", text_color="white").tooltip("分子量が増えると水溶性は下がる傾向 (Solubility予測時)")
+                ui.chip("LogP ↘", color="pink-9", text_color="white").tooltip("脂溶性が高いと水溶性は下がる")
+                ui.chip("TPSA ↗", color="pink-9", text_color="white").tooltip("極性面積が大きいと水溶性は上がる")
+            
+            def _apply_suggestions():
+                applied_count = 0
+                all_feature_cols = all_cols
+                if state.get("precalc_df") is not None:
+                    all_feature_cols = list(state["precalc_df"].columns)
+                
+                for col in all_feature_cols:
+                    for s_key, info in CHEMICAL_RATIONALES.items():
+                        if s_key.lower() in col.lower() and info["suggest"] != 0:
+                            _set_meta(state, col, "monotonic", info["suggest"])
+                            applied_count += 1
+                            break
+                ui.notify(f"✅ {applied_count} 個の記述子にドメイン知見に基づく制約を提案しました。", type="positive")
+                if state.get("_refresh_tabs"): state["_refresh_tabs"]()
+                _render_constraints_grid.refresh()
+
+            ui.button("✨ 推奨制約を今すぐ適用", on_click=_apply_suggestions).props("outline no-caps size=sm color=pink").classes("q-mt-sm")
+
+    # ── 4. 🧪 化学的な制約設定 (Dynamic Configuration) ──
+    @ui.refreshable
+    def _render_constraints_grid():
+        active_descs = state.get("selected_descriptors", [])
+        # キー記述子のみを抽出
+        key_descs_in_use = []
+        for d in active_descs:
+            for k in CHEMICAL_RATIONALES:
+                if k.lower() in d.lower():
+                    key_descs_in_use.append((d, k))
+                    break
+        
+        if not key_descs_in_use:
+            return
+
+        with ui.card().classes("full-width glass-card q-mt-md p-4"):
+            with ui.row().classes("items-center q-gutter-sm mb-3"):
+                ui.icon("straighten", color="cyan", size="sm")
+                ui.label("🧪 生成済み特徴量の詳細制約設定").classes("text-md font-bold text-white")
+            
+            ui.label("選択された記述子のうち、化学적意味付けが明確なものに対して個別に制約を設定できます。").classes("text-caption text-grey-5 q-mb-md")
+
+            with ui.grid(columns=2).classes("w-full q-gutter-md"):
+                for col_name, key in key_descs_in_use:
+                    info = CHEMICAL_RATIONALES[key]
+                    meta = _get_meta(state, col_name)
+                    mono_val = str(meta.get("monotonic", 0))
+
+                    with ui.card().classes("q-pa-sm bg-black-20"):
+                        with ui.row().classes("items-center justify-between full-width no-wrap"):
+                            with ui.column().classes("col-grow"):
+                                ui.label(col_name).classes("text-sm font-bold text-white")
+                                ui.label(info["rationale"]).classes("text-xs text-grey-5")
+                            
+                            # 単調性トグル
+                            with ui.row().classes("items-center q-gutter-xs"):
+                                for val, icon in [("0", "➖"), ("1", "↗"), ("-1", "↘")]:
+                                    active = (val == mono_val)
+                                    btn_color = "cyan" if active else "grey-8"
+                                    
+                                    def _change(v=val, c=col_name):
+                                        _set_meta(state, c, "monotonic", int(v))
+                                        _render_constraints_grid.refresh()
+                                        ui.notify(f"{c}: 制約を更新しました", color="positive", position="bottom-right", timeout=1000)
+                                        if state.get("_refresh_tabs"): state["_refresh_tabs"]()
+
+                                    ui.button(icon, on_click=_change).props(f"flat dense unelevated size=sm color={btn_color}").classes("q-px-xs")
+
+    _render_constraints_grid()
 
     # ── 5. 計算結果サマリー ──
     if state.get("precalc_done") and state.get("precalc_df") is not None:
         from frontend_nicegui.components.data_tab import _show_descriptor_summary
-    # stateにリフレッシュ関数を登録 (統合パネル側で管理するため不要な場合は削除可能だが、互換性のためにnoopを置くか削除)
-    pass
+        _show_descriptor_summary(state, ui.column().classes("full-width q-mt-md"))
+
+    # stateにリフレッシュ関数を登録
+    state["_refresh_smiles_constraints"] = _render_constraints_grid.refresh

@@ -164,7 +164,6 @@ class AutoMLEngine:
         self.monotonic_constraints_dict = monotonic_constraints_dict or {}
         self.column_meta_dict = column_meta_dict or {}  # ColumnMeta 辭書
         self.auto_feature_selection = auto_feature_selection
-        self.feature_sets = None # 実行時に渡されるセット情報
 
     def run(
         self,
@@ -175,7 +174,6 @@ class AutoMLEngine:
         group_col: Optional[str] = None,
         preprocess_config: Optional[PreprocessConfig] = None,
         cv_extra_params: Optional[Dict[str, Any]] = None,
-        feature_set_configs: Optional[List[Dict]] = None, # 追加
     ) -> AutoMLResult:
         """
         AutoML全フローを実行する。
@@ -376,40 +374,29 @@ class AutoMLEngine:
         # 従来の「SmilesTransformer先頭挿入→変換前DFのdetection_result使用」という
         # 旧設計は TypeDetector が変換後の記述子列を認識できずColumnTransformerが空になるバグがあった。
         # TODO: 将来的に、計算リソースに余裕があれば、完全に独立したパイプラインとしての並列実行も検討。
-        # ── 【設計変更】FeatureMerger を使用した統合特徴量空間の構築 ──
-        merged_result: Optional[MergedDataResult] = None
+        _smiles_transformer_for_cv: Optional[SmilesDescriptorTransformer] = None
         X_train = X.copy()
 
-        if _smiles_cols_present or feature_set_configs:
-            from backend.data.feature_merger import FeatureMerger
-            logger.info("FeatureMerger を使用して統合特徴量空間を構築します。")
-            merger = FeatureMerger()
-            
-            # feature_set_configs がある場合は、DescriptorSet として扱う
-            # 簡略化のため、最初のセットを使用する or 複数マッピングを考慮
-            # Blueprint では単一セットのマージが主なので、ここでは最適化
-            selected_desc_set = None
-            if feature_set_configs and len(feature_set_configs) > 0:
-                # 辞書から DescriptorSet を復元
-                from backend.chem.descriptor_sets import DescriptorSet
-                selected_desc_set = DescriptorSet.from_dict(feature_set_configs[0])
-            
+        if _smiles_cols_present:
+            logger.info(f"SMILES成分を事前変換して記述子DFを構築します: {comps}")
+            _smiles_transformer_for_cv = SmilesDescriptorTransformer(
+                smiles_col=comps,
+                selected_descriptors=self.selected_descriptors,
+                count_normalization=self.count_normalization,
+                fraction_type=fraction_type
+            )
             try:
-                merged_result = merger.merge(
-                    df=df,
-                    numeric_columns=list(X.columns),
-                    smiles_column=comps[0]["smiles_col"] if comps else None,
-                    descriptor_set=selected_desc_set,
-                    target_column=target_col,
-                    group_columns=[group_col] if group_col else None
-                )
-                X_train = merged_result.features
-                logger.info(f"統合変換後のDF: {X_train.shape[1]}列")
-                
+                X_train = _smiles_transformer_for_cv.fit_transform(X_train)
+                logger.info(f"SMILES変換後のDF: {X_train.shape[1]}列")
+                # 変換後のDFで TypeDetector を再実行 → detection_resultを更新
                 detector_post = TypeDetector()
                 detection_result = detector_post.detect(X_train)
+                logger.info(f"SMILES変換後のTypeDetection結果: "
+                           f"numeric={len(detection_result.numeric_columns)}列, "
+                           f"categorical={len(detection_result.categorical_columns)}列")
             except Exception as _e:
-                logger.warning(f"統合特徴量マージに失敗: {_e}。元のDFで続行します。")
+                logger.warning(f"SMILES事前変換に失敗: {_e}。元のDFで続行します。")
+                _smiles_transformer_for_cv = None
                 X_train = X.copy()
 
         for i, mkey in enumerate(model_keys):
@@ -433,28 +420,21 @@ class AutoMLEngine:
 
                 if self.monotonic_constraints_dict:
                     try:
-                        # UnifiedConstraintManager を使用してパラメータを生成
-                        from backend.models.monotonic_constraints import UnifiedConstraintManager
-                        manager = UnifiedConstraintManager()
-                        for col, val in self.monotonic_constraints_dict.items():
-                            direction = 'none'
-                            if val == 1: direction = 'positive'
-                            elif val == -1: direction = 'negative'
-                            manager.set_monotonic(col, direction=direction)
+                        from backend.models.monotonicity_adapter import apply_monotonicity_constraints
                         
-                        # モデル形式に変換
-                        lgbm_constraints = manager.get_constraints_for_model(
-                            X_train.columns.tolist(), model_type='lgbm'
+                        preprocessor_step = pipeline_base.named_steps["preprocess"]
+                        preprocessor_step.fit(X_train)
+
+                        constrained_model = apply_monotonicity_constraints(
+                            estimator=model_inst,
+                            pipeline=preprocessor_step,
+                            constraints_dict=self.monotonic_constraints_dict
                         )
-                        
-                        # estimator に反映 (LightGBM/XGBoost 固有の引数設定)
-                        if mkey in ['lgbm', 'lightgbm', 'xgb', 'xgboost']:
-                            # パイプライン内のモデルパラメータを直接更新するか、cloneして作成
-                            # ここでは model_params 経由で渡すために dict を準備
-                            model_inst.set_params(monotone_constraints=lgbm_constraints)
+                        # パイプラインの最終step (model) を置換
+                        pipeline_base.steps[-1] = ("model", constrained_model)
 
                     except Exception as _e:
-                        logger.warning(f"単調性制約適用をスキップ ({mkey}): {_e}")
+                        logger.warning(f"単調性制約適用をスキップ ({mkey}): {_e}", exc_info=True)
                 # SMILES列があった場合: CV実行は変換済みX_trainで行う（smiles_varsなし）。
                 # ── 理由: fold毎にSMILS変換すると、fold内の分子セットによって生成される記述子列が
                 # ── 変わり「A given column is not a column of the dataframe」KeyErrorが発生する。

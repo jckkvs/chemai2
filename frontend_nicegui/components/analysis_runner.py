@@ -129,10 +129,6 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
 
     _analysis_running = True
     _cancel_requested = False
-    
-    # ── 標準フラグ設定 ──
-    state["analysis_running"] = True
-    state["analysis_complete"] = False
 
     # キャンセルハンドラ
     def _on_cancel():
@@ -400,13 +396,8 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         # 後方互換: 最良セットを automl_result にも保存
         if best_result:
             state["automl_result"] = best_result
-            state["ml_result"] = best_result  # エイリアス（簡易コンポーネント用）
             state["best_set_name"] = best_set_name
             state["pipeline_result"] = type("PipelineResult", (), {"elapsed": best_result.elapsed_seconds})()
-            
-            # 標準ステータス更新
-            state["analysis_complete"] = True
-            state["analysis_running"] = False
 
             # ── 評価エンジン（StratifiedMetricCalculator）の初期化と一括計算 ──
             try:
@@ -493,10 +484,6 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                 type="positive",
                 timeout=5000,
             )
-            # 中断ボタンを非表示
-            cancel_btn.set_visibility(False)
-            # 数秒後にステータスバーをクリア
-            ui.timer(3.0, status_container.clear, once=True)
         else:
             progress_label.text = "❌ 全セットの解析に失敗しました"
             progress_detail.text = "設定を確認して再実行してください"
@@ -520,21 +507,21 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                             "記述子の設定やデータを確認してください。"
                         ).classes("text-caption text-grey q-mt-xs")
 
-        # ── 結果タブの再描画 ──
-        refresh_results = state.get("_refresh_results")
-        if refresh_results:
-            try:
-                refresh_results()
-            except Exception as _re:
-                logger.warning("結果リフレッシュに失敗: %s", _re)
-
-        # ── タブ切り替え ──
+        # ── 結果タブへ自動切り替え＋再描画 ──
+        # 重要: on_complete（タブ遷移）の前に _switch_to_results（再描画含む）を呼ぶ。
+        # これにより「空の結果タブ」バグを防止する。
         switch_results = state.get("_switch_to_results")
         if switch_results and best_result:
             try:
                 switch_results()
-            except Exception as _se:
-                logger.warning("結果タブ切替に失敗: %s", _se)
+            except Exception as _re:
+                logger.warning("結果タブ切替に失敗: %s", _re)
+                refresh_only = state.get("_refresh_results")
+                if refresh_only:
+                    try:
+                        refresh_only()
+                    except Exception:
+                        pass
 
         if on_complete:
             on_complete()
@@ -604,7 +591,6 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
 
     finally:
         _analysis_running = False
-        state["analysis_running"] = False
         timer.deactivate()
         try:
             resource_timer.deactivate()

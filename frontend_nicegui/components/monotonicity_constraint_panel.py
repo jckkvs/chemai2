@@ -100,7 +100,7 @@ def _render_manual_constraints_section(state: dict):
     features = _detect_features(state)
     
     if not features:
-        ui.notify("設定可能な特徴量が見つかりません。先にデータを読み込んでください。", type="warning")
+        ui.warning("設定可能な特徴量が見つかりません。先にデータを読み込んでください。")
         return
     
     # 動的に制約設定UIを生成

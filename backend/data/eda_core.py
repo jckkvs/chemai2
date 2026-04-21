@@ -68,7 +68,7 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
                                      n_components: int = 2,
                                      **kwargs) -> Optional[Tuple[np.ndarray, Optional[np.ndarray]]]:
     """
-    次元削減を実行（詳細ログ出力付き）
+    次元削減を実行
     
     Args:
         X: 入力データ (n_samples, n_features)
@@ -79,14 +79,8 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
     Returns:
         (coordinates, explained_variance) または None
     """
-    import sys
-    import time
-
-    print(f"[DimReduction Backend] method={method}, input_shape={X.shape}, n_components={n_components}", flush=True)
-    start_time = time.time()
     
     if X is None or X.shape[0] == 0:
-        print(f"[DimReduction Backend] エラー: データが空です", flush=True)
         return None
     
     n_samples, n_features = X.shape
@@ -97,54 +91,50 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
         return None
     
     # 標準化
-    print(f"[DimReduction Backend] 標準化実行...", flush=True)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    print(f"[DimReduction Backend] 標準化完了 ({time.time() - start_time:.2f}秒)", flush=True)
     
     try:
         if method == 'pca':
             # PCA
-            print(f"[DimReduction Backend] PCA実行中...", flush=True)
             actual_components = min(n_components, n_samples - 1, n_features)
             pca = PCA(n_components=actual_components)
             coords = pca.fit_transform(X_scaled)
             explained_var = pca.explained_variance_ratio_
-            print(f"[DimReduction Backend] PCA完了 ({time.time() - start_time:.2f}秒), explained_variance={explained_var}", flush=True)
             return coords, explained_var
         
         elif method == 'tsne':
-            print(f"[DimReduction Backend] t-SNE fitting...", flush=True)
-            
-            # perplexity の最終チェック（フロントエンドでも調整済みだが念のため）
+            # t-SNE
+            # Perplexity の自動調整（データ数に応じて制限）
             perplexity = kwargs.get('perplexity', 5.0)
-            # sklearnのTSNEは perplexity < n_samples である必要がある。
-            # より安全な目安として n_samples / 2 を上限とする。
-            max_perplexity = max(1.0, n_samples / 2 - 1e-5)
-            safe_perplexity = min(perplexity, max_perplexity)
-            # 下限値を1.0に固定
-            safe_perplexity = max(1.0, safe_perplexity)
             
-            print(f"[DimReduction Backend] t-SNE params: perplexity={safe_perplexity:.4f}, n_samples={n_samples}", flush=True)
+            # perplexity は n_samples - 1 より小さくなければならない
+            max_perplexity = max(1.0, n_samples - 1 - 1e-5)
+            safe_perplexity = min(perplexity, max_perplexity)
+            
+            # データ数が極端に少ない場合は早期リターン
+            if n_samples < 2:
+                warnings.warn("t-SNE: データが少なすぎます（2サンプル以上必要）")
+                return None
+            
+            # 学習率の設定
+            learning_rate = kwargs.get('learning_rate', 'auto')
             
             tsne = TSNE(
                 n_components=min(n_components, n_samples - 1),
                 perplexity=safe_perplexity,
-                learning_rate=kwargs.get('learning_rate', 'auto'),
+                learning_rate=learning_rate,
                 random_state=42,
                 n_iter=1000,
                 init='pca',
-                method='barnes_hut' if n_samples > 100 else 'exact',
-                verbose=0
+                method='barnes_hut' if n_samples > 100 else 'exact'
             )
             
             coords = tsne.fit_transform(X_scaled)
-            print(f"[DimReduction Backend] t-SNE finished in {time.time() - start_time:.2f}s", flush=True)
             return coords, None
         
         elif method == 'umap':
             # UMAP（オプション）
-            print(f"[DimReduction] UMAP実行中...", file=sys.stderr)
             try:
                 import umap
                 
@@ -160,23 +150,18 @@ def compute_dimensionality_reduction(X: np.ndarray, method: str = 'pca',
                 )
                 
                 coords = reducer.fit_transform(X_scaled)
-                print(f"[DimReduction] UMAP完了 ({time.time() - start_time:.2f}秒)", file=sys.stderr)
                 return coords, None
             
             except ImportError:
                 warnings.warn("UMAP requires 'umap-learn' package. Install with: pip install umap-learn")
-                print(f"[DimReduction] エラー: umap-learnがインストールされていません", file=sys.stderr)
                 return None
         
         else:
             warnings.warn(f"Unknown method: {method}")
-            print(f"[DimReduction] エラー: 不明な手法 {method}", file=sys.stderr)
             return None
     
     except Exception as e:
-        print(f"[DimReduction] エラー: {str(e)}", file=sys.stderr)
-        import traceback
-        print(traceback.format_exc(), file=sys.stderr)
+        warnings.warn(f"{method.upper()} error: {str(e)}")
         return None
 
 

@@ -153,19 +153,3 @@ def _read_smiles_formal_charge(smiles: str) -> int:
     except Exception:
         pass
     return 0
-
-# =============================================================================
-# 後方互換性エイリアス（既存コード用）
-# =============================================================================
-
-# ChargeConfig → MoleculeChargeConfig のエイリアス
-# 古いインポート文を壊さないための互換レイヤー
-ChargeConfig = MoleculeChargeConfig
-
-__all__ = [
-    "ProtonationMode",
-    "PartialChargeModel", 
-    "MoleculeChargeConfig",
-    "ChargeConfigStore",
-    "ChargeConfig",
-]

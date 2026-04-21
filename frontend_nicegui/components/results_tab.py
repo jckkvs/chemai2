@@ -20,7 +20,6 @@ from frontend_nicegui.components.results_tab_extras import (
 )
 from frontend_nicegui.components.feature_comparison_dashboard import render_feature_comparison_dashboard
 from frontend_nicegui.utils.plot_utils import render_plot_with_expand
-from frontend_nicegui.components.error_analysis_navigator import render_error_navigator
 
 
 
@@ -432,10 +431,6 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
             ui.label(f"Feature Importance取得エラー: {ex}").classes("text-red text-caption")
     else:
         ui.label("⚠️ モデルが取得できません").classes("text-amber")
-
-    # ── Error Analysis Navigator ──
-    ui.separator().classes("q-my-md")
-    render_error_navigator(ar, state)
 
 
 # ================================================================

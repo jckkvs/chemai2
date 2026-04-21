@@ -53,9 +53,10 @@ def render_data_tab(state: dict[str, Any]) -> None:
 
     with ui.tabs().classes("full-width").props("dense active-color=cyan indicator-color=cyan") as sub_tabs:
         tab_load = ui.tab("load", label="📂 データ読込", icon="upload_file")
-        tab_cols = ui.tab("columns", label="📋 列の役割・単調性", icon="rule")
-        tab_smiles = ui.tab("smiles", label="⚗️ SMILES特徴量・制約", icon="science")
-        tab_quick_eda = ui.tab("quick_eda", label="📈 クイックEDA", icon="insights")
+        tab_cols = ui.tab("columns", label="🏷️ 列の役割・単調性", icon="settings")
+        tab_constraints = ui.tab("constraints", label="📐 制約設定", icon="rule")
+        tab_smiles = ui.tab("smiles", label="⚗️ SMILES特徴量", icon="science")
+        tab_mixture = ui.tab("mixture", label="🧪 混合物設定", icon="blender")
         tab_eda = ui.tab("eda", label="📊 EDA", icon="analytics")
 
     # ── @ui.refreshable を使った各タブの描画関数定義 ──
@@ -103,6 +104,9 @@ def render_data_tab(state: dict[str, Any]) -> None:
         with ui.tab_panel(tab_cols):
             _tab_columns_view()
 
+        with ui.tab_panel(tab_constraints):
+            _tab_constraints_view()
+
         with ui.tab_panel(tab_smiles):
             # コンテナ方式で確実に描画（@ui.refreshable のサイレント失敗問題を回避）
             _smiles_container = ui.column().classes("full-width")
@@ -112,8 +116,8 @@ def render_data_tab(state: dict[str, Any]) -> None:
                 _smiles_container.clear()
                 with _smiles_container:
                     try:
-                        from frontend_nicegui.components.smiles_integrated_panel import render_smiles_integrated_panel
-                        render_smiles_integrated_panel(state)
+                        from frontend_nicegui.components.smiles_feature_panel import render_smiles_feature_panel
+                        render_smiles_feature_panel(state)
                     except Exception as _e:
                         logger.error(
                             f"[DataTab] SMILES tab render error: {_e}",
@@ -123,9 +127,9 @@ def render_data_tab(state: dict[str, Any]) -> None:
 
             _rebuild_smiles()  # 初期描画
 
-        with ui.tab_panel(tab_quick_eda):
-            from frontend_nicegui.components.quick_eda import render_quick_eda
-            render_quick_eda(state)
+        with ui.tab_panel(tab_mixture):
+            from frontend_nicegui.components.mixture_input_panel import render_mixture_panel
+            render_mixture_panel(state)
 
         with ui.tab_panel(tab_eda):
             _tab_eda_view()
@@ -135,7 +139,7 @@ def render_data_tab(state: dict[str, Any]) -> None:
     # ── stateに再描画ヘルパーを登録 ──
     def _refresh_tabs_fn():
         """全サブタブを再描画する（load タブ除く）。"""
-        # SMILES統合タブ: コンテナ方式で確実に再描画
+        # SMILESタブ: コンテナ方式で確実に再描画
         try:
             _rebuild_smiles()
             logger.debug("[DataTab] rebuilt smiles tab via container")

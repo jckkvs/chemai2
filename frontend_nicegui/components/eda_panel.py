@@ -85,67 +85,60 @@ def render_eda_panel(state: dict) -> None:
 
     target_col = state.get("target_col", "")
     precalc_df = state.get("precalc_df")
-    
-    # ── 新旧両方のメタデータからデータセット情報を収集 ──
-    # 旧アーキテクチャ: descriptor_sets
     descriptor_sets_raw = state.get("descriptor_sets", {})
-    # 新アーキテクチャ: feature_sets
-    feature_sets_raw = state.get("feature_sets", {})
 
+    # EDA対象データセットを収集
     eda_datasets: list[tuple[str, pd.DataFrame]] = []
 
-    # 1. 新アーキテクチャ (feature_sets) の処理
-    if feature_sets_raw and precalc_df is not None:
-        for fid, finfo in feature_sets_raw.items():
-            if not isinstance(finfo, dict): continue
-            # 計算済み列名 (features) を取得
-            cols = finfo.get("features", [])
-            valid_cols = [c for c in cols if c in precalc_df.columns]
-            
-            if valid_cols:
-                set_df = precalc_df[valid_cols].copy()
-                if target_col and target_col in df.columns:
-                    # インデックス整合性を保ちつつ目的変数を結合
-                    set_df[target_col] = df.loc[set_df.index, target_col]
-                eda_datasets.append((f"⚗️ {finfo.get('name', fid)}", set_df))
-
-    # 2. 旧アーキテクチャ (descriptor_sets) の処理 (後方互換)
     if descriptor_sets_raw and precalc_df is not None:
-        # すでに新アーキテクチャで処理済みのキーはスキップ（名前重複回避）
-        processed_names = {d[0] for d in eda_datasets}
+        # descriptor_sets は {name: {"active": bool, "descriptors": [...], "cols": [...]}} の形式
+        # または {name: [列名リスト]} の旧形式の両方に対応する
         for set_name, set_info in descriptor_sets_raw.items():
-            disp_name = f"📦 {set_name}"
-            if disp_name in processed_names: continue
-
             if isinstance(set_info, dict):
+                # 新形式: cols（計算済み列名）または descriptors（記述子ID）から列を取得
                 cols = set_info.get("cols") or set_info.get("descriptors") or []
             else:
+                # 旧形式: 直接リスト
                 cols = list(set_info) if set_info else []
 
+            # precalc_df に実在する列のみ使う
             valid_cols = [c for c in cols if c in precalc_df.columns]
+
+            # cols が空 or 有効列なしの場合は set_name をプレフィックスとして列をマッチ
             if not valid_cols:
                 prefix = set_name.lower().replace(" ", "_")
-                valid_cols = [c for c in precalc_df.columns if c.lower().startswith(prefix)]
+                valid_cols = [
+                    c for c in precalc_df.columns
+                    if c.lower().startswith(prefix)
+                ]
 
             if valid_cols:
                 set_df = precalc_df[valid_cols].copy()
                 if target_col and target_col in df.columns:
-                    set_df[target_col] = df.loc[set_df.index, target_col]
-                eda_datasets.append((disp_name, set_df))
+                    set_df[target_col] = df[target_col].iloc[:len(set_df)].values
+                eda_datasets.append((f"📦 {set_name}", set_df))
 
-    # 3. 記述子があるがセット指定がない場合 or 全体表示
-    if precalc_df is not None and not precalc_df.empty:
+        # 全記述子タブ（常に追加）
+        if not precalc_df.empty:
+            all_df = precalc_df.copy()
+            if target_col and target_col in df.columns:
+                all_df[target_col] = df[target_col].iloc[:len(all_df)].values
+            eda_datasets.append(("📊 全記述子", all_df))
+
+    elif precalc_df is not None and not precalc_df.empty:
+        # セット未定義だが記述子あり
         all_df = precalc_df.copy()
         if target_col and target_col in df.columns:
-            all_df[target_col] = df.loc[all_df.index, target_col]
+            all_df[target_col] = df[target_col].iloc[:len(all_df)].values
         eda_datasets.append(("📊 全記述子", all_df))
 
-    # 4. 元データ（説明変数）
+    # 元データ（説明変数）を常に追加
     num_df = df.select_dtypes(include="number").copy()
     if not num_df.empty:
+        # 目的変数が数値列以外の場合もEDAで扱えるよう追加
         if target_col and target_col in df.columns and target_col not in num_df.columns:
             num_df[target_col] = df[target_col]
-        eda_datasets.append(("📋 元数値データ", num_df))
+        eda_datasets.append(("📋 元データ", num_df))
 
     if not eda_datasets:
         ui.label("数値データがありません").classes("text-caption text-grey")

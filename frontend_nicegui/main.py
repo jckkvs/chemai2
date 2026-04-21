@@ -22,11 +22,11 @@ import logging
 import pandas as pd
 from nicegui import ui, app
 
-# テーマ設定のインポートと適用
-from frontend_nicegui.theme import setup_theme
-
 logger = logging.getLogger(__name__)
 
+# ─────────────────────────────────────────────
+# アプリ起動時: 設定を環境変数に適用
+# ─────────────────────────────────────────────
 try:
     from backend.config.settings_manager import SettingsManager as _SM
     _SM.get_instance().apply_to_environment()
@@ -34,187 +34,171 @@ except Exception as _e:
     logger.warning("設定の自動適用に失敗しました: %s", _e)
 
 # ─────────────────────────────────────────────
-# グローバル状態管理 (AppState)
-# ─────────────────────────────────────────────
-class AppState:
-    """アプリケーション状態を管理するクラス。"""
-    def __init__(self):
-        # UIモード
-        self.user_mode = "beginner"
-        # データ
-        self.df = None
-        self.filename = None
-        # 列役割
-        self.target_col = None
-        self.smiles_col = None
-        self.task_type = "regression"
-        self.exclude_cols = []
-        self.group_col = None
-        self.time_col = None
-        self.weight_col = None
-        # 特徴量計算
-        self.precalc_df = None
-        self.precalc_done = False
-        self.selected_descriptors = []
-        self.calc_summary = {}
-        self._applied_recommendation = None
-        # 実行フラグ
-        self.analysis_running = False
-        self.analysis_complete = False
-        self.ml_result = None
-        self.automl_result = None
-        # 制約
-        self.monotonicity_constraints = {
-            "_global": {"default_direction": "none", "default_strength": 0.5},
-            "_by_feature": {},
-            "_by_set": {}
-        }
-        # 回避的なキー
-        self.available_categories = []
-        self.metric_evaluator = None
-        self.metric_cache = {}
-
-# 単一ユーザー環境用のグローバルインスタンス (マルチユーザー時は app.storage.user を利用)
-state_obj = AppState()
-state = state_obj.__dict__ 
-
-# ─────────────────────────────────────────────
-# シンプル & ホワイトテーマ CSS
+# プレミアム ダークテーマ CSS
 # ─────────────────────────────────────────────
 CUSTOM_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;700&display=swap');
 
 :root {
- --bg-primary: #ffffff;
- --bg-secondary: #f5f5f5;
- --bg-card: #ffffff;
- --border: #e0e0e0;
- --text-primary: #212121;
- --text-secondary: #757575;
- --accent-blue: #1976d2;
- --accent-purple: #7b1fa2;
- --accent-green: #388e3c;
- --accent-amber: #f57c00;
+    --bg-primary: #0d0d1a;
+    --bg-secondary: #1a1a2e;
+    --bg-card: rgba(255, 255, 255, 0.05);
+    --border: rgba(255, 255, 255, 0.12);
+    --text-primary: #e0e0f0;
+    --text-secondary: #a0a0c0;
+    --accent-blue: #00d4ff;
+    --accent-purple: #7b2ff7;
+    --accent-green: #4ade80;
+    --accent-amber: #fbbf24;
 
- --font-sans: 'Inter', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
- --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    /* F-06: フォント設定 — 科学ツールとしての信頼感 */
+    --font-sans: 'Inter', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 
- --status-success: #388e3c;
- --status-warning: #f57c00;
- --status-error: #d32f2f;
- --status-info: #1976d2;
- --status-cancel: #fb923c;
+    /* F-05: セマンティックカラー — 状態別 */
+    --status-success: #4ade80;
+    --status-warning: #fbbf24;
+    --status-error: #f87171;
+    --status-info: #60a5fa;
+    --status-cancel: #fb923c;
 
- --tab-data: #1976d2;
- --tab-eda: #388e3c;
- --tab-pipeline: #7b1fa2;
- --tab-results: #f57c00;
- --tab-inverse: #c2185b;
+    /* F-05: タブカテゴリ別カラー */
+    --tab-data: #60a5fa;
+    --tab-eda: #34d399;
+    --tab-pipeline: #a78bfa;
+    --tab-results: #fbbf24;
+    --tab-inverse: #f472b6;
 }
 
 body {
- font-family: 'Inter', sans-serif !important;
- background: var(--bg-primary) !important;
+    font-family: 'Inter', sans-serif !important;
+    background: linear-gradient(135deg, var(--bg-primary), var(--bg-secondary), #16213e) !important;
 }
 
 .nicegui-content { max-width: 1600px; margin: 0 auto; }
 
 .hero-gradient {
- color: var(--text-primary);
+    background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple), #ff6b9d);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 
 .glass-card {
- background: var(--bg-card) !important;
- border: 1px solid var(--border) !important;
- border-radius: 12px !important;
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 12px !important;
+    backdrop-filter: blur(10px) !important;
 }
 
+/* Primary ボタン: グラデーション */
 .btn-primary {
- background: var(--accent-blue) !important;
- color: white !important;
- font-weight: 600 !important;
- border-radius: 8px !important;
- transition: all 0.3s ease !important;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)) !important;
+    color: white !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    transition: all 0.3s ease !important;
 }
 .btn-primary:hover {
- background: #1565c0 !important;
- box-shadow: 0 4px 12px rgba(25,118,210,0.3) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 25px rgba(0,212,255,0.3) !important;
 }
 
+/* サイドバー ステップインジケーター */
 .step-indicator {
- display: flex;
- align-items: center;
- padding: 6px 12px;
- margin: 4px 0;
- border-radius: 8px;
- transition: background 0.2s;
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    margin: 4px 0;
+    border-radius: 8px;
+    transition: background 0.2s;
 }
 .step-indicator:hover {
- background: rgba(0,0,0,0.05);
+    background: rgba(255,255,255,0.05);
 }
 .step-done { color: var(--accent-green); }
-.step-pending { color: #999; }
+.step-pending { color: #555577; }
 
+/* メインタブのアンダーライン */
 .q-tabs__content { border-bottom: 1px solid var(--border); }
 
+/* ダークスクロールバー */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
 
+/* 展開パネルのスタイル */
 .q-expansion-item { border-radius: 8px !important; margin-bottom: 4px; }
 
-.text-caption { font-size: 0.82rem !important; }
+/* F-02: フォントサイズ14px下限 — 漢字視認性保証 */
+.text-caption { font-size: 0.82rem !important; }  /* 13px → 下限保証 */
 .q-field__label { font-size: 0.88rem !important; }
 
+/* F-08: 解析開始ボタン — パルスアニメーション */
+@keyframes pulse-glow {
+    0% { box-shadow: 0 0 5px rgba(0,212,255,0.4); }
+    50% { box-shadow: 0 0 20px rgba(0,212,255,0.7), 0 0 40px rgba(123,47,247,0.3); }
+    100% { box-shadow: 0 0 5px rgba(0,212,255,0.4); }
+}
 .btn-run-analysis {
- font-size: 1.1rem !important;
- padding: 10px 28px !important;
- border-radius: 12px !important;
- background: var(--accent-blue) !important;
- color: white !important;
+    animation: pulse-glow 2s ease-in-out infinite !important;
+    font-size: 1.1rem !important;
+    padding: 10px 28px !important;
+    border-radius: 12px !important;
 }
 .btn-run-analysis:hover {
- background: #1565c0 !important;
- box-shadow: 0 8px 30px rgba(25,118,210,0.4) !important;
+    animation: none !important;
+    transform: scale(1.05) !important;
+    box-shadow: 0 8px 30px rgba(0,212,255,0.5) !important;
 }
 
+/* F-04: ローディングスピナー */
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-spinner {
- display: inline-block;
- width: 16px; height: 16px;
- border: 2px solid rgba(0,0,0,0.1);
- border-top-color: var(--accent-blue);
- border-radius: 50%;
- animation: spin 0.8s linear infinite;
- margin-right: 6px;
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.2);
+    border-top-color: var(--accent-blue);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 6px;
 }
 
+/* F-07: タブ別テーマカラー（F-05セマンティック変数使用） */
 .tab-data .q-tab--active { color: var(--tab-data) !important; }
 .tab-eda .q-tab--active { color: var(--tab-eda) !important; }
 .tab-pipeline .q-tab--active { color: var(--tab-pipeline) !important; }
 .tab-results .q-tab--active { color: var(--tab-results) !important; }
 .tab-inverse .q-tab--active { color: var(--tab-inverse) !important; }
 
+/* F-15: サイドバー解析ステータスバー */
 .sidebar-status-bar {
- background: rgba(25, 118, 210, 0.08);
- border: 1px solid rgba(25, 118, 210, 0.2);
- border-radius: 8px;
- padding: 8px 10px;
- margin: 6px 0;
+    background: rgba(0, 212, 255, 0.08);
+    border: 1px solid rgba(0, 212, 255, 0.2);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 6px 0;
 }
 .sidebar-status-bar.running {
- border-color: rgba(25, 118, 210, 0.4);
- background: rgba(25, 118, 210, 0.1);
+    border-color: rgba(0, 212, 255, 0.4);
+    background: rgba(0, 212, 255, 0.1);
+    animation: status-pulse 2s ease-in-out infinite;
 }
 .sidebar-status-bar.cancelled {
- border-color: rgba(251, 146, 60, 0.4);
- background: rgba(251, 146, 60, 0.08);
+    border-color: rgba(251, 146, 60, 0.4);
+    background: rgba(251, 146, 60, 0.08);
 }
 .sidebar-status-bar.done {
- border-color: rgba(56, 142, 60, 0.4);
- background: rgba(56, 142, 60, 0.08);
+    border-color: rgba(74, 222, 128, 0.4);
+    background: rgba(74, 222, 128, 0.08);
+}
+@keyframes status-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
 }
 
+/* F-03: WCAG 2.1 色覚対応 — コントラスト比4.5:1以上 */
+/* 色覚多様性(CVD)対応: 赤/緑の区別に依存しないよう形状・アイコンで補完 */
 .color-safe-success { color: var(--status-success); }
 .color-safe-success::before { content: "✅ "; }
 .color-safe-warning { color: var(--status-warning); }
@@ -224,77 +208,130 @@ body {
 .color-safe-info { color: var(--status-info); }
 .color-safe-info::before { content: "ℹ️ "; }
 
+/* F-03: 高コントラストモード（OSの設定連携） */
+@media (prefers-contrast: high) {
+    :root {
+        --bg-card: rgba(255, 255, 255, 0.12);
+        --border: rgba(255, 255, 255, 0.3);
+        --text-primary: #ffffff;
+    }
+    .glass-card { border-width: 2px !important; }
+}
+
+/* F-06: フォントファミリーの統一 */
 body, .q-page, .q-drawer, .q-dialog {
- font-family: var(--font-sans) !important;
- -webkit-font-smoothing: antialiased;
- -moz-osx-font-smoothing: grayscale;
+    font-family: var(--font-sans) !important;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 code, pre, .text-monospace, .q-field__native {
- font-family: var(--font-mono) !important;
+    font-family: var(--font-mono) !important;
 }
+/* 日本語テキストの最小フォントサイズ保証 (F-02: 文字の大きさ) */
 .text-caption { font-size: max(13px, 0.82rem) !important; }
-.text-body2 { font-size: max(14px, 0.88rem) !important; }
-.text-body1 { font-size: max(15px, 0.94rem) !important; }
+.text-body2  { font-size: max(14px, 0.88rem) !important; }
+.text-body1  { font-size: max(15px, 0.94rem) !important; }
 
+/* ── フォントサイズ全体的な引き上げ（ユーザー要望） ── */
 body, .nicegui-content, .q-page {
- font-size: 16px !important;
+    font-size: 16px !important;
 }
 .q-item__label, .q-field__label, .q-field__native {
- font-size: 15px !important;
+    font-size: 15px !important;
 }
 .q-btn:not(.q-btn--size-xs):not(.q-btn--size-sm) {
- font-size: 15px !important;
+    font-size: 15px !important;
 }
 .q-table tbody td, .q-table thead th {
- font-size: 14px !important;
+    font-size: 14px !important;
 }
 .q-tab__label {
- font-size: 14px !important;
- font-weight: 600;
+    font-size: 14px !important;
+    font-weight: 600;
 }
+/* サイドバーステップラベル */
 .q-drawer .q-item__label {
- font-size: 15px !important;
+    font-size: 15px !important;
 }
+/* キャプション下限 13px で日本語可読性保証 */
 .text-caption, .text-overline {
- font-size: 13px !important;
+    font-size: 13px !important;
 }
 
+/* F-14: Material Icon統一ルール */
+/* アイコンサイズの一貫性: ボタン=20px, ラベル=16px, タイトル=24px */
 .q-btn .q-icon { font-size: 20px !important; }
 .text-caption .q-icon { font-size: 16px !important; }
 .text-h5 .q-icon, .text-h6 .q-icon { font-size: 24px !important; }
 
-.hover-bounce {
- transition: transform 0.3s ease, box-shadow 0.3s ease;
-}
-.hover-bounce:hover {
- transform: scale(1.03) translateY(-2px) !important;
- box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15) !important;
-}
+    /* ── F-22: UI拡張 (ワクワク感とフィードバック) ── */
+    @keyframes slide-up-fade {
+        0% { opacity: 0; transform: translateY(30px); }
+        100% { opacity: 1; transform: translateY(0); }
+    }
+    .animate-slide-up {
+        animation: slide-up-fade 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+    }
+    .delay-100 { animation-delay: 0.1s; }
+    .delay-200 { animation-delay: 0.2s; }
+    .delay-300 { animation-delay: 0.3s; }
+    .delay-400 { animation-delay: 0.4s; }
+    .delay-500 { animation-delay: 0.5s; }
 
-.app-title {
- color: var(--text-primary);
- text-shadow: none;
-}
+    .hover-bounce {
+        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+    }
+    .hover-bounce:hover {
+        transform: scale(1.03) translateY(-4px) !important;
+        box-shadow: 0 12px 35px rgba(0, 212, 255, 0.25) !important;
+        z-index: 10;
+    }
 
-.glass-card {
- background: var(--bg-card);
- backdrop-filter: none;
- border: 1px solid var(--border);
-}
+    @keyframes success-glow {
+        0% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.3); }
+        50% { box-shadow: 0 0 25px rgba(74, 222, 128, 0.6), inset 0 0 10px rgba(74, 222, 128, 0.1); border-color: rgba(74, 222, 128, 0.7); }
+        100% { box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 0.3); }
+    }
+    .best-model-glow {
+        animation: success-glow 3s infinite;
+        background: linear-gradient(135deg, rgba(74, 222, 128, 0.08), rgba(0, 212, 255, 0.05)) !important;
+    }
 
-.nicegui-drawer {
- background: var(--bg-secondary) !important;
- border-right: 1px solid var(--border) !important;
-}
+    @keyframes shake-warning {
+        0%, 100% { transform: translateX(0); }
+        10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+        20%, 40%, 60%, 80% { transform: translateX(4px); }
+    }
+    .animate-shake {
+        animation: shake-warning 0.6s cubic-bezier(.36,.07,.19,.97) both;
+    }
 
-.q-header {
- background: var(--bg-secondary) !important;
- border-bottom: 2px solid var(--border);
- box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-"""
-
-
+    /* ── モダンなヘッダーデザイン ── */
+    .app-title {
+        background: linear-gradient(to right, #ffffff, #e0e7ff);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .glass-card {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    /* サイドバーのグラデーション */
+    .nicegui-drawer {
+        background: linear-gradient(180deg, #1a1a2e 0%, #0d0d1a 100%) !important;
+        border-right: 1px solid var(--border) !important;
+    }
+    
+    .q-header {
+        background: linear-gradient(to right, #4f46e5, #9333ea, #db2777) !important; /* Indigo via Purple to Pink */
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    """
 
 
 # ─────────────────────────────────────────────
@@ -559,14 +596,8 @@ def main_page():
 
             ui.separator().classes("q-mx-md")
 
-            # --- 専門ツール・設定 ---
+            # --- 専門解析ツール ---
             with ui.column().classes("full-width q-pa-sm"):
-                ui.label("⚙️ 専門ツール・設定").classes("text-caption text-grey-5 q-ml-sm q-mt-sm")
-                
-                # 🔥 混合物設定をサイドバーへ移動
-                ui.button("🧪 混合物・テンプレート設定", icon="blender", on_click=lambda: ui.navigate.to("/mixture_template")) \
-                    .props("flat align=left no-caps").classes("full-width text-white hover-bounce")
-
                 with ui.expansion("🔬 専門解析", icon="science").classes("full-width text-white").props("dense"):
                     nav_item("find_replace", "逆解析・最適", "inverse").classes("q-pl-lg")
                     nav_item("biotech", "実験計画 (DoE)", "doe").classes("q-pl-lg")
@@ -620,154 +651,44 @@ def main_page():
                 _update_sidebar()
                 ui.timer(5.0, _update_sidebar)
 
-    # ── プレミアム CSS スタイル定義 (改良版) ──
+    # ── プレミアム CSS スタイル定義 (シンプル & プロフェッショナル) ──
     ui.add_css('''
-/* ダークテーマベースのカラーパレット */
-:root {
-    --bg-primary: #1a1a2e;
-    --bg-secondary: #16213e;
-    --bg-tertiary: #0f3460;
-    --text-primary: #e8e8e8;
-    --text-secondary: #b8b8b8;
-    --accent-primary: #e94560;
-    --accent-secondary: #533483;
-    --border-color: rgba(255, 255, 255, 0.08);
-}
-
-/* 全体の背景をダークに */
-body {
-    background-color: var(--bg-primary) !important;
-    color: var(--text-primary) !important;
-}
-
-/* NiceGUIコンテナ */
-.nicegui-content {
-    background-color: var(--bg-primary) !important;
-}
-
-/* ヘッダー */
-.nicegui-header {
-    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%) !important;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
-    border-bottom: 1px solid var(--border-color) !important;
-}
-
-/* サイドバー */
-.nicegui-drawer {
-    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%) !important;
-    border-right: 1px solid var(--border-color) !important;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.2) !important;
-}
-
-/* アプリタイトル - 落ち着いた白系に修正 */
-.app-title {
-    background: linear-gradient(135deg, #ffffff 0%, #c8d6e5 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-shadow: none;
-}
-
-/* 解析開始ボタン */
-.start-button {
-    background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%) !important;
-    border: none !important;
-    color: white !important;
-    font-weight: 600;
-    transition: all 0.3s ease !important;
-    box-shadow: 0 4px 12px rgba(233, 69, 96, 0.3) !important;
-}
-
-.start-button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(233, 69, 96, 0.4) !important;
-}
-
-/* タブ */
-.nicegui-tabs {
-    background-color: var(--bg-secondary) !important;
-    border-bottom: 1px solid var(--border-color) !important;
-}
-
-/* パネル背景 */
-.nicegui-tab-panel {
-    background-color: var(--bg-primary) !important;
-    border-radius: 8px;
-    padding: 16px;
-}
-
-/* カード・コンテナ */
-.q-card {
-    background-color: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
-}
-
-/* 入力フィールド */
-.q-field__control {
-    background-color: var(--bg-tertiary) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: 4px;
-}
-
-/* テキスト色 */
-.text-primary {
-    color: var(--text-primary) !important;
-}
-
-.text-secondary {
-    color: var(--text-secondary) !important;
-}
-
-/* ホバーエフェクト */
-.hover-bounce:hover {
-    background-color: rgba(255, 255, 255, 0.08) !important;
-    transform: translateX(4px);
-}
-
-/* スクロールバー */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: var(--bg-primary);
-}
-
-::-webkit-scrollbar-thumb {
-    background: var(--bg-tertiary);
-    border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: var(--accent-secondary);
-}
-
-/* 通知 */
-.q-notification {
-    background-color: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    color: var(--text-primary) !important;
-}
-
-/* ダイアログ */
-.q-dialog__card {
-    background-color: var(--bg-secondary) !important;
-    border: 1px solid var(--border-color) !important;
-    color: var(--text-primary) !important;
-}
-''')
+        .nicegui-header {
+            background-color: #1e293b !important;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+        }
+        
+        .nicegui-drawer {
+            background-color: #0f172a !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
+        }
+        
+        .app-title {
+            color: #ffffff;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        
+        .start-button {
+            background-color: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            transition: all 0.2s ease !important;
+        }
+        
+        .start-button:hover {
+            background-color: rgba(255, 255, 255, 0.12) !important;
+            transform: translateY(-1px);
+        }
+    ''')
 
     # ── プレミアム ヘッダー (トップレベルに配置必須) ──
-    with ui.header().classes('nicegui-header'):
+    with ui.header().classes('bg-slate-800 shadow-sm'):
         with ui.row().classes('w-full items-center justify-between q-pa-md'):
             # ロゴ・タイトル
             with ui.row().classes('items-center gap-3 cursor-pointer').on('click', lambda: main_tabs.set_value('data')):
                 ui.icon('science', size='32px', color='white').classes('opacity-80')
-                ui.label('ChemAI Nexus').classes('text-2xl font-bold app-title')
+                ui.label('ChemAI Nexus').classes('text-2xl font-bold text-white app-title')
             
             # 右側アクション
             with ui.row().classes('items-center gap-4'):
@@ -780,7 +701,7 @@ body {
     # ═══════════════════════════════════════════════════════════
     with ui.column().classes("full-width items-stretch"):
     
-        # ── メインタブ ──
+        # ── メインタブ (4つに削減) ──
         with ui.tabs().classes("full-width q-px-md").props("active-color=cyan indicator-color=cyan align=left") as main_tabs:
             tab_data = ui.tab("data", label="📁 データ管理", icon="folder")
             tab_eda = ui.tab("eda", label="📊 EDA・可視化", icon="analytics")
@@ -796,7 +717,6 @@ body {
 
         with ui.tab_panels(main_tabs, value="data").classes("full-width q-pa-md bg-transparent") as panels:
             
-
             # 1. 📁 データ管理
             with ui.tab_panel("data"):
                 from frontend_nicegui.components.data_tab import render_data_tab
@@ -808,62 +728,20 @@ body {
                 def _build_eda():
                     _eda_container.clear()
                     with _eda_container:
-                        try:
-                            from frontend_nicegui.components.eda_tab import render_eda_tab
-                            render_eda_tab(state)
-                        except Exception as e:
-                            import traceback
-                            ui.label("❌ EDAコンポーネントの読込エラー").classes("text-h6 text-red")
-                            ui.markdown(f"```python\n{traceback.format_exc()}\n```").classes("text-caption full-width")
+                        from frontend_nicegui.components.eda_panel import render_eda_panel
+                        render_eda_panel(state)
                 _build_eda()
                 state["_refresh_eda_main"] = _build_eda
 
             # 3. 🤖 機械学習
-            @ui.refreshable
-            def _refresh_ml_tab():
-                try:
-                    from frontend_nicegui.components.ml_workflow import render_ml_workflow
-                    render_ml_workflow(state)
-                except Exception as e:
-                    import traceback
-                    ui.label("❌ MLワークフローの読込エラー").classes("text-h6 text-red")
-                    ui.markdown(f"```python\n{traceback.format_exc()}\n```").classes("text-caption full-width")
-
             with ui.tab_panel("ml"):
-                _refresh_ml_tab()
-            
-            state["_refresh_ml"] = _refresh_ml_tab.refresh
+                from frontend_nicegui.components.ml_workflow import render_ml_workflow
+                render_ml_workflow(state)
 
             # 4. 📑 結果・レポート
-            @ui.refreshable
-            def _refresh_results_tab():
-                try:
-                    from frontend_nicegui.components.results_view_container import render_results_view_container
-                    render_results_view_container(state)
-                except Exception as e:
-                    import traceback
-                    ui.label("❌ 結果タブの読込エラー").classes("text-h6 text-red")
-                    ui.markdown(f"```python\n{traceback.format_exc()}\n```").classes("text-caption full-width")
-
             with ui.tab_panel("results"):
-                _refresh_results_tab()
-                
-                # ── 自動監視 Fail-Safe ──
-                # 解析完了フラグが立っているのに表示が更新されていないケースへの対策
-                def _watch_results_state():
-                    if state.get("analysis_complete") and not state.get("analysis_running"):
-                        # 完了フラグがあるが、まだリフレッシュしていない場合
-                        if not state.get("_results_refreshed_by_timer"):
-                            _refresh_results_tab.refresh()
-                            state["_results_refreshed_by_timer"] = True
-                    elif state.get("analysis_running"):
-                         # 解析中になったらリフレッシュ済みフラグをリセット
-                         state["_results_refreshed_by_timer"] = False
-                
-                ui.timer(1.0, _watch_results_state)
-
-            # リフレッシュ関数を登録
-            state["_refresh_results"] = _refresh_results_tab.refresh
+                from frontend_nicegui.components.results_view_container import render_results_view_container
+                render_results_view_container(state)
 
             # --- 専門ツールパネル (Hidden Tabs) ---
             with ui.tab_panel("inverse"):
@@ -889,17 +767,11 @@ body {
     # ── タブ遷移コールバック登録 ──
     state["_switch_to_inverse"] = lambda: main_tabs.set_value("inverse")
     state["_switch_to_results"] = lambda: main_tabs.set_value("results")
-    state["_switch_to_data"] = lambda: main_tabs.set_value("data")
     state["_switch_to_data_smiles"] = lambda: main_tabs.set_value("data")
-    
-    # 目的変数設定（データタブ内のサブタブは data_tab 側で制御される可能性があるが、
-    # ここでは「データ管理」タブ自体をアクティブにする）
-    state["_switch_to_column_role"] = lambda: main_tabs.set_value("data")
 
     _REBUILD_MAP = {
         "eda":        "_refresh_eda_main",
-        "ml":         "_refresh_ml",
-        "results":    "_refresh_results",
+        "results":    "_refresh_results", # results_view_container 内の refresh が必要かも
         "inverse":    "_refresh_inverse",
         "doe":        "_refresh_doe",
         "computation": "_refresh_computation",
@@ -1234,53 +1106,7 @@ def help_descriptors_page():
         from frontend_nicegui.components.descriptor_help_page import render_descriptor_help
         render_descriptor_help()
 
-
-# ═══════════════════════════════════════════════════════════
-# 混合物・テンプレート設定専用ページ (Item 14)
-# ═══════════════════════════════════════════════════════════
-@ui.page('/mixture_template')
-def mixture_template_page():
-    """混合物設定・テンプレート管理ページ"""
-    from frontend_nicegui.main import CUSTOM_CSS 
-    ui.add_head_html(f"<style>{CUSTOM_CSS}</style>")
-    
-    # 仮設ステート (本来は app.storage.user 等で同期すべきだが、まずは構造を優先)
-    # main_page の state とは現時点では独立
-    page_state = {"df": None} 
-
-    with ui.header().classes('bg-slate-800 shadow-md'):
-        with ui.row().classes('items-center q-px-md q-py-sm full-width justify-between'):
-            with ui.row().classes('items-center gap-2'):
-                ui.icon('blender', color='cyan').classes('text-h5')
-                ui.label('🧪 混合物・テンプレート設定').classes('text-xl font-bold text-white')
-            ui.button('戻る', icon='arrow_back', on_click=lambda: ui.navigate.to('/')).props('flat color=white no-caps')
-    
-    with ui.column().classes('w-full q-pa-lg max-w-5xl mx-auto'):
-        ui.markdown("""
-        ### 🧪 混合物設定とデータテンプレート
-        普段の解析フローとは切り離し、特殊なデータ形式や混合物計算のプリセットを管理します。
-        """).classes('text-grey-4 q-mb-md')
-        
-        with ui.tabs().classes('w-full glass-card') as mix_tabs:
-            tab_mix = ui.tab('mixture', label='🧪 混合物設定', icon='science')
-            tab_tmp = ui.tab('template', label='📄 テンプレート管理', icon='description')
-        
-        with ui.tab_panels(mix_tabs, value='mixture').classes('w-full bg-transparent'):
-            with ui.tab_panel('mixture'):
-                from frontend_nicegui.components.mixture_input_panel import render_mixture_panel
-                render_mixture_panel(page_state)
-            
-            with ui.tab_panel('template'):
-                with ui.card().classes('full-width q-pa-md glass-card'):
-                    ui.label("解析用列役割テンプレート").classes("text-lg font-bold text-cyan")
-                    ui.label("CSVのヘッダー形式やデフォルトの列役割（目的変数など）をテンプレートとして保存し、読込時に自動適用できます。").classes("text-sm text-grey-5 q-mb-md")
-                    
-                    with ui.row().classes('q-gutter-sm'):
-                        ui.button("新規テンプレート作成", icon="add").props("unelevated color=indigo no-caps")
-                        ui.button("既存をインポート", icon="file_upload").props("outline color=grey no-caps")
-                    
-                    ui.separator().classes('q-my-md')
-                    ui.label("登録済みテンプレート: なし").classes("text-caption text-grey-6")
+# Plot viewer moved to plot_utils
 # ─────────────────────────────────────────────
 # エントリーポイント
 # ─────────────────────────────────────────────
