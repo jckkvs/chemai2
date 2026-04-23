@@ -1340,3 +1340,24 @@ async def render_llm_analysis_report(df, metadata=None):
             ui.label(f'❌ 解析失敗: {e}').classes('text-red-600')
 
 # 全文表示要件のため、以下に反映後の main.py 全文（末尾追記分含む）を提示します。
+
+# ─────────────────────────────────────────────
+# デバッグページ (指示に基づく追加)
+# ─────────────────────────────────────────────
+@ui.page('/debug', title='デバッグ情報')
+def debug_page():
+    ui.label('🔍 デバッグ情報').classes('text-2xl font-bold mb-4 text-white')
+    
+    with ui.card().classes('w-full glass-card q-pa-md'):
+        ui.label('app.storage.user の内容:').classes('font-bold text-lg text-cyan')
+        for key, value in app.storage.user.items():
+            if key == 'current_df' and value is not None:
+                ui.label(f"  {key}: DataFrame({value.shape})").classes('text-gray-300 font-mono')
+            else:
+                ui.label(f"  {key}: {value}").classes('text-gray-300 font-mono')
+        
+        ui.label('app.storage.general の内容:').classes('font-bold text-lg text-cyan mt-4')
+        for key, value in app.storage.general.items():
+            ui.label(f"  {key}: {value}").classes('text-gray-300 font-mono')
+    
+    ui.button('🔄 リロード', on_click=lambda: ui.navigate.to('/debug')).props('outline color=cyan')

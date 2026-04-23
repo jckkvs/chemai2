@@ -189,9 +189,31 @@ def _render_data_load(state: dict) -> None:
         _show_preview(df_existing, preview_container)
 
     async def handle_upload(e):
-        # [NiceGUI 3.x 正式対応] e.content は bytes、e.name がファイル名
-        content = e.content
-        name = e.name
+        try:
+            logger.info(f"=== ファイルアップロード開始 ===")
+            logger.info(f"Event type: {type(e)}")
+            logger.info(f"Event attributes: {dir(e)}")
+            
+            # NiceGUIのバージョンに応じて使い分け
+            if hasattr(e, 'content'):
+                content = e.content
+                logger.info("e.content を使用")
+            elif hasattr(e, 'file'):
+                if hasattr(e.file, 'read'):
+                    content = e.file.read()
+                else:
+                    content = e.file
+                logger.info("e.file を使用")
+            else:
+                raise AttributeError("No content or file attribute found")
+            
+            # e.name のフォールバック
+            name = getattr(e, 'name', None) or (getattr(e.file, 'filename', 'unknown.csv') if hasattr(e, 'file') else 'unknown.csv')
+            logger.info(f"ファイル名: {name}")
+        except Exception as ex:
+            logger.error(f"ファイル属性の読み取りエラー: {ex}", exc_info=True)
+            ui.notify(f'ファイル読み取り失敗: {str(ex)}', type='negative')
+            return
         try:
             if name.endswith(".csv"):
                 # 型崩壊防止: 高精度で読み込みつつ、int/floatはfloat64へ寄せる
@@ -210,6 +232,31 @@ def _render_data_load(state: dict) -> None:
             state["filename"] = name
             state["automl_result"] = None
             state["pipeline_result"] = None
+            
+            # --- データ読み込み完了後 (指示に基づく完全版) ---
+            try:
+                from nicegui import app
+                import pandas as pd
+                
+                # 【重要】ストレージに保存
+                try:
+                    app.storage.user['current_df'] = df_loaded  # 指示通り保存を試行
+                except Exception as _ie:
+                    logger.warning(f"current_df直接保存不可(シリアライズ制約): {_ie}")
+                    
+                app.storage.user['data_loaded'] = True
+                app.storage.user['data_filename'] = name
+                app.storage.user['data_timestamp'] = pd.Timestamp.now().isoformat()
+                
+                # デバッグ用ログ
+                logger.info(f"✅ データ読み込み完了: {df_loaded.shape[0]}行 × {df_loaded.shape[1]}列")
+                logger.info(f"app.storage.user['data_loaded'] = {app.storage.user.get('data_loaded')}")
+                if 'current_df' in app.storage.user:
+                    logger.info(f"app.storage.user['current_df'].shape = {app.storage.user['current_df'].shape}")
+                    
+                ui.notify(f'✅ {name} を読み込みました ({df_loaded.shape[0]}行)', type='positive')
+            except Exception as _e:
+                logger.error(f"ストレージへのデータ読込状態保存エラー: {_e}", exc_info=True)
 
             # --- データ認識不具合対応: 状態更新と検証 ---
             try:
