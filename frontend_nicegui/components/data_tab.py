@@ -190,130 +190,102 @@ def _render_data_load(state: dict) -> None:
         _show_preview(df_existing, preview_container)
 
     async def handle_upload(e):
+        """ファイルアップロードハンドラ - NiceGUI 3.x 完全対応版"""
         try:
             logger.info(f"=== ファイルアップロード開始 ===")
             
-            # NiceGUI 3.x 標準 API を優先使用
-            if hasattr(e, 'content') and e.content is not None:
-                content = e.content
-                logger.info("✅ e.content を使用 (NiceGUI 3.x)")
-            elif hasattr(e, 'file'):
-                # e.file が bytes ならそのまま使う
-                if isinstance(e.file, bytes):
-                    content = e.file
-                elif hasattr(e.file, 'read') and callable(e.file.read):
-                    # read() が同期メソッドか確認
-                    try:
-                        content = e.file.read()
-                        if inspect.iscoroutine(content):
-                            # coroutine ならエラーとして扱う
-                            raise TypeError("e.file.read() returned coroutine - needs await")
-                    except TypeError:
-                        # coroutine だった場合は e.file 自体（または None）を試行
-                        content = e.file if isinstance(e.file, bytes) else None
-                else:
-                    content = e.file
-                logger.info("e.file を使用 (フォールバック)")
-            else:
-                raise AttributeError("No content or file attribute found")
-
-            if content is None:
-                raise ValueError("ファイルコンテンツを取得できませんでした")
-
-            # ファイル名の取得
-            name = "unknown.csv"
-            try:
-                if hasattr(e, 'name') and e.name:
-                    name = e.name
-                elif hasattr(e, 'filename') and e.filename:
-                    name = e.filename
-                elif hasattr(e, 'file'):
-                    if hasattr(e.file, 'name') and e.file.name:
-                        name = e.file.name
-                    elif hasattr(e.file, 'filename') and e.file.filename:
-                        name = e.file.filename
-            except Exception:
-                pass
-
-            logger.info(f"✅ ファイル名取得: {name}, コンテンツ型: {type(content)}")
-        except Exception as ex:
-            logger.error(f"ファイル属性の読み取りエラー: {ex}", exc_info=True)
-            ui.notify(f'ファイル読み取り失敗: {str(ex)}', type='negative')
-            return
-        try:
-            if name.endswith(".csv"):
-                # 型崩壊防止: 高精度で読み込みつつ、int/floatはfloat64へ寄せる
-                df_loaded = pd.read_csv(io.BytesIO(content), float_precision="high")
-            elif name.endswith((".xlsx", ".xls")):
+            # === NiceGUI 3.x 標準 API: e.content (bytes), e.name (str) ===
+            # 複雑な hasattr チェーンは廃止し、標準仕様に準拠
+            content = e.content
+            filename = e.name
+            
+            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content) if content else 0} bytes")
+            
+            # === ファイル形式の判定と読み込み ===
+            if filename.endswith('.csv'):
+                df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
+            elif filename.endswith(('.xlsx', '.xls')):
                 df_loaded = pd.read_excel(io.BytesIO(content))
             else:
                 upload_status.text = "❌ CSV/Excelファイルのみ対応"
+                ui.notify('サポートされていないファイル形式です', type='warning')
                 return
             
-            # S0 (Raw Data)段階での精度保証: 全ての数値列を float64 キャスト
+            # === 数値列の精度保証: float64 に統一 ===
             for col in df_loaded.select_dtypes(include=['float16', 'float32', 'int8', 'int16', 'int32', 'int64']).columns:
                 df_loaded[col] = df_loaded[col].astype('float64')
-
+            
+            # === state への保存（アプリ内状態管理）===
             state["df"] = df_loaded
-            state["filename"] = name
+            state["filename"] = filename
             state["automl_result"] = None
             state["pipeline_result"] = None
+            state["precalc_done"] = False
             
-            # --- データ読み込み完了後 (指示に基づく完全版) ---
+            # === app.storage への保存（セッション永続化）===
+            # DataFrame はシリアライズ不可なため、CSV 文字列として保存
+            from nicegui import app
             try:
-                from nicegui import app
-                
-                # 【重要】ストレージに保存
-                try:
-                    app.storage.user['current_df'] = df_loaded  # 指示通り保存を試行
-                except Exception as _ie:
-                    logger.warning(f"current_df直接保存不可(シリアライズ制約): {_ie}")
-                    
-                app.storage.user['data_loaded'] = True
-                app.storage.user['data_filename'] = name
-                app.storage.user['data_timestamp'] = pd.Timestamp.now().isoformat()
-                
-                # デバッグ用ログ
-                logger.info(f"✅ データ読み込み完了: {df_loaded.shape[0]}行 × {df_loaded.shape[1]}列")
-                logger.info(f"app.storage.user['data_loaded'] = {app.storage.user.get('data_loaded')}")
-                if 'current_df' in app.storage.user:
-                    logger.info(f"app.storage.user['current_df'].shape = {app.storage.user['current_df'].shape}")
-                    
-                ui.notify(f'✅ {name} を読み込みました ({df_loaded.shape[0]}行)', type='positive')
-            except Exception as _e:
-                logger.error(f"ストレージへのデータ読込状態保存エラー: {_e}", exc_info=True)
-
-            # --- データ認識不具合対応: 状態更新と検証 ---
-            try:
-                from frontend_nicegui.main import set_loaded_data
-                from backend.utils.data_validator import DataValidator
-                set_loaded_data(df_loaded)
-                logger.info(DataValidator.generate_diagnostic_report(df_loaded))
-            except ImportError:
-                logger.warning("set_loaded_data が main.py からインポートできません")
-
-            _auto_detect_columns(state)
-            df = state["df"]
-            upload_status.text = f"✅ {name} 読み込み完了 ({len(df)}行 × {len(df.columns)}列)"
+                # CSV 文字列として保存（シリアライズ可能）
+                csv_buffer = io.StringIO()
+                df_loaded.to_csv(csv_buffer, index=False)
+                app.storage.user['current_df_csv'] = csv_buffer.getvalue()
+                app.storage.user['current_df_columns'] = list(df_loaded.columns)
+                app.storage.user['current_df_shape'] = df_loaded.shape
+            except Exception as storage_err:
+                logger.warning(f"app.storage への保存に失敗: {storage_err}")
+                # 保存失敗しても処理は継続（state には保存済み）
+            
+            app.storage.user['data_loaded'] = True
+            app.storage.user['data_filename'] = filename
+            app.storage.user['data_timestamp'] = pd.Timestamp.now().isoformat()
+            
+            logger.info(f"✅ DataFrame読み込み完了: {df_loaded.shape[0]}行 × {df_loaded.shape[1]}列")
+            logger.info(f"app.storage.user['data_loaded'] = {app.storage.user.get('data_loaded')}")
+            
+            # === UI 更新 ===
+            upload_status.text = f"✅ {filename} 読み込み完了 ({len(df_loaded)}行 × {len(df_loaded.columns)}列)"
             upload_status.classes(remove="text-red", add="text-green")
-            _show_preview(df, preview_container)
+            _show_preview(df_loaded, preview_container)
             _update_metrics(state, metrics_row)
+            
+            # === 列の自動検出 ===
+            _auto_detect_columns(state)
+            
+            # === 他コンポーネントの再描画 ===
             refresh = state.get("_refresh_tabs")
-
             if refresh:
-                refresh()
-
-            # --- LLM 解析タスクの発火 ---
+                try:
+                    refresh()
+                except Exception as refresh_err:
+                    logger.warning(f"タブ再描画エラー: {refresh_err}")
+            
+            # === LLM 解析タスクの発火（オプション機能）===
             try:
                 from frontend_nicegui.main import render_llm_analysis_report
-                asyncio.create_task(render_llm_analysis_report(df_loaded, metadata={"source": "upload", "filename": name}))
+                asyncio.create_task(render_llm_analysis_report(df_loaded, metadata={"source": "upload", "filename": filename}))
             except ImportError:
-                logger.warning("render_llm_analysis_report が main.py からインポートできません")
-
-            ui.notify(f"✅ {name} を読み込みました", type="positive")
-        except Exception as ex:
-            upload_status.text = f"❌ エラー: {ex}"
+                pass  # LLM 機能未実装時はスキップ
+            
+            ui.notify(f'✅ {filename} を読み込みました ({df_loaded.shape[0]}行)', type='positive')
+            
+        except AttributeError as ae:
+            logger.error(f"NiceGUI event attribute error: {ae}", exc_info=True)
+            upload_status.text = f"❌ エラー: ファイル属性の取得に失敗しました"
             upload_status.classes(remove="text-green", add="text-red")
+            ui.notify(f'ファイル読み取りエラー: {str(ae)}', type='negative')
+            
+        except pd.errors.EmptyDataError:
+            logger.error("Empty CSV file")
+            upload_status.text = "❌ エラー: ファイルが空です"
+            upload_status.classes(remove="text-green", add="text-red")
+            ui.notify('ファイルが空です', type='negative')
+            
+        except Exception as ex:
+            logger.error(f"❌ 予期せぬエラー: {ex}", exc_info=True)
+            upload_status.text = f"❌ エラー: {type(ex).__name__}: {str(ex)}"
+            upload_status.classes(remove="text-green", add="text-red")
+            ui.notify(f'エラー: {str(ex)}', type='negative')
 
     ui.upload(
         on_upload=handle_upload,
