@@ -549,6 +549,15 @@ async def main_page():
                     on_complete=lambda: main_tabs.set_value("results"),
                 )
                 
+                # 【重要】解析完了後に結果タブを強制的に再描画
+                refresh_fn = state.get("_refresh_results")
+                if callable(refresh_fn):
+                    try:
+                        refresh_fn()
+                        logger.info("✓ 結果タブを再描画しました")
+                    except Exception as re_ex:
+                        logger.warning(f"結果タブ再描画エラー: {re_ex}")
+                
                 # app.storage保存時
                 from nicegui import app
                 try:
@@ -830,7 +839,13 @@ async def main_page():
             # 4. 📑 結果・レポート
             with ui.tab_panel("results"):
                 from frontend_nicegui.components.results_view_container import render_results_view_container
-                render_results_view_container(state)
+                
+                # 【修正】定義側で refreshable ですが、ここでも確実に関数を取得
+                results_view = render_results_view_container
+                results_view(state)
+                
+                # state に refresh 関数を明示的に保持（解析完了時に呼び出すため）
+                state["_refresh_results"] = results_view.refresh
 
             # --- 専門ツールパネル (Hidden Tabs) ---
             with ui.tab_panel("inverse"):
