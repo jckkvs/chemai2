@@ -290,12 +290,9 @@ def _render_data_load(state: dict) -> None:
             for col in df_loaded.select_dtypes(include=['float16', 'float32', 'int8', 'int16', 'int32', 'int64']).columns:
                 df_loaded[col] = df_loaded[col].astype('float64')
             
-            # === 6. state への保存 ===
+            # === 6. state への保存（重要：結果はここではリセットしない）===
             state["df"] = df_loaded
             state["filename"] = filename
-            state["automl_result"] = None  # 解析前にリセット
-            state["automl_results"] = {}   
-            state["pipeline_result"] = None
             state["precalc_done"] = False
             
             # === 7. app.storage への保存（DataFrame のみ、結果は保存しない）===
@@ -314,11 +311,10 @@ def _render_data_load(state: dict) -> None:
                 app.storage.user['current_df_columns'] = list(df_loaded.columns)
                 app.storage.user['current_df_shape'] = list(df_loaded.shape)
                 
-                # 【重要】ここでは Pipeline などの結果オブジェクトは保存しない
-                # 既存の結果をクリア（シリアライズエラー防止）
+                # 【重要】既存の結果をクリア（シリアライズエラー防止）
                 for key in list(app.storage.user.keys()):
                     if key in ['automl_result', 'automl_results', 'pipeline_result', 'model', 'pipeline']:
-                        del app.storage.user[key]
+                        app.storage.user.pop(key, None)
                 
             except Exception as storage_err:
                 logger.warning(f"app.storage 保存警告: {storage_err}")
