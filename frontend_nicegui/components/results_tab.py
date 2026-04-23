@@ -57,19 +57,21 @@ def render_results_tab(state: dict[str, Any]) -> None:
 
         ui.button('🔄 結果を再読込', on_click=_on_reload).props('outline dense icon=refresh').classes('glass-card')
 
-    # [追加] 初期表示チェック（ストレージから結果を復元）
-    async def _initial_check():
-        await asyncio.sleep(0.5)  # UI安定待ち
-        # [修正] 複数キーをチェック
+    # [追加] 3秒ごとに結果をチェックするタイマー (指示に基づく)
+    async def _check_for_results_poll():
+        """ストレージに結果がないか定期的にチェック"""
         results = (app.storage.user.get('analysis_results') or 
                    app.storage.user.get('current_results'))
-        
-        if results and not single_ar:
-            ui.notify(f"📋 ストレージから前回の解析結果が見つかりました ({results.get('model_name', 'N/A')})", type='info')
-            # ログ出力
-            logger.info(f"[InitialCheck] Storage results found: {results.get('model_name')}")
-
-    ui.timer(0.1, _initial_check, once=True)
+        # 既に画面に結果が出ている場合（single_arが存在）は通知を抑制
+        if results and not single_ar and not hasattr(_check_for_results_poll, '_displayed'):
+            _check_for_results_poll._displayed = True
+            ui.notify('✅ 解析結果を検出しました。再読込ボタンで表示を更新できます。', type='positive')
+            # 自動更新をトリガー
+            refresh_fn = state.get("_refresh_results")
+            if refresh_fn:
+                refresh_fn()
+    
+    ui.timer(3.0, _check_for_results_poll)
 
     # 結果が全くない場合
     if not all_results and single_ar is None:
@@ -2243,11 +2245,33 @@ def display_analysis_results_summary(results, container):
     container.clear()
     with container:
         try:
-            with ui.card().classes('w-full bg-green-50 border-l-4 border-green-500 p-4 glass-card'):
-                ui.label('✅ 解析完了（ストレージ同期）').classes('font-bold text-green-800')
+            with ui.card().classes('w-full bg-green-50 border-l-4 border-green-500 p-4 mb-4 glass-card'):
+                ui.label('✅ 解析完了').classes('font-bold text-green-800 text-lg')
                 if isinstance(results, dict):
-                    ui.markdown(f"**最良モデル**: {results.get('model_name', 'N/A')}")
+                    ui.markdown(f"**モデル**: {results.get('model_name', 'N/A')}")
                     ui.markdown(f"**スコア**: {results.get('score', 'N/A')}")
-                    ui.markdown(f"**タスク**: {results.get('task', 'N/A')}")
+                    if 'best_model' in results:
+                        ui.markdown(f"**最適モデル**: {results['best_model']}")
+            
+            # データテーブル (指示に基づく追加)
+            if 'predictions_df' in results and results['predictions_df'] is not None:
+                ui.label('📊 予測結果').classes('font-bold text-lg mt-4')
+                df = results['predictions_df']
+                if hasattr(df, 'head'):
+                    ui.table.from_pandas(df.head(10)).classes('w-full')
+                    
         except Exception as e:
             logger.error(f"簡易サマリー表示エラー: {e}")
+            ui.notify(f'結果表示エラー: {str(e)}', type='negative')
+
+def manual_refresh_from_storage(state, container=None):
+    """手動で結果を更新（指示に基づく）"""
+    results = (app.storage.user.get('analysis_results') or 
+               app.storage.user.get('current_results'))
+    if results:
+        ui.notify('✅ 結果を更新します', type='positive')
+        refresh_fn = state.get("_refresh_results")
+        if refresh_fn:
+            refresh_fn()
+    else:
+        ui.notify('⚠️ 保存された結果が見つかりません', type='warning')
