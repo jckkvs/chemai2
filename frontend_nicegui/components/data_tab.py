@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import asyncio
+import inspect
 import importlib
 import logging
 from typing import Any
@@ -192,26 +193,47 @@ def _render_data_load(state: dict) -> None:
         try:
             logger.info(f"=== ファイルアップロード開始 ===")
             
-            # NiceGUI 3.x 標準 API を使用
-            try:
-                content = e.content  # bytes
-                name = e.name        # str
-                logger.info(f"✅ e.content / e.name を使用 (NiceGUI 3.x)")
-            except AttributeError:
-                # フォールバック: e.file が存在する場合
-                logger.warning("e.content または e.name が見つかりません。フォールバックを試行します。")
-                if hasattr(e, 'file'):
-                    # e.file.read() がコルーチンの可能性があるため型を確認
-                    if hasattr(e.file, 'read') and callable(e.file.read):
+            # NiceGUI 3.x 標準 API を優先使用
+            if hasattr(e, 'content') and e.content is not None:
+                content = e.content
+                logger.info("✅ e.content を使用 (NiceGUI 3.x)")
+            elif hasattr(e, 'file'):
+                # e.file が bytes ならそのまま使う
+                if isinstance(e.file, bytes):
+                    content = e.file
+                elif hasattr(e.file, 'read') and callable(e.file.read):
+                    # read() が同期メソッドか確認
+                    try:
                         content = e.file.read()
-                        # もし content がコルーチンなら await が必要だが、
-                        # 今回は e.content 優先のため、一旦同期的に読み込みを試みる
-                    else:
-                        content = e.file
-                    name = getattr(e, 'name', getattr(e.file, 'name', 'uploaded_file.csv'))
-                    logger.info("e.file を使用して読み込みました")
+                        if inspect.iscoroutine(content):
+                            # coroutine ならエラーとして扱う
+                            raise TypeError("e.file.read() returned coroutine - needs await")
+                    except TypeError:
+                        # coroutine だった場合は e.file 自体（または None）を試行
+                        content = e.file if isinstance(e.file, bytes) else None
                 else:
-                    raise AttributeError(f"利用可能な属性が見つかりません。dir(e): {dir(e)}")
+                    content = e.file
+                logger.info("e.file を使用 (フォールバック)")
+            else:
+                raise AttributeError("No content or file attribute found")
+
+            if content is None:
+                raise ValueError("ファイルコンテンツを取得できませんでした")
+
+            # ファイル名の取得
+            name = "unknown.csv"
+            try:
+                if hasattr(e, 'name') and e.name:
+                    name = e.name
+                elif hasattr(e, 'filename') and e.filename:
+                    name = e.filename
+                elif hasattr(e, 'file'):
+                    if hasattr(e.file, 'name') and e.file.name:
+                        name = e.file.name
+                    elif hasattr(e.file, 'filename') and e.file.filename:
+                        name = e.file.filename
+            except Exception:
+                pass
 
             logger.info(f"✅ ファイル名取得: {name}, コンテンツ型: {type(content)}")
         except Exception as ex:
