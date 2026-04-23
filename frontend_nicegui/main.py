@@ -543,25 +543,40 @@ async def main_page():
 
             try:
                 from frontend_nicegui.components.analysis_runner import run_analysis
-                await run_analysis(
+                
+                # 【重要】解析実行と結果取得
+                result = await run_analysis(
                     state,
                     analysis_status_container,
                     on_complete=lambda: main_tabs.set_value("results"),
                 )
                 
-                # 【重要】解析完了後に結果タブを強制的に再描画
-                refresh_fn = state.get("_refresh_results")
-                if callable(refresh_fn):
-                    try:
-                        refresh_fn()
-                        logger.info("✓ 結果タブを再描画しました")
-                    except Exception as re_ex:
-                        logger.warning(f"結果タブ再描画エラー: {re_ex}")
+                # 【重要】結果を state に保存（必須！）
+                if result is not None:
+                    state["automl_result"] = result
+                    state["automl_results"] = {"デフォルト": result}
+                    state["best_set_name"] = "デフォルト"
+                    
+                    # 【重要】結果タブを強制再描画
+                    refresh_fn = state.get("_refresh_results")
+                    if callable(refresh_fn):
+                        try:
+                            refresh_fn()
+                            logger.info("✓ 結果タブを再描画しました")
+                        except Exception as re_ex:
+                            logger.warning(f"結果タブ再描画エラー: {re_ex}")
                 
-                # app.storage保存時
+                # 【修正】app.storage にはシリアライズ可能なデータのみ保存
                 from nicegui import app
                 try:
-                    clean_state = make_state_serializable(state)
+                    # 関数や巨大なデータ、非シリアライズオブジェクトを除外
+                    clean_state = {
+                        k: v for k, v in state.items() 
+                        if not callable(v) and k not in [
+                            '_refresh_tabs', '_refresh_results', '_refresh_eda_main', 
+                            '_apply_smart_defaults', 'df', 'automl_result', 'automl_results', 'pipeline_result'
+                        ]
+                    }
                     app.storage.user['analysis_state'] = clean_state
                 except Exception as e:
                     logger.warning(f"State保存スキップ: {e}")
