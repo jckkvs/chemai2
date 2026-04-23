@@ -10,14 +10,14 @@ Usage:
     → http://localhost:8080
 """
 from __future__ import annotations
-
 import sys
 from pathlib import Path
+import os
+import yaml
+import logging
 
 # backendへのパスを追加
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import logging
 
 from nicegui import ui, app
 from backend.utils.compatibility import CompatibilityManager
@@ -482,6 +482,12 @@ async def main_page():
         "metric_evaluator": None,
         "metric_cache": {},
         "available_categories": [],
+        # 通知制御フラグ
+        "_descriptor_calc_notified": False,
+        "_descriptor_calc_done_notified": False,
+        "_descriptor_calc_error_notified": False,
+        "_analysis_result_notified": False,
+        "_last_df_hash": None,
     }
 
     ui.add_head_html(f"<style>{CUSTOM_CSS}</style>")
@@ -512,9 +518,7 @@ async def main_page():
         return _clean(state)
 
     async def _run_analysis():
-        """解析実行関数 - エラー耐性強化版"""
         try:
-            # ── プリフライトチェック ──
             issues = _preflight_check(state)
             if issues:
                 for issue in issues:
@@ -526,21 +530,9 @@ async def main_page():
                 ui.notify('⚠️ データが読み込まれていません', type='warning')
                 return
             
-            # 少量データ警告
             if len(df) < 10:
                 ui.notify(f'⚠️ データが少量です ({len(df)}行)。結果の信頼性に注意してください', type='warning')
 
-            # CV folds をデータサイズに応じて調整
-            n_valid = len(df)
-            if n_valid < 10:
-                state['cv_folds'] = 2
-            elif n_valid < 50:
-                state['cv_folds'] = 3
-            else:
-                state['cv_folds'] = min(5, n_valid // 10)
-            logger.info(f"CV Folds adjusted to {state['cv_folds']} based on {n_valid} samples")
-
-            # ボタン無効化（二重実行防止） - list フォールバック対応
             if isinstance(run_btn, list):
                 for btn in run_btn:
                     if hasattr(btn, 'disable'): btn.disable()
@@ -553,13 +545,7 @@ async def main_page():
 
             try:
                 from frontend_nicegui.components.analysis_runner import run_analysis
-                
-                # 【重要】解析実行と結果取得
-                result = await run_analysis(
-                    state,
-                    analysis_status_container,
-                    on_complete=lambda: main_tabs.set_value("results"),
-                )
+                result = await run_analysis(state, analysis_status_container, on_complete=lambda: main_tabs.set_value("results"))
                 
                 # 【重要】結果がNoneでないことを確認
                 if result is not None:
@@ -567,29 +553,10 @@ async def main_page():
                     state["automl_result"] = result
                     if "automl_results" not in state or not state["automl_results"]:
                         state["automl_results"] = {"デフォルト": result}
-                    
-                    # 結果タブを強制再描画
-                    refresh_fn = state.get("_refresh_results")
-                    if callable(refresh_fn):
-                        try:
-                            refresh_fn()
-                            logger.info("✓ 結果タブを再描画しました")
-                        except Exception as re_ex:
-                            logger.warning(f"結果タブ再描画エラー: {re_ex}")
-                    
-                    ui.notify("✅ 解析完了！結果タブを確認してください", type="positive")
                 
-                # 【修正】app.storage にはシリアライズ可能なデータのみ保存
                 from nicegui import app
                 try:
-                    # 関数や巨大なデータ、非シリアライズオブジェクトを除外
-                    clean_state = {
-                        k: v for k, v in state.items() 
-                        if not callable(v) and k not in [
-                            '_refresh_tabs', '_refresh_results', '_refresh_eda_main', 
-                            '_apply_smart_defaults', 'df', 'automl_result', 'automl_results', 'pipeline_result'
-                        ]
-                    }
+                    clean_state = make_state_serializable(state)
                     app.storage.user['analysis_state'] = clean_state
                 except Exception as e:
                     logger.warning(f"State保存スキップ: {e}")
@@ -1024,11 +991,11 @@ async def main_page():
 
     async def _auto_compute_descriptors():
         if _computing["active"]:
-            return  # 既に計算中
+            return
         if state["df"] is None or not state.get("smiles_col"):
             return
         if state.get("precalc_done"):
-            return  # 計算済み
+            return
 
         smiles_col = state["smiles_col"]
         if smiles_col not in state["df"].columns:
@@ -1038,6 +1005,13 @@ async def main_page():
         try:
             from nicegui import run
             import pandas as pd
+            import hashlib
+
+            # DataFrameの変更をチェック（無限ループ防止）
+            df_hash = hashlib.md5(state["df"].to_json().encode()).hexdigest()
+            if state.get("_last_df_hash") == df_hash:
+                return
+            state["_last_df_hash"] = df_hash
 
             smiles_list = state["df"][smiles_col].dropna().tolist()
             if not smiles_list:
@@ -1045,15 +1019,12 @@ async def main_page():
                 return
 
             n_mols = len(smiles_list)
-            # timeout=0は永久表示→dismiss()が効かないケースがあるため
-            # 十分長いtimeout (10分) を設定し、完了前に消えないようにする
-            _calc_notif = ui.notify(
-                f"⚗️ SMILES特徴量を計算中（{n_mols}件）",
-                type="info", timeout=600000,  # 10分（計算完了時にdismiss試行）
-            )
+            
+            # 通知フラグチェック
+            if not state.get("_descriptor_calc_notified"):
+                _calc_notif = ui.notify(f"⚗️ SMILES特徴量を計算中（{n_mols}件）", type="info", timeout=600000)
+                state["_descriptor_calc_notified"] = True
 
-            # ── エンジンごとにチャンク実行 (Connection Lost 防止) ──
-            # 各 run.io_bound の間でイベントループに制御が戻り、WebSocketハートビートが維持される。
             collected_dfs: list[pd.DataFrame] = []
             n_ok = 0
 
@@ -1064,19 +1035,14 @@ async def main_page():
 
                 logger.debug(f"[AutoCalc] {label} 計算中...")
                 try:
-                    df_eng, n_cols = await run.io_bound(
-                        _compute_one_engine,
-                        module_path, class_name, smiles_list, kwargs,
-                    )
+                    df_eng, n_cols = await run.io_bound(_compute_one_engine, module_path, class_name, smiles_list, kwargs)
                     if df_eng is not None and not df_eng.empty:
                         collected_dfs.append(df_eng.reset_index(drop=True))
                         n_ok += 1
                         logger.debug(f"[AutoCalc] {label}: {n_cols}個")
                 except Exception as exc:
                     logger.debug(f"[AutoCalc] {label}: スキップ ({exc})")
-                # ← ここでイベントループに制御が戻る（await の効果）
 
-            # 全て結合
             if collected_dfs:
                 df_desc = pd.concat(collected_dfs, axis=1)
                 df_desc = df_desc.loc[:, ~df_desc.columns.duplicated()]
@@ -1088,28 +1054,21 @@ async def main_page():
             state["precalc_done"] = True
             n_desc = df_desc.shape[1]
 
-            # 計算中通知を閉じ、完了通知を表示
             try:
                 _calc_notif.dismiss()
             except Exception:
                 try:
                     _calc_notif.close()
                 except Exception:
-                    # NiceGUIのバージョンによりdismiss/closeが使えない場合
-                    # JavaScriptで全通知をクリア
                     try:
                         ui.run_javascript("document.querySelectorAll('.q-notification').forEach(n => n.remove())")
                     except Exception:
                         pass
-            ui.notify(
-                f"✅ {n_desc}個の記述子を計算しました",
-                type="positive", timeout=5000,
-            )
+            
+            ui.notify(f"✅ {n_desc}個の記述子を計算しました", type="positive", timeout=5000)
 
-            # 目的変数名から推薦記述子セットを自動適用
             _auto_apply_recommendation(state)
 
-            # UIの再描画をトリガー
             refresh_fn = state.get("_refresh_tabs")
             if refresh_fn is not None:
                 try:
@@ -1119,11 +1078,8 @@ async def main_page():
 
         except Exception as e:
             logger.warning(f"[AutoCalc] 特徴量計算エラー: {e}")
-            ui.notify(
-                "特徴量の計算中にエラーが発生しました",
-                type="warning", timeout=5000,
-            )
-            state["precalc_done"] = True  # エラー時も無限ループ防止
+            ui.notify("特徴量の計算中にエラーが発生しました", type="warning", timeout=5000)
+            state["precalc_done"] = True
         finally:
             _computing["active"] = False
 

@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  fastapi:
+    build:
+      context: .
+      dockerfile: backend_fastapi/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./backend_fastapi:/app/backend_fastapi
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    command: python -m uvicorn backend_fastapi.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+  nextjs:
+    build:
+      context: ./frontend_next
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend_next:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=development
+    depends_on:
+      - fastapi
+    command: npm run dev
+    restart: unless-stopped
+
+  nicegui:
+    image: python:3.11-slim
+    ports:
+      - "8085:8085"
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+    command: >
+      bash -c "
+      pip install -q nicegui pandas scikit-learn &&
+      python frontend_nicegui/main.py
+      "
+    restart: unless-stopped
+
+volumes:
+  node_modules:
+  next_build:
