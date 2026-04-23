@@ -403,29 +403,32 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             try:
                 from nicegui import app
                 
-                # 1. state へ保存（即時表示用）
+                # 1. state へ保存（即時表示用 - オブジェクトそのまま）
                 state["automl_result"] = best_result
                 state["automl_results"] = all_results
                 state["best_set_name"] = best_set_name
                 
-                # 2. storage へ保存（セッション永続化用）
-                # 注意: オブジェクト全体がシリアライズ不可な場合に備え、主要情報を別途保存
-                app.storage.user['automl_result'] = best_result 
-                app.storage.user['analysis_complete'] = True
-                
-                # 互換用サマリー
-                app.storage.user['analysis_results'] = {
-                    'model_name': getattr(best_result, "best_model_key", "不明"),
-                    'score': getattr(best_result, "best_score", None),
-                    'best_model': getattr(best_result, "best_model_key", "不明"),
-                    'task': getattr(best_result, "task", "regression"),
-                    'timestamp': time.time(),
+                # 2. storage へ保存（セッション永続化用 - JSONシリアライズ可能なサマリー）
+                # Pipeline等はJSON不可なので、メタデータのみ抽出
+                storage_data = {
+                    "model_name": getattr(best_result, "best_model_key", "不明"),
+                    "best_model_key": getattr(best_result, "best_model_key", "不明"),
+                    "best_score": float(getattr(best_result, "best_score", 0)),
+                    "task": getattr(best_result, "task", "regression"),
+                    "timestamp": pd.Timestamp.now().isoformat() if hasattr(pd, 'Timestamp') else time.time(),
+                    "set_name": best_set_name,
+                    "is_summary": True # サマリーであることを明示
                 }
                 
-                logger.info(f"✓ 解析結果を保存完了: {best_set_name}")
+                app.storage.user['automl_result'] = storage_data
+                app.storage.user['automl_results'] = {best_set_name: storage_data}
+                app.storage.user['analysis_complete'] = True
+                
+                logger.info(f"✓ 解析結果を保存完了: {best_set_name} (JSONサマリー形式)")
                 ui.notify('✅ 解析結果を保存しました', type='positive')
             except Exception as _se:
-                logger.warning(f"ストレージへの保存に失敗（シリアライズエラーの可能性）: {_se}")
+                logger.warning(f"ストレージへの保存に失敗: {_se}")
+                # 失敗しても state にはあるので継続可能
 
             # ── 評価エンジン（StratifiedMetricCalculator）の初期化と一括計算 ──
             try:

@@ -280,27 +280,44 @@ def _render_data_load(state: dict) -> None:
                 ui.notify('読み込んだデータが空です。ファイル内容を確認してください。', type='warning')
                 return
             
-            # === 数値列の精度保証: float64 に統一 ===
+            # === 4. データ行数の検証（重要！）===
+            n_rows = len(df_loaded)
+            if n_rows < 10:
+                logger.warning(f"⚠️ データ行数が少すぎます: {n_rows}行（推奨: 10行以上）")
+                ui.notify(f'⚠️ データ行数が少ないです（{n_rows}行）。解析に失敗する可能性があります。', type='warning')
+            
+            # === 5. 数値列の精度保証: float64 に統一 ===
             for col in df_loaded.select_dtypes(include=['float16', 'float32', 'int8', 'int16', 'int32', 'int64']).columns:
                 df_loaded[col] = df_loaded[col].astype('float64')
             
-            # === state への保存（アプリ内状態管理）===
+            # === 6. state への保存 ===
             state["df"] = df_loaded
             state["filename"] = filename
-            state["automl_result"] = None
+            state["automl_result"] = None  # 解析前にリセット
+            state["automl_results"] = {}   
             state["pipeline_result"] = None
             state["precalc_done"] = False
             
-            # === app.storage への保存（セッション永続化）===
+            # === 7. app.storage への保存（DataFrame のみ、結果は保存しない）===
             from nicegui import app
             try:
                 csv_buffer = io.StringIO()
                 df_loaded.to_csv(csv_buffer, index=False)
-                app.storage.user['current_df_csv'] = csv_buffer.getvalue()
+                csv_str = csv_buffer.getvalue()
+                
+                # 大きすぎる場合は切り捨て
+                if len(csv_str) > 5_000_000:
+                    csv_str = csv_str[:5_000_000]
+                    logger.warning("保存データを切り捨てました")
+                
+                app.storage.user['current_df_csv'] = csv_str
                 app.storage.user['current_df_columns'] = list(df_loaded.columns)
-                app.storage.user['current_df_shape'] = df_loaded.shape
+                app.storage.user['current_df_shape'] = list(df_loaded.shape)
+                
+                # 【重要】ここでは Pipeline などの結果オブジェクトは保存しない
+                
             except Exception as storage_err:
-                logger.warning(f"app.storage への保存に失敗: {storage_err}")
+                logger.warning(f"app.storage 保存警告: {storage_err}")
             
             app.storage.user['data_loaded'] = True
             app.storage.user['data_filename'] = filename
