@@ -30,6 +30,7 @@ services:
     command: npm run dev
     restart: unless-stopped
 
+  # ▼ 既存 NiceGUI はポート 8085 で独立維持 ▼
   nicegui:
     image: python:3.11-slim
     ports: ["8085:8085"]
@@ -59,6 +60,7 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped
+
   worker:
     build: ./backend_fastapi
     volumes:

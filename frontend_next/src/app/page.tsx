@@ -82,16 +82,11 @@ export default function HomePage() {
                   <div className="animate-fade-in">
                     <SmilesEditor onSmilesChange={setCurrentSmiles} initialSmiles={currentSmiles} />
                     <div className="mt-2 p-3 bg-slate-800 rounded border border-slate-700 font-mono text-xs text-cyan-400 break-all">
-                      SMILES: {currentSmiles || '未入力'}
-                    </div>
-                  </div>
-                )}
-
-                {showEDA && (
+                            {showEDA && uploadedData && (
                   <div className="animate-fade-in">
                     <EDAPanel 
-                      file={uploadedData?.file || null} 
-                      filename={uploadedData?.metadata.filename || ''} 
+                      file={uploadedData.file} 
+                      filename={uploadedData.metadata.filename} 
                       targetCol={config.target_col} 
                     />
                   </div>
@@ -165,13 +160,16 @@ export default function HomePage() {
             </div>
 
             {/* SHAP 可視化 (Wide View) */}
-            {result && showSHAP && (
+            {result && showSHAP && result.shap_data && (
               <div className="animate-slide-up">
-                <SHAPViewer jobId="current" shapData={result.shap_data || null} />
+                <SHAPViewer data={result.shap_data} />
               </div>
             )}
           </div>
         )}
+
+
+
       </div>
     </main>
   );
