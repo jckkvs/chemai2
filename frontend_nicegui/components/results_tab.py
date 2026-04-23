@@ -41,39 +41,32 @@ def render_results_tab(state: dict[str, Any]) -> None:
     # [追加] 結果を再読込するボタン (指示に基づく)
     with ui.row().classes('w-full justify-end q-mb-md'):
         def _on_reload():
-            # [指示に基づく修正] 複数の保存場所をチェック
-            results = (app.storage.user.get('analysis_results') or 
-                       app.storage.user.get('current_results') or
-                       app.storage.general.get('analysis_results'))
-            
-            # デバッグ用：保存されている全キーを表示
-            logger.info("=== app.storage.user の全キー ===")
-            for key in app.storage.user.keys():
-                logger.info(f"  {key}: {type(app.storage.user[key])}")
+            # [指示に基づく修正] 統一されたキー automl_result を最優先でチェック
+            results = (app.storage.user.get('automl_result') or 
+                       app.storage.user.get('analysis_results') or 
+                       app.storage.user.get('current_results'))
             
             logger.info(f"Retrieved results: {bool(results)}")
 
             if results:
-                ui.notify(f"✅ 結果が見つかりました ({results.get('model_name', '不明')})。表示を更新します。", type='positive')
+                ui.notify(f"✅ 結果を復元しました。表示を更新します。", type='positive')
                 # 状態のリフレッシュをトリガー
                 refresh_fn = state.get("_refresh_results")
                 if refresh_fn:
                     refresh_fn()
             else:
                 ui.notify('⚠️ 保存された解析結果が見つかりません。', type='warning')
-                logger.warning(f"結果の復元に失敗しました。現在のキー: {list(app.storage.user.keys())}")
 
         ui.button('🔄 結果を再読込', on_click=_on_reload).props('outline dense icon=refresh').classes('glass-card')
 
     # [追加] 3秒ごとに結果をチェックするタイマー (指示に基づく)
     async def _check_for_results_poll():
         """ストレージに結果がないか定期的にチェック"""
-        results = (app.storage.user.get('analysis_results') or 
-                   app.storage.user.get('current_results'))
+        results = app.storage.user.get('automl_result')
         # 既に画面に結果が出ている場合（single_arが存在）は通知を抑制
         if results and not single_ar and not hasattr(_check_for_results_poll, '_displayed'):
             _check_for_results_poll._displayed = True
-            ui.notify('✅ 解析結果を検出しました。再読込ボタンで表示を更新できます。', type='positive')
+            ui.notify('✅ 解析結果を検出しました。', type='positive')
             # 自動更新をトリガー
             refresh_fn = state.get("_refresh_results")
             if refresh_fn:
