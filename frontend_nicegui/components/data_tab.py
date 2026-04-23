@@ -253,7 +253,6 @@ def _render_data_load(state: dict) -> None:
             # --- データ読み込み完了後 (指示に基づく完全版) ---
             try:
                 from nicegui import app
-                import pandas as pd
                 
                 # 【重要】ストレージに保存
                 try:
