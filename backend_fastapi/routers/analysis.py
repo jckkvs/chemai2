@@ -144,8 +144,20 @@ async def websocket_progress(websocket: WebSocket, job_id: str):
             if status["status"] in ["completed", "failed", "cancelled"]:
                 break
             
-            await asyncio.sleep(1.0)
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for job {job_id}")
-    except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}", exc_info=True)
+
+from fastapi.responses import StreamingResponse
+import json
+
+@router.get("/analysis/stream/{job_id}")
+async def stream_progress(job_id: str):
+    """SSEによる進捗配信（WebSocket互換/フォールバック用）"""
+    async def event_generator():
+        while True:
+            status = await job_manager.get_status(job_id)
+            yield f"event: progress\ndata: {json.dumps(status)}\n\n"
+            if status.get("status") in ("completed", "failed", "cancelled", "not_found"):
+                yield f"event: complete\ndata: {json.dumps(status)}\n\n"
+                break
+            await asyncio.sleep(0.8)
+            
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

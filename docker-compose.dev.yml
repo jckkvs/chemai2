@@ -1,0 +1,92 @@
+version: '3.8'
+services:
+  fastapi:
+    build: ./backend_fastapi
+    ports: ["8000:8000"]
+    volumes:
+      - ./backend:/app/backend
+      - ./backend_fastapi:/app/backend_fastapi
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+psycopg2://chemai:chemai@db:5432/chemai
+      - JWT_SECRET=chemai-dev-secret-change-in-prod
+    depends_on:
+      - redis
+      - db
+    command: python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+  nextjs:
+    build: ./frontend_next
+    ports: ["3000:3000"]
+    volumes:
+      - ./frontend_next:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - fastapi
+    command: npm run dev
+    restart: unless-stopped
+
+  nicegui:
+    image: python:3.11-slim
+    ports: ["8085:8085"]
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+    command: bash -c "pip install -q nicegui pandas scikit-learn && python frontend_nicegui/main.py"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: chemai
+      POSTGRES_PASSWORD: chemai
+      POSTGRES_DB: chemai
+    ports: ["5432:5432"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+  worker:
+    build: ./backend_fastapi
+    volumes:
+      - ./backend:/app/backend
+      - ./backend_fastapi:/app/backend_fastapi
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+psycopg2://chemai:chemai@db:5432/chemai
+    depends_on:
+      - redis
+      - db
+    command: celery -A celery_app worker --loglevel=info
+    restart: unless-stopped
+
+  beat:
+    build: ./backend_fastapi
+    volumes:
+      - ./backend:/app/backend
+      - ./backend_fastapi:/app/backend_fastapi
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    command: celery -A celery_app beat --loglevel=info
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  pg_data:
