@@ -164,6 +164,15 @@ def _detect_smiles_col(df: pd.DataFrame) -> str | None:
 # ================================================================
 # ① 最良モデル詳細タブ
 # ================================================================
+def _get_attr(obj, key: str, default=None):
+    """ObservableDict と通常オブジェクトの両方に対応した属性取得"""
+    if hasattr(obj, key):
+        return getattr(obj, key)
+    elif isinstance(obj, dict):
+        return obj.get(key, default)
+    return default
+
+
 def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
     """正方形プロット（ホバー→構造サイドパネル）＋指標カード＋Feature Importance。"""
     import plotly.graph_objects as go
@@ -171,9 +180,9 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
     # ── ヘッダー ──
     with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
         ui.icon("emoji_events", color="amber", size="md")
-        ui.label(f"最良モデル: {ar.best_model_key}").classes("text-h5 text-bold hero-gradient")
+        ui.label(f"最良モデル: {_get_attr(ar, 'best_model_key', '不明')}").classes("text-h5 text-bold hero-gradient")
         ui.badge(f"セット: {set_name}", color="teal").props("dense")
-        ui.badge(f"CVスコア: {ar.best_score:.4f}", color="cyan").props("dense")
+        ui.badge(f"CVスコア: {_get_attr(ar, 'best_score', 0):.4f}", color="cyan").props("dense")
 
     model    = getattr(ar, "best_pipeline", None)
     proc_X   = getattr(ar, "processed_X", None)
@@ -196,7 +205,7 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
         y_cv_p = np.asarray(cv_pred).ravel()
         cv_residuals = y_cv_t - y_cv_p
 
-        if ar.task == "regression":
+        if _get_attr(ar, "task", "regression") == "regression":
             from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
             try:
                 cv_r2   = r2_score(y_cv_t, y_cv_p)
@@ -259,8 +268,8 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                     metrics = sm.to_dict()
                 elif isinstance(sm, dict):
                     metrics = sm
-            elif hasattr(ar, "stratified_metrics"):
-                sm = ar.stratified_metrics
+            elif _get_attr(ar, "stratified_metrics") is not None:
+                sm = _get_attr(ar, "stratified_metrics")
                 if hasattr(sm, "to_dict"):
                     metrics = sm.to_dict()
             
@@ -346,7 +355,7 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                 acc = f1 = float("nan")
             with ui.row().classes("q-gutter-sm q-mb-md"):
                 for val, lbl, col in [
-                    (f"{ar.best_score:.4f}", ar.scoring,     "cyan"),
+                    (f"{_get_attr(ar, 'best_score', 0):.4f}", _get_attr(ar, 'scoring', 'score'),     "cyan"),
                     (f"{acc:.4f}",           "Accuracy(OOF)","teal"),
                     (f"{f1:.4f}",            "F1-weighted",  "amber"),
                 ]:
@@ -385,7 +394,7 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                     template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0.1)",
                     height=max(300, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
-                    xaxis_title="重要度", title=f"Feature Importance ({ar.best_model_key})",
+                    xaxis_title="重要度", title=f"Feature Importance ({_get_attr(ar, 'best_model_key', '不明')})",
                 )
                 ui.plotly(fig_fi).classes("full-width")
             elif hasattr(est, "coef_"):
@@ -402,7 +411,7 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                     template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0.1)",
                     height=max(300, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
-                    xaxis_title="回帰係数", title=f"回帰係数 ({ar.best_model_key})",
+                    xaxis_title="回帰係数", title=f"回帰係数 ({_get_attr(ar, 'best_model_key', '不明')})",
                 )
                 ui.plotly(fig_c).classes("full-width")
 
@@ -491,7 +500,7 @@ def _render_comparison_tab(success_results: dict, state: dict) -> None:
     else:
         # 1セットの場合はシンプルなスコア比較テーブル
         ar = success_results[set_names[0]]
-        scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+        scores = _get_attr(ar, "model_scores", {})
         if scores:
             ui.label("📋 推定器スコア比較").classes("text-h6 q-mb-sm")
             rows = [
@@ -530,7 +539,7 @@ def _render_model_explorer_tab(success_results: dict, state: dict) -> None:
     # 全セット × 全モデルの組み合わせリストを構築
     options: dict[str, tuple] = {}
     for sn, ar in success_results.items():
-        scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+        scores = _get_attr(ar, "model_scores", {})
         for mk in sorted(scores.keys()):
             label = f"{sn} / {mk}"
             options[label] = (sn, mk, ar)
@@ -570,7 +579,10 @@ def _render_model_explorer_tab(success_results: dict, state: dict) -> None:
                 pass
 
             proxy = _ArProxy()
-            proxy.__dict__.update(ar_full.__dict__)
+            if isinstance(ar_full, dict):
+                proxy.__dict__.update(ar_full)
+            else:
+                proxy.__dict__.update(ar_full.__dict__)
             proxy.best_model_key = mk
 
             _render_best_insight_tab(proxy, state, sn)
