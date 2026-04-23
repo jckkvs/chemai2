@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend_fastapi.services.job_manager import job_manager
-from backend_fastapi.routers import analysis, data, results, eda, chem_descriptors
+from backend_fastapi.routers import analysis, data, results, eda, chem_descriptors, presets, export
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,6 +44,8 @@ app.include_router(data.router)
 app.include_router(results.router)
 app.include_router(eda.router)
 app.include_router(chem_descriptors.router)
+app.include_router(presets.router)
+app.include_router(export.router)
 
 @app.get("/health")
 async def health_check():
