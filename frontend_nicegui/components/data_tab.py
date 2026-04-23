@@ -198,24 +198,43 @@ def _render_data_load(state: dict) -> None:
             if not filename:
                 filename = getattr(e, 'filename', 'uploaded_file.csv')
             
-            # === 2. ファイルコンテンツの取得（最も確実な e.content を優先） ===
+            # === 2. ファイルコンテンツの取得（多層フォールバック） ===
             content = None
+            
+            # 方法1: e.content を直接使用（最も確実）
             if hasattr(e, 'content') and e.content is not None:
-                content = e.content
-                # もしコルーチンが返ってきた場合のログ出力（awaitは属性アクセスには通常不要）
-                if inspect.iscoroutine(content):
-                    logger.warning("e.content returned a coroutine - unexpected for property access")
-                else:
+                c = e.content
+                if not inspect.iscoroutine(c):
+                    content = c
                     logger.info(f"✓ e.content を使用 (type: {type(content)}, size: {len(content) if isinstance(content, (bytes, str)) else 'N/A'})")
+            
+            # 方法2: e.file から読み取る（フォールバック）
+            if content is None and hasattr(e, 'file') and e.file is not None:
+                f = e.file
+                if isinstance(f, bytes):
+                    content = f
+                    logger.info("✓ e.file (bytes) を使用")
+                elif hasattr(f, 'read'):
+                    try:
+                        read_result = f.read()
+                        if inspect.iscoroutine(read_result):
+                            logger.warning("f.read() returned coroutine - skipping to avoid error")
+                            content = None
+                        elif isinstance(read_result, (bytes, str)):
+                            content = read_result
+                            logger.info(f"✓ e.file.read() ({type(content).__name__}) を使用")
+                    except Exception as read_err:
+                        logger.warning(f"e.file.read() failed: {read_err}")
+                        content = None
             
             # 取得失敗時の処理
             if content is None:
                 logger.error(f"✗ ファイルコンテンツを取得できませんでした。Event type: {type(e)}")
                 logger.error(f"  e の属性: {[attr for attr in dir(e) if not attr.startswith('_')]}")
-                ui.notify('✗ ファイルの読み取りに失敗しました', type='negative')
+                ui.notify('✗ ファイルの読み取りに失敗しました（コンテンツなし）', type='negative')
                 return
             
-            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}")
+            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content) if isinstance(content, (bytes, str)) else 'N/A'}")
             
             # === 3. CSV/Excel の読み込み（BOM/異常行対策を維持） ===
             try:
