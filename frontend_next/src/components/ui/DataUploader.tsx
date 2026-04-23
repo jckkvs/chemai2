@@ -23,12 +23,16 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onDataLoaded }) => {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       
-      // 成功時に親コンポーネントにデータを渡す
+      // 成功時に親コンポーネントにデータとファイルオブジェクトを渡す
       onDataLoaded({
-        filename: file.name,
-        columns: response.data.column_names,
-        preview: response.data.preview,
-        // ... その他のメタデータ
+        file, // 元の File オブジェクトを保持
+        metadata: {
+          filename: file.name,
+          columns: response.data.column_names,
+          preview: response.data.preview,
+          rows: response.data.rows,
+          // ... その他のメタデータ
+        }
       });
       
     } catch (err: any) {

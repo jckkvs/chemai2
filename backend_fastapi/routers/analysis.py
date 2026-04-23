@@ -1,6 +1,57 @@
 """
 解析関連APIエンドポイント
 """
+from fastapi import APIRouter, UploadFile, File, Form, WebSocket, WebSocketDisconnect, HTTPException
+import json
+import asyncio
+import logging
+from backend_fastapi.services.job_manager import job_manager
+from backend_fastapi.services.analysis_service import analysis_service
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/analysis", tags=["analysis"])
+
+@router.post("/run")
+async def run_analysis(
+    file: UploadFile = File(...),
+    config_json: str = Form(...)
+):
+    """Run analysis pipeline with uploaded file and config JSON"""
+    try:
+        config = json.loads(config_json)
+        file_bytes = await file.read()
+        
+        async def _execute():
+            return await analysis_service.run_full_pipeline(config, file_bytes, file.filename)
+        
+        job_id = await job_manager.submit(_execute)
+        return {"job_id": job_id, "status": "submitted"}
+    except Exception as e:
+        logger.error(f"Job submission failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/status/{job_id}")
+async def get_status(job_id: str):
+    status = await job_manager.get_status(job_id)
+    if status.get("error") == "Job not found":
+        raise HTTPException(status_code=404, detail="Job not found")
+    return status
+
+@router.websocket("/ws/progress/{job_id}")
+async def ws_progress(websocket: WebSocket, job_id: str):
+    await websocket.accept()
+    try:
+        while True:
+            status = await job_manager.get_status(job_id)
+            await websocket.send_json(status)
+            if status.get("status") in ["completed", "failed", "cancelled"]:
+                break
+            await asyncio.sleep(0.8)
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket closed for job {job_id}")
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}", exc_info=True)
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
