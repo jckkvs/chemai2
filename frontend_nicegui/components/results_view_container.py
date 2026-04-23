@@ -6,6 +6,9 @@ frontend_nicegui/components/results_view_container.py
 from __future__ import annotations
 
 from typing import Any
+import logging
+logger = logging.getLogger(__name__)
+
 from nicegui import ui
 
 @ui.refreshable
