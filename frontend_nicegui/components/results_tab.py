@@ -27,6 +27,14 @@ from frontend_nicegui.utils.plot_utils import render_plot_with_expand
 def render_results_tab(state: dict[str, Any]) -> None:
     """結果確認タブ全体を描画する。（専門家の検証フロー4タブ構成）"""
 
+    # [追加] stateに結果がない場合、storageから復元
+    if not state.get("automl_result") and not state.get("automl_results"):
+        saved_result = app.storage.user.get('automl_result')
+        if saved_result:
+            state["automl_result"] = saved_result
+            state["automl_results"] = {"デフォルト": saved_result}
+            logger.info("✓ app.storage.user['automl_result'] から結果を復元しました")
+
     all_results = state.get("automl_results", {})
     single_ar   = state.get("automl_result")
 

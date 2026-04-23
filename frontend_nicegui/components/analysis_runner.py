@@ -399,19 +399,22 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             state["best_set_name"] = best_set_name
             state["pipeline_result"] = type("PipelineResult", (), {"elapsed": best_result.elapsed_seconds})()
 
-            # [Item 2] NiceGUI ストレージへの永続化 (指示に基づく詳細化)
+            # [指示に基づく修正] NiceGUI ストレージへの永続化
             try:
                 from nicegui import app
-                # 指示されたキー構造に合わせて保存
+                # 単一の結果オブジェクトとして保存
+                app.storage.user['automl_result'] = best_result
+                app.storage.user['analysis_complete'] = True
+                
+                # 詳細な履歴としても保存
                 app.storage.user['analysis_results'] = {
                     'model_name': best_result.best_model_key,
                     'score': best_result.best_score,
                     'best_model': best_result.best_model_key,
                     'task': best_result.task,
-                    'predictions_df': best_result.test_predictions_df if hasattr(best_result, 'test_predictions_df') else None,
                     'timestamp': time.time(),
                 }
-                ui.notify('✅ 解析結果をストレージに保存しました', type='positive')
+                ui.notify('✅ 解析結果を保存しました', type='positive')
             except Exception as _se:
                 logger.warning(f"ストレージへの保存に失敗: {_se}")
 
