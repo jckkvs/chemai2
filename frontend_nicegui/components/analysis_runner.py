@@ -586,6 +586,7 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         if best_result:
             await _run_post_analysis_tasks(state, status_container)
 
+        return best_result
 
     except AnalysisCancelled:
         progress_label.text = "🛑 解析がキャンセルされました"
@@ -593,6 +594,7 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
         progress_detail.text = "ユーザーの要求により中断しました"
         progress_eta.text = ""
         ui.notify("🛑 解析をキャンセルしました", type="warning")
+        return None
 
     except Exception as ex:
         error_msg = str(ex)
@@ -619,6 +621,7 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
 
         ui.notify(f"解析エラー: {short_msg}", type="negative", timeout=8000)
         logger.error(f"AutoML実行エラー: {tb_text}")
+        return None
 
     finally:
         _analysis_running = False
