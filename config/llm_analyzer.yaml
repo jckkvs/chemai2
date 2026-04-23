@@ -1,0 +1,10 @@
+# config/llm_analyzer.yaml
+provider: transformers
+model_id: "jckkvs/bonsai-8b-1.58bit"
+auto_download: true
+max_tokens: 512
+temperature: 0.3
+# 将来拡張用テンプレート:
+# provider: ollama
+# model_id: "llama3:8b"
+# api_base: "http://localhost:11434"

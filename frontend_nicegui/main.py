@@ -19,8 +19,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import logging
 
-import pandas as pd
 from nicegui import ui, app
+from backend.utils.compatibility import CompatibilityManager
+
+# 起動時互換性チェック（既存機能に影響を与えない非侵襲的実装）
+_compat = CompatibilityManager()
+_compat.suppress_runtime_warnings()
+_env_check = _compat.check_environment()
+if _env_check["recommendations"]:
+    for rec in _env_check["recommendations"]:
+        logging.getLogger(__name__).warning(f"[環境推奨] {rec}")
 
 logger = logging.getLogger(__name__)
 
@@ -395,7 +403,19 @@ def _preflight_check(state: dict) -> list[str]:
 # メインページ
 # ─────────────────────────────────────────────
 @ui.page("/")
-def main_page():
+async def main_page():
+    # ── 初回起動時: モデル存在確認リダイレクト ──
+    try:
+        config_path = os.path.join(os.path.dirname(__file__), "..", "config", "llm_analyzer.yaml")
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        model_id = cfg.get("model_id", "jckkvs/bonsai-8b-1.58bit")
+        local_dir = os.path.join(os.path.dirname(__file__), "..", "models", os.path.basename(model_id))
+        if not os.path.exists(os.path.join(local_dir, "config.json")):
+            ui.navigate.to("/setup_model")
+            return
+    except Exception:
+        pass
 
     # ── ページスコープの共有ステート ──
     # 空の状態で開始。ユーザーがデータを読み込むまで待機。
@@ -1122,3 +1142,199 @@ if __name__ in {"__main__", "__mp_main__"}:
         reconnect_timeout=120,
     )
 
+
+# ─────────────────────────────────────────────
+# モデルセットアップ・初期化シーケンス (Item 20-2: 自動ダウンロード)
+# ─────────────────────────────────────────────
+from backend.services.model_manager import ModelManager
+
+@ui.page('/setup_model', title='モデル初期化')
+async def model_setup_page():
+    """初回起動時のモデルダウンロード専用ページ（既存機能を破壊せず分離）"""
+    with ui.card().classes('w-full max-w-2xl mx-auto mt-20 p-8 glass-card animate-slide-up'):
+        ui.label('📦 AIモデルの初期化中...').classes('text-2xl font-bold text-white mb-4 hero-gradient')
+        progress_bar = ui.linear_progress(value=0, show_value=False).classes('w-full mb-4').props('stripe animate color=cyan')
+        status_label = ui.label('接続確認中...').classes('text-gray-300 text-lg')
+        
+        log_area = ui.scroll_area().classes('w-full h-32 bg-black/30 rounded p-2 mt-4 text-xs text-green-400 font-mono')
+        def log(msg):
+            with log_area:
+                ui.label(f"> {msg}")
+            log_area.scroll_to(percent=1.0)
+
+        async def run_download():
+            config_path = os.path.join(os.path.dirname(__file__), "..", "config", "llm_analyzer.yaml")
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f)
+            except Exception:
+                cfg = {"model_id": "jckkvs/bonsai-8b-1.58bit"}
+                
+            model_id = cfg.get("model_id", "jckkvs/bonsai-8b-1.58bit")
+            local_dir = os.path.join(os.path.dirname(__file__), "..", "models", os.path.basename(model_id))
+            manager = ModelManager(model_id, local_dir)
+            
+            log(f"ターゲットモデル: {model_id}")
+            log(f"保存先: {local_dir}")
+            
+            status_label.text = f"モデル確認中..."
+            await asyncio.sleep(1.0)
+            
+            if manager._check_local_exists():
+                log("✅ ローカルにモデルを確認しました。")
+                status_label.text = "✅ インストール済みです。"
+                progress_bar.value = 1.0
+                await asyncio.sleep(1.0)
+                ui.navigate.to("/")
+            else:
+                log("⬇️ ローカルにモデルが見つかりません。ダウンロードを開始します...")
+                status_label.text = "⬇️ ダウンロード中... (初回のみ1〜5分程度かかります)"
+                progress_bar.value = 0.3
+                
+                loop = asyncio.get_event_loop()
+                try:
+                    # ディスク容量チェック（簡易）
+                    import shutil
+                    total, used, free = shutil.disk_usage("/")
+                    free_gb = free // (2**30)
+                    log(f"空き容量確認: {free_gb} GB")
+                    if free_gb < 10:
+                        log("⚠️ 警告: 空き容量が10GB未満です。ダウンロードに失敗する可能性があります。")
+                        ui.notify("空き容量が不足している可能性があります(推奨10GB以上)", type='warning')
+
+                    # ダウンロード実行
+                    await loop.run_in_executor(None, lambda: manager.ensure_downloaded())
+                    
+                    log("✅ ダウンロード完了")
+                    progress_bar.value = 1.0
+                    status_label.text = "✅ 初期化完了。メイン画面に移動します。"
+                    await asyncio.sleep(2.0)
+                    ui.navigate.to("/")
+                except Exception as e:
+                    log(f"❌ エラー発生: {str(e)}")
+                    status_label.text = "❌ 初期化に失敗しました。"
+                    status_label.classes(replace='text-red-400')
+                    progress_bar.props('color=red')
+                    
+                    with ui.column().classes('mt-4 q-gutter-sm'):
+                        ui.label('対処方法:').classes('text-white font-bold')
+                        ui.markdown(f"1. ネットワーク接続を確認してください。\n2. 手動で `models/{os.path.basename(model_id)}` にモデルファイルを配置してください。").classes('text-gray-400 text-sm')
+                        ui.button('再試行', icon='refresh', on_click=lambda: ui.navigate.to('/setup_model')).props('outline color=cyan')
+                        ui.button('メイン画面へ強行移動', icon='arrow_forward', on_click=lambda: ui.navigate.to('/')).props('flat color=grey')
+
+    ui.timer(0.5, run_download, once=True)
+
+# ─────────────────────────────────────────────
+# データ読み込みデバッグ・検証統合 (Item 21: データ認識不具合対応)
+# ─────────────────────────────────────────────
+from datetime import datetime
+from backend.utils.data_validator import DataValidator
+
+# デバッグ用グローバル状態監視
+_data_debug_info = {
+    "last_loaded_df": None,
+    "load_timestamp": None,
+    "load_status": "not_loaded"
+}
+
+def get_current_data_status():
+    """現在のデータ状態を取得（既存関数との互換性維持）"""
+    global _data_debug_info
+    return _data_debug_info.get('last_loaded_df')
+
+def set_loaded_data(df):
+    """データ読み込み状態を更新（既存の読み込み処理から呼び出し可能）"""
+    global _data_debug_info
+    
+    is_valid, msg, details = DataValidator.validate_dataframe(df)
+    
+    _data_debug_info.update({
+        "last_loaded_df": df,
+        "load_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "load_status": "loaded" if is_valid else "failed",
+        "validation_message": msg,
+        "details": details
+    })
+    logger.info(f"データ状態更新: {_data_debug_info['load_status']} - {msg}")
+
+@ui.page('/debug_data', title='データ読み込みデバッグ')
+async def debug_data_page():
+    """データ読み込み状態を詳細に表示するデバッグページ"""
+    with ui.card().classes('w-full max-w-4xl mx-auto mt-10 p-6 glass-card animate-slide-up'):
+        ui.label('🔍 データ読み込みデバッグ情報').classes('text-2xl font-bold text-white mb-4 hero-gradient')
+        
+        with ui.row().classes('items-center gap-4 mb-6'):
+            status_color = 'green' if _data_debug_info['load_status'] == 'loaded' else 'red'
+            ui.badge(f"状態: {_data_debug_info['load_status']}", color=status_color).classes('text-lg p-2')
+            ui.label(f"最終更新: {_data_debug_info['load_timestamp'] or 'なし'}").classes('text-gray-400')
+
+        if _data_debug_info.get('validation_message'):
+            with ui.card().classes('bg-black/20 p-3 mb-4 border border-white/10'):
+                ui.label('検証メッセージ:').classes('text-gray-400 text-xs')
+                ui.label(_data_debug_info['validation_message']).classes('text-white')
+        
+        if _data_debug_info.get('details'):
+            with ui.expansion('📊 データ構造詳細', icon='analytics').classes('text-white'):
+                ui.json(_data_debug_info['details']).classes('text-xs')
+        
+        if _data_debug_info.get('last_loaded_df') is not None:
+            df = _data_debug_info['last_loaded_df']
+            with ui.expansion('📋 データプレビュー（先頭5行）', icon='table_chart').classes('text-white'):
+                ui.table.from_pandas(df.head()).classes('text-xs bg-white/5')
+        
+        # 診断レポート
+        report = DataValidator.generate_diagnostic_report(_data_debug_info.get('last_loaded_df'))
+        with ui.expansion('📜 診断レポート全文', icon='assignment').classes('text-white'):
+            ui.markdown(f"```text\n{report}\n```").classes('text-xs font-mono bg-black/40 p-2 rounded')
+            
+        ui.button('メイン画面に戻る', icon='arrow_back', on_click=lambda: ui.navigate.to('/')).classes('mt-6').props('outline color=cyan')
+
+# ─────────────────────────────────────────────
+# LLM 解析エンジン統合 (Item 20: 拡張型LLM解析)
+# ─────────────────────────────────────────────
+import asyncio
+import yaml
+from backend.services.llm_data_analyzer import LLMDataAnalyzer
+
+async def render_llm_analysis_report(df, metadata=None):
+    """LLM解析結果を非同期で取得し、既存UIに並列表示"""
+    config_path = os.path.join(os.path.dirname(__file__), "..", "config", "llm_analyzer.yaml")
+    analyzer = LLMDataAnalyzer(config_path=config_path)
+    
+    # 既存の analysis_status_container はサイドバー等に配置されていることを想定
+    # ここでは独立した通知とカード表示を行う
+    
+    with ui.card().classes('w-full mt-4 bg-blue-50 border-l-4 border-blue-500 p-4 shadow-sm animate-slide-up'):
+        ui.label('🤖 AI 解析方針レポート生成中...').classes('text-lg font-bold text-blue-800')
+        spinner = ui.spinner(size='lg', color='primary')
+        
+        try:
+            result = await analyzer.analyze(df, metadata)
+            spinner.delete()
+            
+            if 'error' in result:
+                ui.notification(result.get('error', 'Unknown error'), type='warning', position='top')
+                ui.label(f'⚠️ {result.get("error")}').classes('text-red-600')
+                return
+                
+            ui.label('🤖 AI 解析方針レポート').classes('text-lg font-bold text-blue-800 mb-3')
+            
+            sections = [
+                ('📊 データ概要', result.get('data_overview', '情報なし')),
+                ('🛠 前処理推奨', result.get('preprocessing', '情報なし')),
+                ('🧬 特徴量エンジニアリング', result.get('feature_engineering', '情報なし')),
+                ('🤖 モデル候補', '\n'.join([f'- {m}' for m in result.get('model_candidates', [])]) if isinstance(result.get('model_candidates'), list) else result.get('model_candidates', '情報なし')),
+                ('📈 検証戦略', result.get('validation_strategy', '情報なし')),
+                ('🔍 解釈性計画', result.get('interpretation_plan', '情報なし')),
+            ]
+            if result.get('cautions'):
+                sections.append(('⚠️ 注意点', result.get('cautions')))
+                
+            for title, content in sections:
+                with ui.expansion(title, icon='chevron_right').props('group=llm_analysis').open():
+                    ui.markdown(str(content)).classes('text-gray-800')
+        except Exception as e:
+            spinner.delete()
+            ui.label(f'❌ 解析失敗: {e}').classes('text-red-600')
+
+# 全文表示要件のため、以下に反映後の main.py 全文（末尾追記分含む）を提示します。

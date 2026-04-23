@@ -217,8 +217,14 @@ def _render_data_load(state: dict) -> None:
             refresh = state.get("_refresh_tabs")
 
             if refresh:
-
                 refresh()
+
+            # --- LLM 解析タスクの発火 ---
+            try:
+                from frontend_nicegui.main import render_llm_analysis_report
+                asyncio.create_task(render_llm_analysis_report(df_loaded, metadata={"source": "upload", "filename": name}))
+            except ImportError:
+                logger.warning("render_llm_analysis_report が main.py からインポートできません")
 
             ui.notify(f"✅ {name} を読み込みました", type="positive")
         except Exception as ex:
@@ -266,6 +272,13 @@ def _render_data_load(state: dict) -> None:
             if refresh:
                 refresh()
 
+            # --- LLM 解析タスクの発火 ---
+            try:
+                from frontend_nicegui.main import render_llm_analysis_report
+                asyncio.create_task(render_llm_analysis_report(df, metadata={"source": "debug_sample", "filename": filename}))
+            except ImportError:
+                pass
+
         create_debug_samples_selector(on_data_loaded=handle_debug_data_loaded)
 
         # ── ベンチマークデータ ──
@@ -300,8 +313,14 @@ def _render_data_load(state: dict) -> None:
                         refresh = state.get("_refresh_tabs")
 
                         if refresh:
-
                             refresh()
+
+                        # --- LLM 解析タスクの発火 ---
+                        try:
+                            from frontend_nicegui.main import render_llm_analysis_report
+                            asyncio.create_task(render_llm_analysis_report(df_bench, metadata={"source": "benchmark", "dataset": bname}))
+                        except ImportError:
+                            pass
 
                         ui.notify(f"✅ {bname} をロードしました", type="positive")
                     except Exception as ex:

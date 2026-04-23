@@ -61,3 +61,14 @@ pytest>=7.4
 pytest-cov>=4.1
 black>=23.0
 ruff>=0.1
+
+# ========== LLM Data Analyzer ==========
+transformers>=4.40.0
+accelerate>=0.30.0
+torch>=2.3.0
+pyyaml>=6.0
+huggingface_hub>=0.23.0
+
+# 互換性維持のための依存バージョン指定
+urllib3>=1.26.0,<3.0.0
+charset-normalizer>=3.0.0,<4.0.0
