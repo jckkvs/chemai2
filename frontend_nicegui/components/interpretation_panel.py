@@ -6,6 +6,17 @@ frontend_nicegui/components/interpretation_panel.py
 from __future__ import annotations
 
 import logging
+
+# ── 【必須】ObservableDict 対応ヘルパー ──
+def _safe_get(obj, key: str, default=None):
+    if obj is None: return default
+    if hasattr(obj, key):
+        val = getattr(obj, key)
+        return None if callable(val) else val
+    if isinstance(obj, dict): return obj.get(key, default)
+    try: return obj[key]
+    except: return default
+
 from typing import Any
 
 import numpy as np
@@ -369,7 +380,7 @@ def _render_coefficients(ar, model, X, feat_names: list[str]) -> None:
                 plot_bgcolor="rgba(0,0,0,0.1)",
                 height=max(350, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
                 xaxis_title="Feature Importance (不純度減少の平均)",
-                title=f"Feature Importance ({ar.best_model_key})",
+                title=f"Feature Importance ({_safe_get(ar, 'best_model_key', 'N/A')})",
             )
             _plotly_and_save(fig, "interp_feature_importance").classes("full-width")
 
@@ -412,7 +423,7 @@ def _render_coefficients(ar, model, X, feat_names: list[str]) -> None:
                 plot_bgcolor="rgba(0,0,0,0.1)",
                 height=max(350, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
                 xaxis_title="回帰係数",
-                title=f"回帰係数 ({ar.best_model_key})",
+                title=f"回帰係数 ({_safe_get(ar, 'best_model_key', 'N/A')})",
             )
             _plotly_and_save(fig, "interp_regression_coef").classes("full-width")
             ui.label("🟢 正の係数 = 目的変数を増加させる方向  🔴 負の係数 = 減少させる方向").classes(
@@ -545,7 +556,7 @@ def _render_shap_panel(ar, model, X, X_arr, feat_names, y) -> None:
                 lbl  = ui.label("⏳ SHAP値を計算中... (TreeExplainerで高速化)").classes("text-grey-5 text-caption")
 
         try:
-            # UI上から生の学習データ(ar.X_train_rawなどが存在すれば)を取得
+            # UI上から生の学習データ(_safe_get(ar, 'X_train')_rawなどが存在すれば)を取得
             # 存在しない場合はX(処理済み)を使うが、本来は生データを使いたい
             X_raw_data = getattr(ar, "X_train_raw", X)
             
@@ -719,7 +730,7 @@ def _render_sage_fallback(ar, model, X, X_arr, feat_names, y) -> None:
         with perm_container:
             ui.label("⏳ Permutation Importance 計算中...").classes("text-grey-5 text-caption")
         try:
-            scoring = "r2" if ar.task == "regression" else "accuracy"
+            scoring = "r2" if _safe_get(ar, 'task') == "regression" else "accuracy"
             y_arr = np.asarray(y).ravel() if y is not None else None
             if y_arr is None:
                 raise ValueError("y_train が取得できません")

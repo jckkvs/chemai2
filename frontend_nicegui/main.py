@@ -530,6 +530,16 @@ async def main_page():
             if len(df) < 10:
                 ui.notify(f'⚠️ データが少量です ({len(df)}行)。結果の信頼性に注意してください', type='warning')
 
+            # CV folds をデータサイズに応じて調整
+            n_valid = len(df)
+            if n_valid < 10:
+                state['cv_folds'] = 2
+            elif n_valid < 50:
+                state['cv_folds'] = 3
+            else:
+                state['cv_folds'] = min(5, n_valid // 10)
+            logger.info(f"CV Folds adjusted to {state['cv_folds']} based on {n_valid} samples")
+
             # ボタン無効化（二重実行防止） - list フォールバック対応
             if isinstance(run_btn, list):
                 for btn in run_btn:
@@ -551,13 +561,14 @@ async def main_page():
                     on_complete=lambda: main_tabs.set_value("results"),
                 )
                 
-                # 【重要】結果を state に保存（必須！）
+                # 【重要】結果がNoneでないことを確認
                 if result is not None:
+                    # すでに run_analysis 内部で state は更新されているが、念のため同期
                     state["automl_result"] = result
-                    state["automl_results"] = {"デフォルト": result}
-                    state["best_set_name"] = "デフォルト"
+                    if "automl_results" not in state or not state["automl_results"]:
+                        state["automl_results"] = {"デフォルト": result}
                     
-                    # 【重要】結果タブを強制再描画
+                    # 結果タブを強制再描画
                     refresh_fn = state.get("_refresh_results")
                     if callable(refresh_fn):
                         try:
@@ -565,6 +576,8 @@ async def main_page():
                             logger.info("✓ 結果タブを再描画しました")
                         except Exception as re_ex:
                             logger.warning(f"結果タブ再描画エラー: {re_ex}")
+                    
+                    ui.notify("✅ 解析完了！結果タブを確認してください", type="positive")
                 
                 # 【修正】app.storage にはシリアライズ可能なデータのみ保存
                 from nicegui import app

@@ -13,25 +13,38 @@ from nicegui import ui
 
 @ui.refreshable
 def render_results_view_container(state: dict[str, Any]) -> None:
-    """結果・レポートタブ全体を描画する。"""
+    """結果表示コンテナ — stateとstorageの両方から結果を取得"""
     
-    # 状態の更新関数を登録（初回描画時に行う）
+    # 状態の更新関数を登録
     state["_refresh_results"] = render_results_view_container.refresh
 
-    # [追加] stateに結果がない場合、storageから復元
-    if state.get("automl_result") is None and not state.get("automl_results"):
-        from nicegui import app
-        saved_result = app.storage.user.get('automl_result')
-        if saved_result:
-            state["automl_result"] = saved_result
-            state["automl_results"] = {"デフォルト": saved_result}
-            logger.info("✓ results_view_container: app.storage.user から結果を復元しました")
-
-    if state.get("automl_result") is None and not state.get("automl_results"):
-        with ui.card().classes("glass-card q-pa-xl items-center justify-center text-center"):
-            ui.icon("analytics", color="grey-7", size="xl").classes("q-mb-md")
-            ui.label("解析結果がまだありません").classes("text-h6 text-grey-5")
-            ui.label("「🚀 解析開始」ボタンを押して解析を実行してください。").classes("text-grey-6 q-mt-sm")
+    # stateから結果を取得
+    result = state.get("automl_result")
+    results = state.get("automl_results", {})
+    
+    # stateにない場合はstorageから復元（シリアライズ可能な形式のみ）
+    if result is None and not results:
+        try:
+            from nicegui import app
+            import pandas as pd
+            storage_result = app.storage.user.get('automl_result')
+            # bytes や DataFrame などの非JSONセーフなデータが混入していないか確認
+            if storage_result and not isinstance(storage_result, (bytes, pd.DataFrame)):
+                state["automl_result"] = storage_result
+                state["automl_results"] = {"デフォルト": storage_result}
+                result = storage_result
+                results = {"デフォルト": storage_result}
+                logger.info("✓ storageから結果を復元しました")
+        except Exception as e:
+            logger.warning(f"storageからの復元失敗: {e}")
+    
+    # 結果がない場合
+    if result is None and not results:
+        with ui.card().classes('w-full glass-card q-pa-lg'):
+            with ui.column().classes('items-center justify-center q-pa-xl'):
+                ui.icon('analytics', size='64px', color='grey-5')
+                ui.label('解析結果がまだありません').classes('text-h6 text-grey-5 q-mt-md')
+                ui.label('「🚀 解析開始」ボタンを押して解析を実行してください。').classes('text-caption text-grey-6')
         return
 
     with ui.tabs().classes("full-width").props("dense active-color=cyan indicator-color=cyan") as sub_tabs:

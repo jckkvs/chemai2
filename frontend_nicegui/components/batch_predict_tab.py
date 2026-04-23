@@ -14,6 +14,17 @@ from __future__ import annotations
 
 import io
 import logging
+
+# ── 【必須】ObservableDict 対応ヘルパー ──
+def _safe_get(obj, key: str, default=None):
+    if obj is None: return default
+    if hasattr(obj, key):
+        val = getattr(obj, key)
+        return None if callable(val) else val
+    if isinstance(obj, dict): return obj.get(key, default)
+    try: return obj[key]
+    except: return default
+
 from typing import Any
 
 import numpy as np
@@ -46,7 +57,7 @@ def render_batch_predict_tab(state: dict[str, Any]) -> None:
     with ui.row().classes("items-center q-gutter-sm full-width"):
         ui.icon("batch_prediction").classes("text-purple text-h5")
         ui.label("バッチ予測").classes("text-h6")
-        ui.badge(f"最良モデル: {ar.best_model_key}", color="purple").props("outline")
+        ui.badge(f"最良モデル: {_safe_get(ar, 'best_model_key', 'N/A')}", color="purple").props("outline")
 
     ui.label(
         "新しいCSVデータをアップロードすると、学習済みモデルで予測を実行します。"
@@ -64,8 +75,8 @@ def render_batch_predict_tab(state: dict[str, Any]) -> None:
         ui.label("📋 学習時の設定").classes("text-subtitle2")
         with ui.row().classes("q-gutter-md"):
             ui.chip(f"目的変数: {target_col}", icon="label", color="cyan").props("outline dense")
-            ui.chip(f"タスク: {ar.task}", icon="category", color="teal").props("outline dense")
-            ui.chip(f"スコア: {ar.best_score:.4f}", icon="star", color="amber").props("outline dense")
+            ui.chip(f"タスク: {_safe_get(ar, 'task')}", icon="category", color="teal").props("outline dense")
+            ui.chip(f"スコア: {_safe_get(ar, 'best_score', 0):.4f}", icon="star", color="amber").props("outline dense")
             if smiles_col:
                 ui.chip(f"SMILES列: {smiles_col}", icon="science", color="green").props("outline dense")
 
@@ -131,7 +142,7 @@ def render_batch_predict_tab(state: dict[str, Any]) -> None:
                 new_df.loc[:len(predictions) - 1, "_predicted_" + target_col] = predictions
 
                 # 分類タスクの確信度
-                if ar.task == "classification" and hasattr(pipeline, "predict_proba"):
+                if _safe_get(ar, 'task') == "classification" and hasattr(pipeline, "predict_proba"):
                     try:
                         proba = pipeline.predict_proba(X_new)
                         if proba.ndim == 2:

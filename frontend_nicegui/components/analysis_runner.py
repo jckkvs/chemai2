@@ -538,6 +538,12 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
                             "記述子の設定やデータを確認してください。"
                         ).classes("text-caption text-grey q-mt-xs")
 
+        # ── 【重要】結果をstateに保存 ──
+        if best_result:
+            state["automl_result"] = best_result
+            state["automl_results"] = all_results
+            state["best_set_name"] = best_set_name
+
         # ── 結果タブへ自動切り替え＋再描画 ──
         # 重要: on_complete（タブ遷移）の前に _switch_to_results（再描画含む）を呼ぶ。
         # これにより「空の結果タブ」バグを防止する。

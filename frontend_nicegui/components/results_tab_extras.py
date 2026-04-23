@@ -11,6 +11,17 @@ results_tab.py で使用する追加ヘルパー関数群:
 """
 from __future__ import annotations
 
+# ── 【必須】ObservableDict 対応ヘルパー ──
+def _safe_get(obj, key: str, default=None):
+    if obj is None: return default
+    if hasattr(obj, key):
+        val = getattr(obj, key)
+        return None if callable(val) else val
+    if isinstance(obj, dict): return obj.get(key, default)
+    try: return obj[key]
+    except: return default
+
+
 import numpy as np
 from nicegui import run as nicegui_run, ui
 
@@ -21,8 +32,8 @@ from nicegui import run as nicegui_run, ui
 def _render_model_overview(ar) -> None:
     import plotly.graph_objects as go
 
-    scores = ar.model_scores if hasattr(ar, "model_scores") else {}
-    model_details = getattr(ar, "model_details", {})
+    scores = _safe_get(ar, 'model_scores', {}) if isinstance(_safe_get(ar, 'model_scores'), dict) else {}
+    model_details = _safe_get(ar, 'model_details', {})
     if not scores:
         ui.label("モデルスコアがありません").classes("text-grey")
         return
@@ -30,7 +41,7 @@ def _render_model_overview(ar) -> None:
     sorted_models = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     model_keys = [m[0] for m in sorted_models]
     model_vals = [m[1] for m in sorted_models]
-    scoring = getattr(ar, "scoring", "score")
+    scoring = _safe_get(ar, 'scoring', 'score')
 
     ui.label("🏆 全モデル比較").classes("text-subtitle1 text-bold q-mb-xs")
 
@@ -146,8 +157,8 @@ def _render_model_overview(ar) -> None:
 # モデル別詳細タブ
 # ================================================================
 def _render_per_model_tabs(ar) -> None:
-    model_details = getattr(ar, "model_details", {})
-    scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+    model_details = _safe_get(ar, 'model_details', {})
+    scores = _safe_get(ar, 'model_scores', {}) if isinstance(_safe_get(ar, 'model_scores'), dict) else {}
     all_keys = list(model_details.keys()) or list(scores.keys())
     if not all_keys:
         ui.label("モデル詳細情報がありません").classes("text-grey")
@@ -160,7 +171,7 @@ def _render_per_model_tabs(ar) -> None:
     ) as model_tabs:
         for mk in sorted_keys:
             score_str = f" ({scores[mk]:.4f})" if mk in scores else ""
-            label = f"🏆 {mk}{score_str}" if mk == ar.best_model_key else f"{mk}{score_str}"
+            label = f"🏆 {mk}{score_str}" if mk == _safe_get(ar, 'best_model_key', 'N/A') else f"{mk}{score_str}"
             ui.tab(f"m_{mk}", label=label[:28])
 
     first_key = f"m_{sorted_keys[0]}"

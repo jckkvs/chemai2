@@ -10,6 +10,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import asyncio
+import logging
+logger = logging.getLogger(__name__)
+
 from nicegui import ui, app
 
 from frontend_nicegui.components.results_tab_extras import (
@@ -22,8 +25,7 @@ from frontend_nicegui.components.results_tab_extras import (
 from frontend_nicegui.components.feature_comparison_dashboard import render_feature_comparison_dashboard
 from frontend_nicegui.utils.plot_utils import render_plot_with_expand
 
-
-
+# ── 【必須】ObservableDict 対応ヘルパー ──
 def _safe_get(obj, key: str, default=None):
     """
     ObservableDict / dict / 通常オブジェクトのいずれからも安全に値を取得
@@ -33,17 +35,17 @@ def _safe_get(obj, key: str, default=None):
     # 1. 通常の属性アクセスを試す
     if hasattr(obj, key):
         val = getattr(obj, key)
-        # callable は除外（UI 描画に使えないため）
-        if not callable(val):
-            return val
+        # callable（関数）は除外
+        return None if callable(val) else val
     # 2. dict 風アクセスを試す
     if isinstance(obj, dict):
         return obj.get(key, default)
-    # 3. __getitem__ 対応
+    # 3. __getitem__ 対応（ObservableDict 等）
     try:
         return obj[key]
     except (TypeError, KeyError, AttributeError):
         return default
+# ────────────────────────────────
 
 
 def render_results_tab(state: dict[str, Any]) -> None:
@@ -368,7 +370,7 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                 acc = f1 = float("nan")
             with ui.row().classes("q-gutter-sm q-mb-md"):
                 for val, lbl, col in [
-                    (f"{_get_attr(ar, 'best_score', 0):.4f}", _get_attr(ar, 'scoring', 'score'),     "cyan"),
+                    (f"{_safe_get(ar, 'best_score', 0):.4f}", _safe_get(ar, 'scoring', 'score'),     "cyan"),
                     (f"{acc:.4f}",           "Accuracy(OOF)","teal"),
                     (f"{f1:.4f}",            "F1-weighted",  "amber"),
                 ]:
@@ -407,7 +409,7 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                     template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0.1)",
                     height=max(300, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
-                    xaxis_title="重要度", title=f"Feature Importance ({_get_attr(ar, 'best_model_key', '不明')})",
+                    xaxis_title="重要度", title=f"Feature Importance ({_safe_get(ar, 'best_model_key', '不明')})",
                 )
                 ui.plotly(fig_fi).classes("full-width")
             elif hasattr(est, "coef_"):
@@ -424,7 +426,7 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                     template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0.1)",
                     height=max(300, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
-                    xaxis_title="回帰係数", title=f"回帰係数 ({_get_attr(ar, 'best_model_key', '不明')})",
+                    xaxis_title="回帰係数", title=f"回帰係数 ({_safe_get(ar, 'best_model_key', '不明')})",
                 )
                 ui.plotly(fig_c).classes("full-width")
 
@@ -513,7 +515,7 @@ def _render_comparison_tab(success_results: dict, state: dict) -> None:
     else:
         # 1セットの場合はシンプルなスコア比較テーブル
         ar = success_results[set_names[0]]
-        scores = _get_attr(ar, "model_scores", {})
+        scores = _safe_get(ar, "model_scores", {})
         if scores:
             ui.label("📋 推定器スコア比較").classes("text-h6 q-mb-sm")
             rows = [
@@ -552,7 +554,7 @@ def _render_model_explorer_tab(success_results: dict, state: dict) -> None:
     # 全セット × 全モデルの組み合わせリストを構築
     options: dict[str, tuple] = {}
     for sn, ar in success_results.items():
-        scores = _get_attr(ar, "model_scores", {})
+        scores = _safe_get(ar, "model_scores", {})
         for mk in sorted(scores.keys()):
             label = f"{sn} / {mk}"
             options[label] = (sn, mk, ar)

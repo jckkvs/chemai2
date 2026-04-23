@@ -1,58 +1,51 @@
 """
 frontend_nicegui/components/data_tab.py
-
 データ設定タブ：データ読込・列の役割設定・SMILES特徴量・EDA・パイプライン設計
 全機能をサブタブで構造化。Progressive Disclosure で初心者/上級者を両立。
 """
 from __future__ import annotations
-
 import io
 import asyncio
 import inspect
 import importlib
 import logging
 from typing import Any
-
 import numpy as np
 import pandas as pd
 from nicegui import ui
-
 from frontend_nicegui.components.feature_comparison_dashboard import render_feature_comparison_dashboard
 from frontend_nicegui.components.debug_samples_selector import create_debug_samples_selector
-
 logger = logging.getLogger(__name__)
 
 # ─── サンプルSMILES ─────────────────────────────────
 SAMPLE_SMILES = [
-    "C", "CC", "CCC", "CCO", "CCN", "c1ccccc1", "c1ccccc1O",
-    "CC(=O)O", "CC(C)C", "C1CCCCC1", "c1ccncc1", "c1ncncn1", "C1COCCO1",
-    "CC(=O)OC", "CCOC", "CCOCC", "CC(O)CC", "c1ccc(Cl)cc1",
-    "CC(=O)N", "CCCCCO", "c1ccc(F)cc1", "CC(C)=O", "OCCO",
-    "CC(=O)CC", "CCCCO",
+ "C",  "CC",  "CCC",  "CCO",  "CCN",  "c1ccccc1",  "c1ccccc1O",
+ "CC(=O)O",  "CC(C)C",  "C1CCCCC1",  "c1ccncc1",  "c1ncncn1",  "C1COCCO1",
+ "CC(=O)OC",  "CCOC",  "CCOCC",  "CC(O)CC",  "c1ccc(Cl)cc1",
+ "CC(=O)N",  "CCCCCO",  "c1ccc(F)cc1",  "CC(C)=O",  "OCCO",
+ "CC(=O)CC",  "CCCCO",
 ]
 
 # ── 全エンジン定義 ──
 _ALL_ENGINES: list[tuple[str, str, str, dict]] = [
-    ("RDKit",           "backend.chem.rdkit_adapter",           "RDKitAdapter",           {"compute_fp": False}),
-    ("Mordred",         "backend.chem.mordred_adapter",         "MordredAdapter",         {"selected_only": True}),
-    ("GroupContrib",    "backend.chem.group_contrib_adapter",   "GroupContribAdapter",     {}),
-    ("DescriptaStorus", "backend.chem.descriptastorus_adapter", "DescriptaStorusAdapter",  {}),
-    ("MolAI",           "backend.chem.molai_adapter",           "MolAIAdapter",           {"n_components": 6}),
-    ("scikit-FP",       "backend.chem.skfp_adapter",            "SkfpAdapter",            {"fp_types": ["ECFP", "MACCS"]}),
-    ("UMA",             "backend.chem.uma_adapter",             "UMAAdapter",             {}),
-    ("Mol2Vec",         "backend.chem.mol2vec_adapter",         "Mol2VecAdapter",         {}),
-    ("PaDEL",           "backend.chem.padel_adapter",           "PaDELAdapter",           {}),
-    ("Molfeat",         "backend.chem.molfeat_adapter",         "MolfeatAdapter",         {}),
-    ("XTB",             "backend.chem.xtb_adapter",             "XTBAdapter",             {}),
-    ("UniPKa",          "backend.chem.unipka_adapter",          "UniPkaAdapter",          {}),
-    ("COSMO-RS",        "backend.chem.cosmo_adapter",           "CosmoAdapter",           {}),
-    ("Chemprop",        "backend.chem.chemprop_adapter",        "ChempropAdapter",        {}),
+ ("RDKit",            "backend.chem.rdkit_adapter",            "RDKitAdapter",           {"compute_fp": False}),
+ ("Mordred",          "backend.chem.mordred_adapter",          "MordredAdapter",         {"selected_only": True}),
+ ("GroupContrib",     "backend.chem.group_contrib_adapter",    "GroupContribAdapter",     {}),
+ ("DescriptaStorus",  "backend.chem.descriptastorus_adapter",  "DescriptaStorusAdapter",  {}),
+ ("MolAI",            "backend.chem.molai_adapter",            "MolAIAdapter",           {"n_components": 6}),
+ ("scikit-FP",        "backend.chem.skfp_adapter",             "SkfpAdapter",            {"fp_types": ["ECFP", "MACCS"]}),
+ ("UMA",              "backend.chem.uma_adapter",              "UMAAdapter",             {}),
+ ("Mol2Vec",          "backend.chem.mol2vec_adapter",          "Mol2VecAdapter",         {}),
+ ("PaDEL",            "backend.chem.padel_adapter",            "PaDELAdapter",           {}),
+ ("Molfeat",          "backend.chem.molfeat_adapter",          "MolfeatAdapter",         {}),
+ ("XTB",              "backend.chem.xtb_adapter",              "XTBAdapter",             {}),
+ ("UniPKa",           "backend.chem.unipka_adapter",           "UniPkaAdapter",          {}),
+ ("COSMO-RS",         "backend.chem.cosmo_adapter",            "CosmoAdapter",           {}),
+ ("Chemprop",         "backend.chem.chemprop_adapter",         "ChempropAdapter",        {}),
 ]
-
 
 def render_data_tab(state: dict[str, Any]) -> None:
     """データ設定タブ全体を描画する。"""
-
     with ui.tabs().classes("full-width").props("dense active-color=cyan indicator-color=cyan") as sub_tabs:
         tab_load = ui.tab("load", label="📂 データ読込", icon="upload_file")
         tab_cols = ui.tab("columns", label="🏷️ 列の役割・単調性", icon="settings")
@@ -97,7 +90,7 @@ def render_data_tab(state: dict[str, Any]) -> None:
         "eda":      _tab_eda_view,
     }
 
-    # ── タブパネルを描画（全パネル即時描画） ──
+    # ── タブパネルを描画（全パネル即時描画）──
     with ui.tab_panels(sub_tabs, value=tab_load).classes("full-width"):
 
         with ui.tab_panel(tab_load):
@@ -140,7 +133,7 @@ def render_data_tab(state: dict[str, Any]) -> None:
 
     # ── stateに再描画ヘルパーを登録 ──
     def _refresh_tabs_fn():
-        """全サブタブを再描画する（load タブ除く）。"""
+        """全サブタブを再描画する（loadタブ除く）。"""
         # SMILESタブ: コンテナ方式で確実に再描画
         try:
             _rebuild_smiles()
@@ -167,13 +160,11 @@ def render_data_tab(state: dict[str, Any]) -> None:
 
     state["_refresh_tabs"] = _refresh_tabs_fn
 
-
-# ================================================================
+# =================================================================
 # サブタブ1: データ読込
-# ================================================================
+# =================================================================
 def _render_data_load(state: dict) -> None:
     """ファイルアップロード + サンプル + ベンチマークのデータ読込UI"""
-
     # データ読み込み済みの場合はステータスを復元
     df_existing = state.get("df")
     fn_existing = state.get("filename", "")
@@ -181,7 +172,7 @@ def _render_data_load(state: dict) -> None:
         status_text = f"✅ {fn_existing} ({len(df_existing)}行 × {len(df_existing.columns)}列)"
         upload_status = ui.label(status_text).classes("text-green q-mt-sm")
     else:
-        upload_status = ui.label("").classes("text-grey-5 q-mt-sm")
+        upload_status = ui.label(" ").classes("text-grey-5 q-mt-sm")
     preview_container = ui.column().classes("full-width q-mt-md")
 
     # 既存データがある場合はプレビューを即座に表示（タブ切替でリセットされない）
@@ -193,73 +184,66 @@ def _render_data_load(state: dict) -> None:
         try:
             logger.info(f"=== ファイルアップロード開始 ===")
             
-            # === 1. ファイル名の取得 ===
+            # === ファイル名の取得 ===
             filename = getattr(e, 'name', None)
             if not filename:
                 filename = getattr(e, 'filename', 'uploaded_file.csv')
-            
-            # === 2. ファイルコンテンツの取得（多層フォールバック） ===
+         
+            # === ファイルコンテンツの取得（coroutine 対策）===
             content = None
             
-            # 方法1: e.content を直接使用（最も確実）
-            if hasattr(e, 'content') and e.content is not None:
+            # 方法1: e.content が bytes の場合
+            if hasattr(e, 'content'):
                 c = e.content
+                 # coroutine かどうかをチェック
                 if inspect.iscoroutine(c):
-                    logger.info("e.content returned a coroutine - awaiting...")
-                    content = await c
-                else:
+                    logger.warning("e.content is coroutine, attempting to read differently")
+                    c = None
+                if c is not None and isinstance(c, (bytes, str)):
                     content = c
-                
-                if content is not None:
-                    logger.info(f"✓ e.content を使用 (type: {type(content)}, size: {len(content) if isinstance(content, (bytes, str)) else 'N/A'})")
+                    logger.info("✓ e.content (bytes/str) を使用")
             
-            # 方法2: e.file から読み取る（フォールバック）
-            if content is None and hasattr(e, 'file') and e.file is not None:
+            # 方法2: e.file から読み取る
+            if content is None and hasattr(e, 'file'):
                 f = e.file
                 if isinstance(f, bytes):
                     content = f
                     logger.info("✓ e.file (bytes) を使用")
                 elif hasattr(f, 'read'):
-                    try:
-                        read_result = f.read()
-                        if inspect.iscoroutine(read_result):
-                            logger.info("f.read() returned coroutine - awaiting content...")
-                            content = await read_result
-                        elif isinstance(read_result, (bytes, str)):
-                            content = read_result
-                        
-                        if content is not None:
-                            logger.info(f"✓ e.file.read() ({type(content).__name__}) を使用")
-                    except Exception as read_err:
-                        logger.warning(f"e.file.read() failed: {read_err}")
-                        content = None
+                    # 同期的に読み取り可能か確認
+                    read_result = f.read()
+                    if inspect.iscoroutine(read_result):
+                        logger.warning("f.read() returned coroutine - this is unexpected")
+                        # ファイルオブジェクト自体を文字列化して試みる
+                        content = str(f)
+                    else:
+                        content = read_result
+                        logger.info("✓ e.file.read() を使用")
+                else:
+                    content = f
+                    logger.info("✓ e.file (fallback) を使用")
             
-            # 取得失敗時の処理
+            # 方法3: e 自体が bytes の場合
+            if content is None and isinstance(e, bytes):
+                content = e
+                logger.info("✓ Event 自体が bytes")
+            
+            # 全て失敗した場合
             if content is None:
                 logger.error(f"✗ ファイルコンテンツを取得できませんでした。Event type: {type(e)}")
-                logger.error(f"  e の属性: {[attr for attr in dir(e) if not attr.startswith('_')]}")
-                ui.notify('✗ ファイルの読み取りに失敗しました（コンテンツなし）', type='negative')
+                ui.notify('✗ ファイルの読み取りに失敗しました', type='negative')
                 return
             
             logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content) if isinstance(content, (bytes, str)) else 'N/A'}")
             
-            # === 3. CSV/Excel の読み込み（BOM/異常行対策を維持） ===
+            # === CSV/Excel の読み込み ===
             try:
                 if filename.endswith('.csv'):
                     if isinstance(content, bytes):
-                        df_loaded = pd.read_csv(
-                            io.BytesIO(content), 
-                            float_precision='high',
-                            encoding='utf-8-sig',
-                            on_bad_lines='skip'
-                        )
+                        df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
                     else:
-                        df_loaded = pd.read_csv(
-                            io.StringIO(content), 
-                            float_precision='high',
-                            encoding='utf-8-sig',
-                            on_bad_lines='skip'
-                        )
+                        # 文字列の場合
+                        df_loaded = pd.read_csv(io.StringIO(content), float_precision='high')
                 elif filename.endswith(('.xlsx', '.xls')):
                     if isinstance(content, bytes):
                         df_loaded = pd.read_excel(io.BytesIO(content))
@@ -267,57 +251,35 @@ def _render_data_load(state: dict) -> None:
                         ui.notify('Excel ファイルは bytes 形式が必要です', type='warning')
                         return
                 else:
-                    upload_status.text = "❌ サポートされていない形式"
+                    upload_status.text = "❌ CSV/Excelファイルのみ対応"
                     ui.notify('サポートされていないファイル形式です', type='warning')
                     return
             except Exception as parse_err:
                 logger.error(f"CSV/Excel パースエラー: {parse_err}", exc_info=True)
                 ui.notify(f'ファイル形式エラー: {str(parse_err)[:100]}', type='negative')
                 return
-
-            if df_loaded is None or df_loaded.empty:
-                logger.warning("読み込んだデータが空です")
-                ui.notify('読み込んだデータが空です。ファイル内容を確認してください。', type='warning')
-                return
             
-            # === 4. データ行数の検証（重要！）===
-            n_rows = len(df_loaded)
-            if n_rows < 10:
-                logger.warning(f"⚠️ データ行数が少すぎます: {n_rows}行（推奨: 10行以上）")
-                ui.notify(f'⚠️ データ行数が少ないです（{n_rows}行）。解析に失敗する可能性があります。', type='warning')
-            
-            # === 5. 数値列の精度保証: float64 に統一 ===
+            # === 数値列の精度保証: float64 に統一 ===
             for col in df_loaded.select_dtypes(include=['float16', 'float32', 'int8', 'int16', 'int32', 'int64']).columns:
                 df_loaded[col] = df_loaded[col].astype('float64')
             
-            # === 6. state への保存（重要：結果はここではリセットしない）===
+            # === state への保存（アプリ内状態管理）===
             state["df"] = df_loaded
             state["filename"] = filename
+            state["automl_result"] = None
+            state["pipeline_result"] = None
             state["precalc_done"] = False
             
-            # === 7. app.storage への保存（DataFrame のみ、結果は保存しない）===
+            # === app.storage への保存（セッション永続化）===
             from nicegui import app
             try:
                 csv_buffer = io.StringIO()
                 df_loaded.to_csv(csv_buffer, index=False)
-                csv_str = csv_buffer.getvalue()
-                
-                # 大きすぎる場合は切り捨て
-                if len(csv_str) > 5_000_000:
-                    csv_str = csv_str[:5_000_000]
-                    logger.warning("保存データを切り捨てました")
-                
-                app.storage.user['current_df_csv'] = csv_str
+                app.storage.user['current_df_csv'] = csv_buffer.getvalue()
                 app.storage.user['current_df_columns'] = list(df_loaded.columns)
-                app.storage.user['current_df_shape'] = list(df_loaded.shape)
-                
-                # 【重要】既存の結果をクリア（シリアライズエラー防止）
-                for key in list(app.storage.user.keys()):
-                    if key in ['automl_result', 'automl_results', 'pipeline_result', 'model', 'pipeline']:
-                        app.storage.user.pop(key, None)
-                
+                app.storage.user['current_df_shape'] = df_loaded.shape
             except Exception as storage_err:
-                logger.warning(f"app.storage 保存警告: {storage_err}")
+                logger.warning(f"app.storage への保存に失敗: {storage_err}")
             
             app.storage.user['data_loaded'] = True
             app.storage.user['data_filename'] = filename
@@ -379,7 +341,7 @@ def _render_data_load(state: dict) -> None:
     metrics_row = ui.row().classes("q-gutter-md q-mt-md full-width")
     _update_metrics(state, metrics_row)
 
-    # ── サンプルデータ（統合セレクター） ──
+    # ── サンプルデータ（統合セレクター）──
     with ui.expansion("🧪 デバッグ用サンプルデータ", icon="science").classes("full-width q-mt-md").props("default-opened"):
         ui.label("開発・検証用のサンプルデータを選択してロードできます。").classes("text-caption text-grey-6 q-mb-md")
         
@@ -483,12 +445,10 @@ def _render_data_load(state: dict) -> None:
                     f"📥 {desc}", on_click=_load_bench
                 ).props("outline color=orange size=sm").tooltip(f"目的変数: {target}")
 
-
-# ================================================================
+# =================================================================
 # サブタブ2: 列の役割設定
-# ================================================================
-    pass  # Logic moved to frontend_nicegui/components/column_role_panel.py
-
+# =================================================================
+pass  # Logic moved to frontend_nicegui/components/column_role_panel.py
 
 def _on_target_change(val: str, state: dict) -> None:
     state["target_col"] = val
@@ -500,15 +460,10 @@ def _on_target_change(val: str, state: dict) -> None:
         else:
             state["task_type"] = "classification"
 
-
-
-
-
-# ================================================================
+# =================================================================
 # サブタブ3: SMILES特徴量
-# ================================================================
-    pass  # Logic moved to frontend_nicegui/components/smiles_feature_panel.py
-
+# =================================================================
+pass  # Logic moved to frontend_nicegui/components/smiles_feature_panel.py
 
 def _show_descriptor_summary(state: dict, container) -> None:
     """記述子計算結果のサマリーを表示"""
@@ -516,7 +471,6 @@ def _show_descriptor_summary(state: dict, container) -> None:
     precalc = state.get("precalc_df")
     if precalc is None:
         return
-
     with container:
         n = len(precalc.columns)
         calc_summary = state.get("calc_summary", {})
@@ -547,10 +501,9 @@ def _show_descriptor_summary(state: dict, container) -> None:
                 rows=rows,
             ).classes("full-width").props("dense flat bordered")
 
-
-# ================================================================
+# =================================================================
 # サブタブ4: EDA
-# ================================================================
+# =================================================================
 def _render_eda(state: dict) -> None:
     """特徴量の探索的データ分析 — 統合EDAパネルに委譲。"""
     if state["df"] is None:
@@ -562,14 +515,11 @@ def _render_eda(state: dict) -> None:
     from frontend_nicegui.components.eda_panel import render_eda_panel
     render_eda_panel(state)
 
-
-
-# ================================================================
+# =================================================================
 # サブタブ5: パイプライン設計
-# ================================================================
+# =================================================================
 def _render_pipeline(state: dict) -> None:
     """CV設定・前処理・特徴選択・モデル選択・単調制約"""
-
     if state["df"] is None:
         with ui.column().classes("q-pa-md items-center full-width"):
             ui.label("⚠️ まずデータを読み込んでください").classes("text-amber text-h6")
@@ -705,7 +655,7 @@ def _render_pipeline(state: dict) -> None:
             rows = []
             for h in history:
                 rows.append({
-                    "日時": h.get("timestamp", "")[:16].replace("T", " "),
+                    "日時": h.get("timestamp", "")[:16].replace("T", "  "),
                     "ファイル": h.get("filename", ""),
                     "最良モデル": h.get("best_model", ""),
                     "スコア": f"{h.get('best_score', 0):.4f}",
@@ -966,14 +916,12 @@ def _render_pipeline(state: dict) -> None:
                 lambda e: state.update({"do_shap": e.value})
             )
 
-
 def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str) -> None:
     """説明変数ごとの単調制約UI — ダイアログベース。"""
     from frontend_nicegui.components.dialog_manager import (
         create_settings_dialog,
         render_settings_summary,
     )
-
     numeric_cols = [c for c in df.select_dtypes(include='number').columns
                     if c != target_col and c not in state.get("exclude_cols", [])]
 
@@ -1025,8 +973,8 @@ def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str
             current = constraints.get(col, 0)
             with ui.row().classes("items-center q-gutter-xs full-width q-mb-xs"):
                 ui.label(col).classes("text-body2").style(
-                    "width: 200px; overflow: hidden; text-overflow: ellipsis;"
-                    "white-space: nowrap;"
+                    "width: 200px; overflow: hidden; text-overflow: ellipsis; "
+                    "white-space: nowrap; "
                 )
                 ui.radio(
                     {0: "制約なし", 1: "↗ 単調増加", -1: "↘ 単調減少"},
@@ -1056,7 +1004,6 @@ def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str
         badge_color="amber" if n_total > 0 else "grey",
     )
 
-
 def _toggle_model(state: dict, key: str, checked: bool) -> None:
     """モデルの選択/解除をstateに反映"""
     selected = state.get("selected_models", [])
@@ -1066,11 +1013,9 @@ def _toggle_model(state: dict, key: str, checked: bool) -> None:
         selected.remove(key)
     state["selected_models"] = selected
 
-
 def _render_model_auto_params(state: dict, available_models: list) -> None:
     """
     選択されたモデルごとにパラメータ自動UIを生成する。
-
     introspect_params() でクラスの __init__ パラメータを自動検出し、
     auto_params_ui.render_param_editor() でUIウィジェットを自動描画する。
     新モデル追加時にUIコード変更は不要。
@@ -1123,11 +1068,9 @@ def _render_model_auto_params(state: dict, available_models: list) -> None:
                 except Exception as ex:
                     ui.label(f"⚠️ パラメータ取得エラー: {ex}").classes("text-amber")
 
-
 def _render_adapter_auto_params(state: dict) -> None:
     """
     各SMILES記述子エンジンのパラメータ自動UIを生成する。
-
     introspect_params() でアダプタクラスの __init__ パラメータを自動検出。
     パラメータがある場合のみUIを表示する。
     """
@@ -1170,17 +1113,14 @@ def _render_adapter_auto_params(state: dict) -> None:
         except Exception:
             pass  # インポート不可のエンジンはスキップ
 
-
-# ================================================================
+# =================================================================
 # ユーティリティ関数
-# ================================================================
-
+# =================================================================
 def _auto_detect_columns(state: dict) -> None:
     """目的変数・SMILES列を自動検出してstateに設定"""
     df = state["df"]
     if df is None:
         return
-
     # 目的変数: 最後の列
     state["target_col"] = df.columns[-1]
 
@@ -1217,7 +1157,7 @@ def _auto_detect_columns(state: dict) -> None:
             smart_fn()
         except Exception:
             pass
-            
+        
     # ------ Item 13: 特徴量の分類と統計量計算 (単調性制約用) ------
     try:
         from frontend_nicegui.utils.feature_classifier import FeatureClassifier
@@ -1256,7 +1196,6 @@ def _auto_detect_columns(state: dict) -> None:
     except Exception:
         pass
 
-
 def _show_preview(df: pd.DataFrame, container) -> None:
     """DataFrameのプレビューをテーブルとして表示"""
     container.clear()
@@ -1280,14 +1219,12 @@ def _show_preview(df: pd.DataFrame, container) -> None:
             rows.append(row_dict)
         ui.table(columns=columns, rows=rows).classes("full-width").props("dense flat bordered")
 
-
 def _update_metrics(state: dict, container) -> None:
     """メトリクスカードの更新"""
     container.clear()
     df = state.get("df")
     if df is None:
         return
-
     with container:
         for val, lbl, icon_name in [
             (f"{df.shape[0]:,}", "行数", "table_rows"),

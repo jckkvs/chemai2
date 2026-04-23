@@ -17,6 +17,28 @@ from nicegui import ui, run
 
 logger = logging.getLogger(__name__)
 
+# ── 【必須】ObservableDict 対応ヘルパー ──
+def _safe_get(obj, key: str, default=None):
+    """
+    ObservableDict / dict / 通常オブジェクトのいずれからも安全に値を取得
+    """
+    if obj is None:
+        return default
+    # 1. 通常の属性アクセスを試す
+    if hasattr(obj, key):
+        val = getattr(obj, key)
+        # callable（関数）は UI 描画に使えないので除外
+        return None if callable(val) else val
+    # 2. dict 風アクセスを試す
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    # 3. __getitem__ 対応（ObservableDict 等）
+    try:
+        return obj[key]
+    except (TypeError, KeyError, AttributeError):
+        return default
+# ────────────────────────────────
+
 
 def render_export_panel(state: dict[str, Any]) -> None:
     """エクスポートパネルを描画する。"""
@@ -56,16 +78,16 @@ def render_export_panel(state: dict[str, Any]) -> None:
         with ui.card().classes("full-width q-pa-md glass-card"):
             with ui.row().classes("q-gutter-md items-center"):
                 ui.html('<span style="font-size:20px;">🏆</span>')
-                ui.label(f"最良モデル: {ar.best_model_key}").classes("text-subtitle1 text-bold")
-                ui.badge(f"スコア: {ar.best_score:.4f}", color="cyan").props("dense")
+                ui.label(f"最良モデル: {_safe_get(ar, 'best_model_key', 'N/A')}").classes("text-subtitle1 text-bold")
+                ui.badge(f"スコア: {_safe_get(ar, 'best_score', 0):.4f}", color="cyan").props("dense")
 
             metrics: dict = {}
-            if ar.oof_true is not None and ar.oof_predictions is not None:
+            if _safe_get(ar, 'oof_true') is not None and _safe_get(ar, 'oof_predictions') is not None:
                 import numpy as np
                 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-                y_t = np.asarray(ar.oof_true).ravel()
-                y_p = np.asarray(ar.oof_predictions).ravel()
-                if ar.task == "regression":
+                y_t = np.asarray(_safe_get(ar, 'oof_true')).ravel()
+                y_p = np.asarray(_safe_get(ar, 'oof_predictions')).ravel()
+                if _safe_get(ar, 'task') == "regression":
                     metrics = {
                         "R²":   round(float(r2_score(y_t, y_p)), 4),
                         "RMSE": round(float(mean_squared_error(y_t, y_p) ** 0.5), 4),
@@ -147,9 +169,9 @@ def render_export_panel(state: dict[str, Any]) -> None:
             importances: dict = {}
             try:
                 if include_importance.value:
-                    estimator = ar.best_pipeline
-                    if hasattr(ar.best_pipeline, "steps"):
-                        estimator = ar.best_pipeline.steps[-1][1]
+                    estimator = _safe_get(ar, 'best_pipeline')
+                    if hasattr(_safe_get(ar, 'best_pipeline'), "steps"):
+                        estimator = _safe_get(ar, 'best_pipeline').steps[-1][1]
                         if hasattr(estimator, "steps"):
                             estimator = estimator.steps[-1][1]
                     if hasattr(estimator, "feature_importances_"):
@@ -167,7 +189,7 @@ def render_export_panel(state: dict[str, Any]) -> None:
                 pass
 
             result_dict: dict[str, Any] = {
-                "best_model_name": ar.best_model_key,
+                "best_model_name": _safe_get(ar, 'best_model_key', 'N/A'),
                 "metrics": metrics,
                 "feature_importances": importances if include_importance.value else {},
                 "chart_paths": state.get("_chart_paths", []) if include_charts.value else [],
@@ -181,7 +203,7 @@ def render_export_panel(state: dict[str, Any]) -> None:
                     else []
                 ),
                 "best_params":  (
-                    ar.model_details.get(ar.best_model_key, {}).get("params", {})
+                    _safe_get(ar, 'model_details', {}).get(_safe_get(ar, 'best_model_key', 'N/A'), {}).get("params", {})
                     if hasattr(ar, "model_details") else {}
                 ),
                 "cv_folds": getattr(ar, "cv_folds", 5),
@@ -215,7 +237,7 @@ def render_export_panel(state: dict[str, Any]) -> None:
                     model_path = out_dir / f"{base_name}_model.pkl"
                     
                     # 1. Dump best model pipeline
-                    joblib.dump(ar.best_pipeline, model_path)
+                    joblib.dump(_safe_get(ar, 'best_pipeline'), model_path)
                     
                     # 2. Get columns
                     t_col = state.get("target_col", "target")
@@ -231,7 +253,7 @@ def render_export_panel(state: dict[str, Any]) -> None:
                         model_path=model_path.name,
                         data_path="your_data.csv",
                         target_col=t_col,
-                        task=ar.task,
+                        task=_safe_get(ar, 'task'),
                         smiles_col=s_col_str,
                     )
                     
