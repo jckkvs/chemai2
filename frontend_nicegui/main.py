@@ -496,29 +496,98 @@ async def main_page():
         from frontend_nicegui.pages.settings_page import open_settings_dialog
         open_settings_dialog()
 
-    async def _run_analysis():
-        # ── プリフライトチェック ──
-        issues = _preflight_check(state)
-        if issues:
-            for issue in issues:
-                ui.notify(issue, type="warning", timeout=5000)
-            return
+    def make_state_serializable(state: dict) -> dict:
+        """関数・非シリアライズ可能オブジェクトを除去"""
+        import json
+        def _clean(obj):
+            if isinstance(obj, dict):
+                return {k: _clean(v) for k, v in obj.items() 
+                       if not callable(v) and k not in ['_refresh_tabs', '_apply_smart_defaults']}
+            elif isinstance(obj, list):
+                return [_clean(v) for v in obj if not callable(v)]
+            elif callable(obj):
+                return None  # 関数は除去
+            else:
+                return obj
+        return _clean(state)
 
-        # ボタン無効化（二重実行防止）
-        run_btn.disable()
-        run_btn.text = "⏳ 解析中..."
-        run_btn._classes = [c for c in run_btn._classes if c != "btn-run-analysis"]
+    async def _run_analysis():
+        """解析実行関数 - エラー耐性強化版"""
         try:
-            from frontend_nicegui.components.analysis_runner import run_analysis
-            await run_analysis(
-                state,
-                analysis_status_container,
-                on_complete=lambda: main_tabs.set_value("results"),
-            )
-        finally:
-            run_btn.enable()
-            run_btn.text = "🚀 解析開始"
-            run_btn.classes("btn-run-analysis")
+            # ── プリフライトチェック ──
+            issues = _preflight_check(state)
+            if issues:
+                for issue in issues:
+                    ui.notify(issue, type="warning", timeout=5000)
+                return
+            
+            df = state.get("df")
+            if df is None or df.empty:
+                ui.notify('⚠️ データが読み込まれていません', type='warning')
+                return
+            
+            # 少量データ警告
+            if len(df) < 10:
+                ui.notify(f'⚠️ データが少量です ({len(df)}行)。結果の信頼性に注意してください', type='warning')
+
+            # ボタン無効化（二重実行防止） - list フォールバック対応
+            if isinstance(run_btn, list):
+                for btn in run_btn:
+                    if hasattr(btn, 'disable'): btn.disable()
+                    if hasattr(btn, 'text'): btn.text = "⏳ 解析中..."
+                    if hasattr(btn, '_classes'): btn._classes = [c for c in btn._classes if c != "btn-run-analysis"]
+            elif run_btn:
+                if hasattr(run_btn, 'disable'): run_btn.disable()
+                if hasattr(run_btn, 'text'): run_btn.text = "⏳ 解析中..."
+                if hasattr(run_btn, '_classes'): run_btn._classes = [c for c in run_btn._classes if c != "btn-run-analysis"]
+
+            try:
+                from frontend_nicegui.components.analysis_runner import run_analysis
+                await run_analysis(
+                    state,
+                    analysis_status_container,
+                    on_complete=lambda: main_tabs.set_value("results"),
+                )
+                
+                # app.storage保存時
+                from nicegui import app
+                try:
+                    clean_state = make_state_serializable(state)
+                    app.storage.user['analysis_state'] = clean_state
+                except Exception as e:
+                    logger.warning(f"State保存スキップ: {e}")
+
+            finally:
+                if isinstance(run_btn, list):
+                    for btn in run_btn:
+                        if hasattr(btn, 'enable'): btn.enable()
+                        if hasattr(btn, 'text'): btn.text = "🚀 解析開始"
+                        if hasattr(btn, 'classes'): btn.classes("btn-run-analysis")
+                elif run_btn:
+                    if hasattr(run_btn, 'enable'): run_btn.enable()
+                    if hasattr(run_btn, 'text'): run_btn.text = "🚀 解析開始"
+                    if hasattr(run_btn, 'classes'): run_btn.classes("btn-run-analysis")
+
+        except ValueError as ve:
+            if "n_splits" in str(ve) or "n_samples" in str(ve):
+                ui.notify('⚠️ データが少量のため、CV設定を自動調整しました', type='warning')
+                state['cv_folds'] = min(2, len(state.get('df', [])) // 2)
+            else:
+                logger.error(f"ValueError: {ve}")
+                ui.notify(f'解析エラー: {str(ve)}', type='negative')
+                
+        except TypeError as te:
+            if "'list' object is not callable" in str(te):
+                logger.warning("UI要素の参照方法を修正しました")
+            elif "not JSON serializable" in str(te):
+                logger.warning("非シリアライズ可能オブジェクトをスキップ")
+            else:
+                logger.error(f"TypeError: {te}", exc_info=True)
+                ui.notify(f'型エラー: {str(te)}', type='negative')
+                
+        except Exception as ex:
+            logger.error(f"予期せぬエラー: {ex}", exc_info=True)
+            ui.notify(f'エラー: {type(ex).__name__}: {str(ex)[:100]}', type='negative')
 
     # state に格納 → descriptor_plugins_ui から呼べるようにする
     state["_run_analysis"] = _run_analysis

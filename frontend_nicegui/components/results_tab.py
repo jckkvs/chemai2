@@ -2275,3 +2275,166 @@ def manual_refresh_from_storage(state, container=None):
             refresh_fn()
     else:
         ui.notify('⚠️ 保存された結果が見つかりません', type='warning')
+
+
+# =====================================================================
+# 完全再実装版 結果表示タブ (create_results_tab)
+# =====================================================================
+
+@ui.refreshable
+def create_results_tab(state: dict) -> None:
+    """結果・レポートタブのメイン構築関数（state 一貫性確保版）"""
+    
+    with ui.column().classes('w-full items-center gap-4 p-4'):
+        
+        # === ヘッダー ===
+        ui.label('📊 解析結果・レポート').classes('text-2xl font-bold text-blue-800')
+        
+        # === 結果取得ヘルパー関数 ===
+        def _get_results():
+            """state から結果を取得（app.storage へのフォールバック付き）"""
+            # 優先: state 内の結果
+            automl = state.get("automl_result")
+            pipeline = state.get("pipeline_result")
+            
+            # --- 他タブとの互換性レイヤー: AutoMLResult オブジェクトを dict に変換 ---
+            if automl and not isinstance(automl, dict):
+                try:
+                    automl = {
+                        'model_name': getattr(automl, 'best_model_key', 'N/A'),
+                        'score': getattr(automl, 'best_score', 'N/A'),
+                        'best_model': getattr(automl, 'best_model_key', 'N/A'),
+                        'predictions_df': getattr(automl, 'test_predictions_df', None),
+                        'cv_scores': getattr(automl, 'cv_scores', [])
+                    }
+                except Exception as e:
+                    logger.error(f"AutoMLResultからdictへの変換エラー: {e}")
+            # -------------------------------------------------------------------------
+
+            if automl or pipeline:
+                return {"automl": automl, "pipeline": pipeline, "source": "state"}
+            
+            # フォールバック: app.storage（互換性維持）
+            try:
+                from nicegui import app
+                storage_results = app.storage.user.get("analysis_results")
+                if storage_results:
+                    return {"automl": storage_results, "pipeline": None, "source": "storage"}
+            except Exception:
+                pass
+            
+            return None
+        
+        # === 結果表示コンテナ ===
+        result_container = ui.column().classes('w-full')
+        
+        # === 結果描画関数 ===
+        def _display_results():
+            """結果をコンテナに描画"""
+            results = _get_results()
+            
+            if not results or (not results["automl"] and not results["pipeline"]):
+                # 結果がない場合の表示
+                with result_container:
+                    with ui.card().classes('w-full bg-gray-50 border border-dashed border-gray-300 p-8 items-center'):
+                        ui.icon('bar_chart', size='3rem').classes('text-gray-400')
+                        ui.label('解析結果がまだありません').classes('text-lg text-gray-600 mt-2')
+                        ui.label('「🚀 解析開始」ボタンを押して解析を実行してください。').classes('text-sm text-gray-500')
+                        # 手動リロードボタン
+                        ui.button('🔄 結果を再確認', on_click=lambda: _refresh_and_display()).props('outline mt-2')
+                return
+            
+            # 結果がある場合の表示
+            result_container.clear()
+            with result_container:
+                # AutoML 結果
+                if results["automl"]:
+                    _render_automl_results(results["automl"])
+                
+                # Pipeline 結果
+                if results["pipeline"]:
+                    _render_pipeline_results(results["pipeline"])
+                
+                # 出典表示
+                ui.label(f'※ 結果取得元: {results["source"]}').classes('text-xs text-gray-400 mt-2')
+        
+        # === 手動リフレッシュ関数 ===
+        async def _refresh_and_display():
+            """結果を再取得して表示を更新"""
+            ui.notify('結果を更新中...', type='info')
+            await asyncio.sleep(0.1)  # UI 安定待ち
+            create_results_tab.refresh()
+            ui.notify('✅ 結果を表示しました', type='positive')
+        
+        # === 自動監視タイマー（3 秒ごと）===
+        async def _auto_check():
+            """state 内の結果変化を監視し、自動で表示更新"""
+            results = _get_results()
+            if results and (results["automl"] or results["pipeline"]):
+                # 結果が存在し、かつ未表示なら描画
+                if not hasattr(_auto_check, '_displayed_once'):
+                    _auto_check._displayed_once = True
+                    _display_results()
+                    ui.notify('✅ 解析結果が準備できました', type='positive')
+        
+        # 3 秒ごとにチェック（一度だけ結果表示）
+        ui.timer(3.0, _auto_check)
+        
+        # === 初期描画 ===
+        _display_results()
+        
+        # === 手動更新ボタン（常時表示）===
+        with ui.row().classes('w-full justify-end mt-4'):
+            ui.button('🔄 結果を更新', 
+                     on_click=lambda: asyncio.create_task(_refresh_and_display()),
+                     icon='refresh').props('outline')
+
+def _render_automl_results(results: dict) -> None:
+    """AutoML 結果を描画"""
+    with ui.card().classes('w-full bg-green-50 border-l-4 border-green-500 p-4 mb-4'):
+        ui.label('✅ AutoML 解析完了').classes('font-bold text-green-800 text-lg')
+        
+        if isinstance(results, dict):
+            # 基本情報
+            ui.markdown(f"**モデル**: {results.get('model_name', 'N/A')}")
+            ui.markdown(f"**スコア**: {results.get('score', 'N/A')}")
+            if 'best_model' in results:
+                ui.markdown(f"**最適モデル**: {results['best_model']}")
+            if 'cv_scores' in results:
+                scores = results['cv_scores']
+                if isinstance(scores, list) and len(scores) > 0:
+                    avg = np.mean(scores)
+                    std = np.std(scores)
+                    ui.markdown(f"**CV 平均**: {avg:.4f} ± {std:.4f}")
+            
+            # 予測データテーブル
+            if 'predictions_df' in results and results['predictions_df'] is not None:
+                df = results['predictions_df']
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    ui.label('📊 予測結果（先頭 10 行）').classes('font-bold text-lg mt-4')
+                    ui.table.from_pandas(df.head(10)).classes('w-full')
+            
+            # 可視化
+            if 'plot' in results and results['plot'] is not None:
+                ui.label('📈 可視化').classes('font-bold text-lg mt-4')
+                try:
+                    ui.plotly(results['plot']).classes('w-full h-96')
+                except Exception as e:
+                    logger.error(f"プロット表示エラー: {e}")
+                    ui.label(f'⚠️ プロット表示エラー: {str(e)}').classes('text-amber')
+
+def _render_pipeline_results(results: dict) -> None:
+    """Pipeline 結果を描画"""
+    with ui.card().classes('w-full bg-blue-50 border-l-4 border-blue-500 p-4 mb-4'):
+        ui.label('✅ Pipeline 解析完了').classes('font-bold text-blue-800 text-lg')
+        
+        if isinstance(results, dict):
+            if 'steps' in results:
+                ui.label('実行ステップ:').classes('font-bold mt-2')
+                for i, step in enumerate(results['steps'], 1):
+                    ui.label(f"{i}. {step}").classes('text-sm')
+            
+            if 'metrics' in results:
+                ui.label('評価指標:').classes('font-bold mt-2')
+                for key, val in results['metrics'].items():
+                    ui.label(f"{key}: {val:.4f}" if isinstance(val, (int, float)) else f"{key}: {val}").classes('text-sm')

@@ -356,8 +356,14 @@ class AutoMLEngine:
         
         # サンプル数が少ない場合は cv_folds を強制的に調整
         n_samples_final = len(df)
-        if n_samples_final < self.cv_folds:
-            self.cv_folds = max(2, n_samples_final)
+        def get_safe_n_splits(n_samples: int, requested_splits: int = 5) -> int:
+            """サンプル数に基づいて安全なCV分割数を返す"""
+            # 各foldに最低2サンプル必要
+            min_samples_per_fold = 2
+            max_splits = max(1, n_samples // min_samples_per_fold)
+            return min(requested_splits, max_splits, n_samples)
+            
+        self.cv_folds = get_safe_n_splits(n_samples_final, self.cv_folds)
 
         model_scores: Dict[str, float] = {}
         model_details: Dict[str, Dict[str, Any]] = {}

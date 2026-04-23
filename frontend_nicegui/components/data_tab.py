@@ -193,19 +193,70 @@ def _render_data_load(state: dict) -> None:
         """ファイルアップロードハンドラ - NiceGUI 3.x 完全対応版"""
         try:
             logger.info(f"=== ファイルアップロード開始 ===")
+            logger.info(f"Event type: {type(e)}")
+            logger.info(f"Event attributes: {[attr for attr in dir(e) if not attr.startswith('_')]}")
             
-            # === NiceGUI 3.x 標準 API: e.content (bytes), e.name (str) ===
-            # 複雑な hasattr チェーンは廃止し、標準仕様に準拠
-            content = e.content
-            filename = e.name
+            # === NiceGUI 3.x: ファイルアップロードの正しい処理 ===
+            # e は UploadEventArguments
+            # 実際のファイル内容は非同期で取得する必要がある
             
-            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content) if content else 0} bytes")
+            # ファイル名の取得
+            filename = getattr(e, 'name', 'unknown.csv')
+            
+            # ファイル内容の取得（NiceGUIのバージョンに依存）
+            content = None
+            
+            # 方法1: e.content が直接bytesとして存在する場合
+            if hasattr(e, 'content') and e.content is not None:
+                try:
+                    content = e.content
+                    logger.info("e.content を使用（bytes）")
+                except Exception as ce:
+                    logger.warning(f"e.content アクセス失敗: {ce}")
+                    content = None
+            
+            # 方法2: e.file から読み取る場合
+            if content is None and hasattr(e, 'file') and e.file is not None:
+                try:
+                    if isinstance(e.file, bytes):
+                        content = e.file
+                        logger.info("e.file を使用（bytes）")
+                    elif hasattr(e.file, 'read'):
+                        # 同期read
+                        content = e.file.read()
+                        logger.info("e.file.read() を使用（同期）")
+                    else:
+                        # その他の場合
+                        content = e.file
+                        logger.info("e.file を直接使用")
+                except Exception as fe:
+                    logger.warning(f"e.file 読み取り失敗: {fe}")
+                    content = None
+            
+            # 方法3: e 自体がbytesの場合
+            if content is None and isinstance(e, bytes):
+                content = e
+                logger.info("e 自体がbytes")
+            
+            if content is None:
+                logger.error(f"ファイルコンテンツを取得できませんでした。eの型: {type(e)}")
+                ui.notify('ファイル形式がサポートされていません', type='negative')
+                return
+                
+            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content) if isinstance(content, (bytes, str)) else 'N/A'}")
             
             # === ファイル形式の判定と読み込み ===
             if filename.endswith('.csv'):
-                df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
+                if isinstance(content, bytes):
+                    df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
+                else:
+                    df_loaded = pd.read_csv(io.StringIO(content), float_precision='high')
             elif filename.endswith(('.xlsx', '.xls')):
-                df_loaded = pd.read_excel(io.BytesIO(content))
+                if isinstance(content, bytes):
+                    df_loaded = pd.read_excel(io.BytesIO(content))
+                else:
+                    ui.notify('Excelファイルはbytes形式が必要です', type='warning')
+                    return
             else:
                 upload_status.text = "❌ CSV/Excelファイルのみ対応"
                 ui.notify('サポートされていないファイル形式です', type='warning')

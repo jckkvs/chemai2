@@ -150,15 +150,24 @@ def _render_pred_actual(ar, y_true, y_pred, feat_names, X_arr) -> None:
     # AD情報の取得
     in_domain = getattr(ar, "in_domain_cv", None)
     
-    # 散布図の色分け (AD内は残差カラー、AD外は赤色で強調)
+    # 散布図の色分け (AD内は一律カラー、AD外は赤色で強調)
     if in_domain is not None and len(in_domain) == len(y_t):
-        marker_color = np.where(in_domain, residuals, "rgba(255, 50, 50, 0.9)")
+        # Plotlyは色指定の際に「数値の配列（グラデーション用）」か「色名文字列の配列」のどちらかしか受け付けません。
+        # residualsと色文字列を混ぜるとエラーになるため、明示的に色文字列に統一します。
+        marker_color = np.where(in_domain, "rgba(0, 212, 255, 0.7)", "rgba(255, 50, 50, 0.9)")
         marker_line_color = np.where(in_domain, "rgba(255,255,255,0.1)", "rgba(255, 255, 255, 0.8)")
         marker_line_width = np.where(in_domain, 0.5, 1.5)
         texts = [
             f"Sample {i}<br>実測: {y_t[i]:.4f}<br>予測: {y_p[i]:.4f}<br>残差: {residuals[i]:.4f}<br>AD: {'内' if in_domain[i] else '外 (⚠️ 警告)'}"
             for i in sample_idx
         ]
+        # 文字列の配列なのでcolorscaleは使用しない
+        marker_config = dict(
+            size=7,
+            color=marker_color,
+            opacity=0.75,
+            line=dict(color=marker_line_color, width=marker_line_width),
+        )
     else:
         marker_color = residuals
         marker_line_color = "rgba(255,255,255,0.1)"
@@ -167,6 +176,15 @@ def _render_pred_actual(ar, y_true, y_pred, feat_names, X_arr) -> None:
             f"Sample {i}<br>実測: {y_t[i]:.4f}<br>予測: {y_p[i]:.4f}<br>残差: {residuals[i]:.4f}"
             for i in sample_idx
         ]
+        # 数値の配列なのでcolorscaleを使用
+        marker_config = dict(
+            size=7,
+            color=marker_color,
+            colorscale="RdBu_r",
+            showscale=False,
+            opacity=0.75,
+            line=dict(color=marker_line_color, width=marker_line_width),
+        )
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -177,14 +195,7 @@ def _render_pred_actual(ar, y_true, y_pred, feat_names, X_arr) -> None:
     fig.add_trace(go.Scatter(
         x=y_t, y=y_p,
         mode="markers",
-        marker=dict(
-            size=7,
-            color=marker_color,
-            colorscale="RdBu_r" if isinstance(marker_color, np.ndarray) and marker_color.dtype.kind in 'bciof' else None,
-            showscale=False,  # Colorbar gets messy with mixed types, so we hide it and rely on hover
-            opacity=0.75,
-            line=dict(color=marker_line_color, width=marker_line_width),
-        ),
+        marker=marker_config,
         text=texts,
         hovertemplate="%{text}<extra></extra>",
         name="データ点",
