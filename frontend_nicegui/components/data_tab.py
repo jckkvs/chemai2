@@ -204,8 +204,13 @@ def _render_data_load(state: dict) -> None:
             # 方法1: e.content を直接使用（最も確実）
             if hasattr(e, 'content') and e.content is not None:
                 c = e.content
-                if not inspect.iscoroutine(c):
+                if inspect.iscoroutine(c):
+                    logger.info("e.content returned a coroutine - awaiting...")
+                    content = await c
+                else:
                     content = c
+                
+                if content is not None:
                     logger.info(f"✓ e.content を使用 (type: {type(content)}, size: {len(content) if isinstance(content, (bytes, str)) else 'N/A'})")
             
             # 方法2: e.file から読み取る（フォールバック）
@@ -218,10 +223,12 @@ def _render_data_load(state: dict) -> None:
                     try:
                         read_result = f.read()
                         if inspect.iscoroutine(read_result):
-                            logger.warning("f.read() returned coroutine - skipping to avoid error")
-                            content = None
+                            logger.info("f.read() returned coroutine - awaiting content...")
+                            content = await read_result
                         elif isinstance(read_result, (bytes, str)):
                             content = read_result
+                        
+                        if content is not None:
                             logger.info(f"✓ e.file.read() ({type(content).__name__}) を使用")
                     except Exception as read_err:
                         logger.warning(f"e.file.read() failed: {read_err}")
