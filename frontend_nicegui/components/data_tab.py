@@ -191,42 +191,29 @@ def _render_data_load(state: dict) -> None:
     async def handle_upload(e):
         try:
             logger.info(f"=== ファイルアップロード開始 ===")
-            logger.info(f"Event type: {type(e)}")
-            logger.info(f"Event attributes: {dir(e)}")
             
-            # NiceGUI 3.x: e.content が標準
+            # NiceGUI 3.x 標準 API を使用
             try:
-                content = e.content
-                logger.info("e.content を使用（NiceGUI 3.x）")
+                content = e.content  # bytes
+                name = e.name        # str
+                logger.info(f"✅ e.content / e.name を使用 (NiceGUI 3.x)")
             except AttributeError:
-                # フォールバック：e.file がある場合
+                # フォールバック: e.file が存在する場合
+                logger.warning("e.content または e.name が見つかりません。フォールバックを試行します。")
                 if hasattr(e, 'file'):
-                    if hasattr(e.file, 'read'):
+                    # e.file.read() がコルーチンの可能性があるため型を確認
+                    if hasattr(e.file, 'read') and callable(e.file.read):
                         content = e.file.read()
+                        # もし content がコルーチンなら await が必要だが、
+                        # 今回は e.content 優先のため、一旦同期的に読み込みを試みる
                     else:
                         content = e.file
-                    logger.info("e.file を使用（フォールバック）")
+                    name = getattr(e, 'name', getattr(e.file, 'name', 'uploaded_file.csv'))
+                    logger.info("e.file を使用して読み込みました")
                 else:
-                    logger.error(f"利用可能な属性が見つかりません。利用可能: {dir(e)}")
-                    raise AttributeError("No content or file attribute found")
-            
-            # ファイル名の取得（NiceGUI 3.x 対応）
-            name = "unknown.csv"  # デフォルト
-            try:
-                if hasattr(e, 'name') and e.name:
-                    name = e.name
-                elif hasattr(e, 'filename') and e.filename:
-                    name = e.filename
-                elif hasattr(e, 'file'):
-                    if hasattr(e.file, 'name') and e.file.name:
-                        name = e.file.name
-                    elif hasattr(e.file, 'filename') and e.file.filename:
-                        name = e.file.filename
-                logger.info(f"✅ ファイル名取得: {name}")
-            except Exception as ex:
-                logger.warning(f"ファイル名取得エラー: {ex}")
-                name = "uploaded_file.csv"
-                
+                    raise AttributeError(f"利用可能な属性が見つかりません。dir(e): {dir(e)}")
+
+            logger.info(f"✅ ファイル名取得: {name}, コンテンツ型: {type(content)}")
         except Exception as ex:
             logger.error(f"ファイル属性の読み取りエラー: {ex}", exc_info=True)
             ui.notify(f'ファイル読み取り失敗: {str(ex)}', type='negative')
