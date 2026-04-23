@@ -1230,11 +1230,13 @@ async def model_setup_page():
 from datetime import datetime
 from backend.utils.data_validator import DataValidator
 
-# デバッグ用グローバル状態監視
+# デバッグ用グローバル状態監視（既存のデータ管理を破壊せず追加）
 _data_debug_info = {
     "last_loaded_df": None,
     "load_timestamp": None,
-    "load_status": "not_loaded"
+    "load_status": "not_loaded",
+    "validation_message": None,
+    "details": None
 }
 
 def get_current_data_status():

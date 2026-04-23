@@ -188,7 +188,8 @@ def _render_data_load(state: dict) -> None:
         _show_preview(df_existing, preview_container)
 
     async def handle_upload(e):
-        content = e.content.read()
+        # [NiceGUI 3.x 正式対応] e.content は bytes、e.name がファイル名
+        content = e.content
         name = e.name
         try:
             if name.endswith(".csv"):
@@ -208,6 +209,16 @@ def _render_data_load(state: dict) -> None:
             state["filename"] = name
             state["automl_result"] = None
             state["pipeline_result"] = None
+
+            # --- データ認識不具合対応: 状態更新と検証 ---
+            try:
+                from frontend_nicegui.main import set_loaded_data
+                from backend.utils.data_validator import DataValidator
+                set_loaded_data(df_loaded)
+                logger.info(DataValidator.generate_diagnostic_report(df_loaded))
+            except ImportError:
+                logger.warning("set_loaded_data が main.py からインポートできません")
+
             _auto_detect_columns(state)
             df = state["df"]
             upload_status.text = f"✅ {name} 読み込み完了 ({len(df)}行 × {len(df.columns)}列)"
@@ -256,6 +267,13 @@ def _render_data_load(state: dict) -> None:
             state["_chem_adapters"] = None
             state["_applied_recommendation"] = None
             
+            # --- データ認識不具合対応: 状態更新と検証 ---
+            try:
+                from frontend_nicegui.main import set_loaded_data
+                set_loaded_data(df)
+            except ImportError:
+                pass
+
             # 内部の自動判定ロジックを呼ぶ
             _auto_detect_columns(state)
             
@@ -304,6 +322,14 @@ def _render_data_load(state: dict) -> None:
                         state["precalc_df"] = None
                         state["_chem_adapters"] = None
                         state["_applied_recommendation"] = None
+                        
+                        # --- データ認識不具合対応: 状態更新と検証 ---
+                        try:
+                            from frontend_nicegui.main import set_loaded_data
+                            set_loaded_data(df_bench)
+                        except ImportError:
+                            pass
+
                         _auto_detect_columns(state)
                         state["target_col"] = btarget
                         upload_status.text = f"✅ {bname} ロード完了 ({len(df_bench)}行)"
@@ -400,6 +426,12 @@ def _show_descriptor_summary(state: dict, container) -> None:
 # ================================================================
 def _render_eda(state: dict) -> None:
     """特徴量の探索的データ分析 — 統合EDAパネルに委譲。"""
+    if state["df"] is None:
+        with ui.column().classes("q-pa-md items-center full-width"):
+            ui.label("⚠️ まずデータを読み込んでください").classes("text-amber text-h6")
+            ui.label("EDAを実行するにはデータのロードが必要です。").classes("text-grey text-sm")
+            ui.button("🔍 データ読み込み状態を確認 (Debug)", on_click=lambda: ui.navigate.to("/debug_data")).props("outline color=amber")
+        return
     from frontend_nicegui.components.eda_panel import render_eda_panel
     render_eda_panel(state)
 
@@ -412,7 +444,10 @@ def _render_pipeline(state: dict) -> None:
     """CV設定・前処理・特徴選択・モデル選択・単調制約"""
 
     if state["df"] is None:
-        ui.label("⚠️ まずデータを読み込んでください").classes("text-amber q-pa-md")
+        with ui.column().classes("q-pa-md items-center full-width"):
+            ui.label("⚠️ まずデータを読み込んでください").classes("text-amber text-h6")
+            ui.label("ファイルを選択してもこのメッセージが出る場合は、以下のデバッグページで状態を確認してください。").classes("text-grey text-sm")
+            ui.button("🔍 データ読み込み状態を確認 (Debug)", on_click=lambda: ui.navigate.to("/debug_data")).props("outline color=amber")
         return
 
     df = state["df"]
