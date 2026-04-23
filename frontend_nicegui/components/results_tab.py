@@ -24,6 +24,28 @@ from frontend_nicegui.utils.plot_utils import render_plot_with_expand
 
 
 
+def _safe_get(obj, key: str, default=None):
+    """
+    ObservableDict / dict / 通常オブジェクトのいずれからも安全に値を取得
+    """
+    if obj is None:
+        return default
+    # 1. 通常の属性アクセスを試す
+    if hasattr(obj, key):
+        val = getattr(obj, key)
+        # callable は除外（UI 描画に使えないため）
+        if not callable(val):
+            return val
+    # 2. dict 風アクセスを試す
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    # 3. __getitem__ 対応
+    try:
+        return obj[key]
+    except (TypeError, KeyError, AttributeError):
+        return default
+
+
 def render_results_tab(state: dict[str, Any]) -> None:
     """結果確認タブ全体を描画する。（専門家の検証フロー4タブ構成）"""
 
@@ -164,15 +186,6 @@ def _detect_smiles_col(df: pd.DataFrame) -> str | None:
 # ================================================================
 # ① 最良モデル詳細タブ
 # ================================================================
-def _get_attr(obj, key: str, default=None):
-    """ObservableDict と通常オブジェクトの両方に対応した属性取得"""
-    if hasattr(obj, key):
-        return getattr(obj, key)
-    elif isinstance(obj, dict):
-        return obj.get(key, default)
-    return default
-
-
 def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
     """正方形プロット（ホバー→構造サイドパネル）＋指標カード＋Feature Importance。"""
     import plotly.graph_objects as go
@@ -180,20 +193,20 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
     # ── ヘッダー ──
     with ui.row().classes("items-center q-gutter-sm q-mb-sm"):
         ui.icon("emoji_events", color="amber", size="md")
-        ui.label(f"最良モデル: {_get_attr(ar, 'best_model_key', '不明')}").classes("text-h5 text-bold hero-gradient")
+        ui.label(f"最良モデル: {_safe_get(ar, 'best_model_key', '不明')}").classes("text-h5 text-bold hero-gradient")
         ui.badge(f"セット: {set_name}", color="teal").props("dense")
-        ui.badge(f"CVスコア: {_get_attr(ar, 'best_score', 0):.4f}", color="cyan").props("dense")
+        ui.badge(f"CVスコア: {_safe_get(ar, 'best_score', 0):.4f}", color="cyan").props("dense")
 
-    model    = getattr(ar, "best_pipeline", None)
-    proc_X   = getattr(ar, "processed_X", None)
+    model    = _safe_get(ar, "best_pipeline")
+    proc_X   = _safe_get(ar, "processed_X")
     
-    cv_true  = getattr(ar, "oof_true", None)
-    cv_pred  = getattr(ar, "oof_predictions", None)
-    train_true = getattr(ar, "y_train", None)
-    train_pred = getattr(ar, "train_predictions", None)
+    cv_true  = _safe_get(ar, "oof_true")
+    cv_pred  = _safe_get(ar, "oof_predictions")
+    train_true = _safe_get(ar, "y_train")
+    train_pred = _safe_get(ar, "train_predictions")
     
     # ── データ前処理サマリー (Transparency Report) ──
-    preproc_report = getattr(ar, "preprocess_report", None)
+    preproc_report = _safe_get(ar, "preprocess_report")
     if preproc_report:
         with ui.expansion("⚙️ 前処理レポート (Transparency)", icon="auto_fix_high").classes("full-width q-mb-md glass-card"):
             ui.label("このモデルの学習時に適用された前処理ステップの記録です。").classes("text-caption text-grey-5 q-mb-sm")
@@ -205,7 +218,7 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
         y_cv_p = np.asarray(cv_pred).ravel()
         cv_residuals = y_cv_t - y_cv_p
 
-        if _get_attr(ar, "task", "regression") == "regression":
+        if _safe_get(ar, "task", "regression") == "regression":
             from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
             try:
                 cv_r2   = r2_score(y_cv_t, y_cv_p)
@@ -268,8 +281,8 @@ def _render_best_insight_tab(ar, state: dict, set_name: str) -> None:
                     metrics = sm.to_dict()
                 elif isinstance(sm, dict):
                     metrics = sm
-            elif _get_attr(ar, "stratified_metrics") is not None:
-                sm = _get_attr(ar, "stratified_metrics")
+            elif _safe_get(ar, "stratified_metrics") is not None:
+                sm = _safe_get(ar, "stratified_metrics")
                 if hasattr(sm, "to_dict"):
                     metrics = sm.to_dict()
             
@@ -772,14 +785,15 @@ def _render_data_preview_tab(state: dict) -> None:
 # ================================================================
 def _render_single_result(ar, state: dict) -> None:
     """単一セットの結果詳細を描画する（既存機能へのアクセスを保持）。"""
-    scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+    scores = _safe_get(ar, "model_scores", {})
 
     # ── 警告 ──
-    if ar.warnings:
-        with ui.expansion(f"⚠️ 警告 ({len(ar.warnings)}件)", icon="warning").classes(
+    warnings = _safe_get(ar, "warnings")
+    if warnings:
+        with ui.expansion(f"⚠️ 警告 ({len(warnings)}件)", icon="warning").classes(
             "full-width q-mb-md animate-shake"
         ):
-            for w in ar.warnings:
+            for w in warnings:
                 ui.label(f"⚠️ {w}").classes("text-amber text-caption")
 
     # ── サブタブ（既存8タブを残す）──
@@ -842,7 +856,7 @@ def _render_cross_set_comparison(success_results: dict, state: dict) -> None:
     all_combos = []
     all_model_keys = set()
     for sn, ar in success_results.items():
-        scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+        scores = _safe_get(ar, "model_scores", {})
         for mk, ms in scores.items():
             all_combos.append({"セット": sn, "モデル": mk, "スコア": ms})
             all_model_keys.add(mk)
@@ -872,7 +886,7 @@ def _render_cross_set_comparison(success_results: dict, state: dict) -> None:
         z_matrix = []
         for sn in set_names:
             ar = success_results[sn]
-            scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+            scores = _safe_get(ar, "model_scores", {})
             row = [scores.get(mk, float("nan")) for mk in model_keys]
             z_matrix.append(row)
 
@@ -966,10 +980,10 @@ def _render_best_estimator_tab(ar, state: dict) -> None:
     """ベストモデルのサマリー + OOF + Feature Importance + 残差 + 前処理後データを集約表示。"""
     import plotly.graph_objects as go
 
-    model = getattr(ar, "best_pipeline", None)
-    proc_X = getattr(ar, "processed_X", None)
-    y_true = getattr(ar, "oof_true", None)
-    y_pred = getattr(ar, "oof_predictions", None)
+    model = _safe_get(ar, "best_pipeline")
+    proc_X = _safe_get(ar, "processed_X")
+    y_true = _safe_get(ar, "oof_true")
+    y_pred = _safe_get(ar, "oof_predictions")
 
     # ── OOFメトリクス ──
     if y_true is not None and y_pred is not None:
@@ -977,7 +991,7 @@ def _render_best_estimator_tab(ar, state: dict) -> None:
         y_p = np.asarray(y_pred).ravel()
         residuals = y_t - y_p
 
-        if ar.task == "regression":
+        if _safe_get(ar, "task", "regression") == "regression":
             from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
             try:
                 r2   = r2_score(y_t, y_p)
@@ -1073,7 +1087,7 @@ def _render_best_estimator_tab(ar, state: dict) -> None:
                     template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0.1)",
                     height=max(300, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
-                    xaxis_title="重要度", title=f"Feature Importance ({ar.best_model_key})",
+                    xaxis_title="重要度", title=f"Feature Importance ({_safe_get(ar, 'best_model_key', '不明')})",
                 )
                 ui.plotly(fig_fi).classes("full-width")
             elif hasattr(estimator, "coef_"):
@@ -1091,7 +1105,7 @@ def _render_best_estimator_tab(ar, state: dict) -> None:
                     template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0.1)",
                     height=max(300, 22 * top), margin=dict(l=10, r=10, t=30, b=10),
-                    xaxis_title="回帰係数", title=f"回帰係数 ({ar.best_model_key})",
+                    xaxis_title="回帰係数", title=f"回帰係数 ({_safe_get(ar, 'best_model_key', '不明')})",
                 )
                 ui.plotly(fig_coef).classes("full-width")
             else:
@@ -1120,15 +1134,15 @@ def _render_model_comparison_tab(ar, state: dict) -> None:
     """全推定器のFoldスコアを多角的に比較する。"""
     import plotly.graph_objects as go
 
-    model_details = getattr(ar, "model_details", {})
-    scores = ar.model_scores if hasattr(ar, "model_scores") else {}
+    model_details = _safe_get(ar, "model_details", {})
+    scores = _safe_get(ar, "model_scores", {})
 
     if not scores:
         ui.label("モデルスコアがありません").classes("text-grey")
         return
 
     sorted_models = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    scoring = getattr(ar, "scoring", "score")
+    scoring = _safe_get(ar, "scoring", "score")
 
     ui.label("🔄 推定器横断比較").classes("text-h6 text-bold q-mb-md")
     ui.label(
@@ -1229,15 +1243,17 @@ def _render_model_evaluation(ar) -> None:
     """モデルスコア比較テーブルとFold別スコア"""
 
     # ── パイプラインフロー図 ──
-    proc_X = getattr(ar, "processed_X", None)
+    proc_X = _safe_get(ar, "processed_X")
     n_feats = proc_X.shape[1] if proc_X is not None and hasattr(proc_X, "shape") else "?"
-    n_models = len(ar.model_scores) if hasattr(ar, "model_scores") else "?"
+    n_models = len(_safe_get(ar, "model_scores", {}))
+    best_model_key = _safe_get(ar, "best_model_key", "N/A")
+    best_score = _safe_get(ar, "best_score", 0.0)
 
     flow_steps = [
-        ("📂", "データ", f"{getattr(ar, 'n_samples', '?')}行"),
+        ("📂", "データ", f"{_safe_get(ar, 'n_samples', '?')}行"),
         ("⚙️", "前処理", f"{n_feats}特徴量"),
-        ("🔄", f"CV({getattr(ar, 'cv_folds', '?')}fold)", f"{n_models}モデル"),
-        ("🏆", ar.best_model_key, f"{ar.best_score:.4f}"),
+        ("🔄", f"CV({_safe_get(ar, 'cv_folds', '?')}fold)", f"{n_models}モデル"),
+        ("🏆", best_model_key, f"{best_score:.4f}"),
     ]
 
     with ui.row().classes("items-center q-gutter-none q-mb-md full-width justify-center"):
@@ -1254,13 +1270,16 @@ def _render_model_evaluation(ar) -> None:
                 ui.label("→").classes("text-grey-5 q-mx-xs").style("font-size: 1.2rem;")
 
     ui.label("🏆 モデル比較").classes("text-subtitle1")
-    ui.label(f"スコアリング: {ar.scoring}").classes("text-caption text-grey-5 q-mb-md")
+    ui.label(f"スコアリング: {_safe_get(ar, 'scoring', 'score')}").classes("text-caption text-grey-5 q-mb-md")
 
     # ── スコア比較テーブル ──
     rows = []
-    for key, score in sorted(ar.model_scores.items(), key=lambda x: -x[1]):
-        detail = ar.model_details.get(key, {})
-        is_best = key == ar.best_model_key
+    model_scores = _safe_get(ar, "model_scores", {})
+    model_details = _safe_get(ar, "model_details", {})
+    best_model_key = _safe_get(ar, "best_model_key")
+    for key, score in sorted(model_scores.items(), key=lambda x: -x[1]):
+        detail = model_details.get(key, {})
+        is_best = key == best_model_key
         rows.append({
             "モデル": f"🏆 {key}" if is_best else key,
             "平均スコア": f"{score:.4f}",
@@ -1280,12 +1299,14 @@ def _render_model_evaluation(ar) -> None:
     # ── Fold別スコア ──
     ui.separator()
     with ui.expansion("📊 Fold別スコア詳細", icon="bar_chart").classes("full-width q-mt-md"):
-        for key, detail in ar.model_details.items():
+        model_details = _safe_get(ar, "model_details", {})
+        best_model_key = _safe_get(ar, "best_model_key")
+        for key, detail in model_details.items():
             fold_scores = detail.get("fold_scores", [])
             if fold_scores:
                 with ui.card().classes("glass-card q-pa-sm q-mb-sm hover-bounce"):
-                    ui.label(f"{'🏆 ' if key == ar.best_model_key else ''}{key}").classes(
-                        "text-subtitle2 text-bold" if key == ar.best_model_key else "text-subtitle2"
+                    ui.label(f"{'🏆 ' if key == best_model_key else ''}{key}").classes(
+                        "text-subtitle2 text-bold" if key == best_model_key else "text-subtitle2"
                     )
                     fold_text = " | ".join(
                         f"Fold{i+1}: {s:.4f}" for i, s in enumerate(fold_scores)
@@ -1296,15 +1317,17 @@ def _render_model_evaluation(ar) -> None:
     _render_model_significance(ar)
 
     # ── OOF予測サマリー ──
-    if ar.oof_predictions is not None and ar.oof_true is not None:
+    oof_predictions = _safe_get(ar, "oof_predictions")
+    oof_true = _safe_get(ar, "oof_true")
+    if oof_predictions is not None and oof_true is not None:
         ui.separator()
         ui.label("📈 Out-of-Fold予測サマリー").classes("text-subtitle2 q-mt-md")
         try:
             from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-            if ar.task == "regression":
-                r2 = r2_score(ar.oof_true, ar.oof_predictions)
-                rmse = mean_squared_error(ar.oof_true, ar.oof_predictions, squared=False)
-                mae = mean_absolute_error(ar.oof_true, ar.oof_predictions)
+            if _safe_get(ar, "task", "regression") == "regression":
+                r2 = r2_score(oof_true, oof_predictions)
+                rmse = mean_squared_error(oof_true, oof_predictions, squared=False)
+                mae = mean_absolute_error(oof_true, oof_predictions)
                 with ui.row().classes("q-gutter-md"):
                     for i, (val, lbl) in enumerate([
                         (f"{r2:.4f}", "R² (OOF)"),
@@ -1317,8 +1340,8 @@ def _render_model_evaluation(ar) -> None:
                             ui.label(lbl).classes("text-caption text-grey-5")
             else:
                 from sklearn.metrics import accuracy_score, f1_score
-                acc = accuracy_score(ar.oof_true, ar.oof_predictions)
-                f1 = f1_score(ar.oof_true, ar.oof_predictions, average="weighted", zero_division=0)
+                acc = accuracy_score(oof_true, oof_predictions)
+                f1 = f1_score(oof_true, oof_predictions, average="weighted", zero_division=0)
                 with ui.row().classes("q-gutter-md"):
                     for i, (val, lbl) in enumerate([
                         (f"{acc:.4f}", "Accuracy (OOF)"),
@@ -1332,7 +1355,7 @@ def _render_model_evaluation(ar) -> None:
             ui.label(f"OOFメトリクス計算エラー: {ex}").classes("text-caption text-red")
 
         # ── 残差分析プロット ──
-        if ar.task == "regression":
+        if _safe_get(ar, "task", "regression") == "regression":
             ui.separator()
             with ui.expansion("📉 残差分析（OOF）", icon="scatter_plot").classes("full-width q-mt-sm"):
                 _render_residual_analysis(ar)
@@ -1343,7 +1366,7 @@ def _render_model_evaluation(ar) -> None:
         _render_learning_curve(ar)
 
     # ── 分類タスク専用: 混同行列・ROC ──
-    if ar.task in ("classification", "multiclass"):
+    if _safe_get(ar, "task") in ("classification", "multiclass"):
         ui.separator()
         with ui.expansion("🔢 混同行列・ROC曲線", icon="grid_on").classes("full-width q-mt-sm"):
             _render_classification_metrics(ar)
@@ -1355,7 +1378,7 @@ def _render_model_evaluation(ar) -> None:
 def _render_processed_data(ar) -> None:
     """前処理後のデータテーブルと統計量"""
 
-    proc_X = getattr(ar, "processed_X", None)
+    proc_X = _safe_get(ar, "processed_X")
     if proc_X is None or not hasattr(proc_X, "shape"):
         ui.label("⚠️ 前処理後データが取得できませんでした").classes("text-amber")
         return
@@ -1432,9 +1455,9 @@ def _render_processed_data(ar) -> None:
 def _render_interpretability(ar, state: dict) -> None:
     """SHAP・Feature Importance等"""
 
-    model = getattr(ar, "best_pipeline", None)
-    X = getattr(ar, "X_train", None)
-    y = getattr(ar, "y_train", None)
+    model = _safe_get(ar, "best_pipeline")
+    X = _safe_get(ar, "X_train")
+    y = _safe_get(ar, "y_train")
 
     if model is None or X is None:
         ui.label("⚠️ モデルまたはデータが取得できませんでした").classes("text-amber")
@@ -1549,8 +1572,8 @@ def _render_interpretability(ar, state: dict) -> None:
                 ui.label("⏳ 計算中...").classes("text-grey-5")
             try:
                 from sklearn.inspection import permutation_importance
-                proc_X = getattr(ar, "processed_X", X)
-                scoring = "r2" if ar.task == "regression" else "accuracy"
+                proc_X = _safe_get(ar, "processed_X", X)
+                scoring = "r2" if _safe_get(ar, "task", "regression") == "regression" else "accuracy"
                 perm_result = permutation_importance(
                     model, proc_X, y, n_repeats=5, random_state=42, scoring=scoring
                 )
@@ -1608,7 +1631,7 @@ def _render_interpretability(ar, state: dict) -> None:
                 from backend.interpret.shap_explainer import ShapExplainer, ShapResult
                 import plotly.graph_objects as go  # noqa: F811
 
-                proc_X = getattr(ar, "processed_X", X)
+                proc_X = _safe_get(ar, "processed_X", X)
                 if hasattr(proc_X, "values"):
                     proc_X_arr = proc_X.values
                 else:
@@ -1786,7 +1809,7 @@ def _render_interpretability(ar, state: dict) -> None:
                 from sklearn.inspection import partial_dependence
                 import plotly.graph_objects as go  # noqa: F811
 
-                proc_X = getattr(ar, "processed_X", X)
+                proc_X = _safe_get(ar, "processed_X", X)
                 feat_names_pdp = list(proc_X.columns) if hasattr(proc_X, "columns") else [
                     f"f{i}" for i in range(proc_X.shape[1])
                 ]
@@ -1854,11 +1877,12 @@ def _render_interpretability(ar, state: dict) -> None:
 # ================================================================
 def _render_model_significance(ar) -> None:
     """最良モデルと他モデルの対応t検定（Fold間スコア）。"""
-    best_key = ar.best_model_key
-    best_detail = ar.model_details.get(best_key, {})
+    best_key = _safe_get(ar, "best_model_key")
+    model_details = _safe_get(ar, "model_details", {})
+    best_detail = model_details.get(best_key, {})
     best_folds = best_detail.get("fold_scores", [])
 
-    if len(best_folds) < 3 or len(ar.model_details) < 2:
+    if len(best_folds) < 3 or len(model_details) < 2:
         return
 
     ui.separator()
@@ -1866,7 +1890,7 @@ def _render_model_significance(ar) -> None:
         ui.label(f"基準モデル: 🏆 {best_key}").classes("text-caption text-grey q-mb-sm")
 
         rows = []
-        for key, detail in ar.model_details.items():
+        for key, detail in model_details.items():
             if key == best_key:
                 continue
             other_folds = detail.get("fold_scores", [])
@@ -1921,9 +1945,9 @@ def _render_model_significance(ar) -> None:
 # ================================================================
 def _render_learning_curve(ar) -> None:
     """交差検証ベースの学習曲線（Train vs Validation スコア vs サンプル数）。"""
-    model = getattr(ar, "best_pipeline", None)
-    X = getattr(ar, "processed_X", None)
-    y = getattr(ar, "y_train", None)
+    model = _safe_get(ar, "best_pipeline")
+    X = _safe_get(ar, "processed_X")
+    y = _safe_get(ar, "y_train")
 
     if model is None or X is None or y is None:
         ui.label("⚠️ モデルまたはデータが取得できません").classes("text-amber text-caption")
@@ -1940,8 +1964,8 @@ def _render_learning_curve(ar) -> None:
             import plotly.graph_objects as go
             import numpy as np
 
-            cv_folds = getattr(ar, "cv_folds", 5)
-            scoring = "r2" if ar.task == "regression" else "accuracy"
+            cv_folds = _safe_get(ar, "cv_folds", 5)
+            scoring = "r2" if _safe_get(ar, "task", "regression") == "regression" else "accuracy"
 
             train_sizes, train_scores, val_scores = learning_curve(
                 model, X, y,
@@ -2019,8 +2043,8 @@ def _render_learning_curve(ar) -> None:
 # ================================================================
 def _render_classification_metrics(ar) -> None:
     """OOFの混同行列・ROC-AUC・Classification Report を描画する。"""
-    y_true = getattr(ar, "oof_true", None)
-    y_pred = getattr(ar, "oof_predictions", None)
+    y_true = _safe_get(ar, "oof_true")
+    y_pred = _safe_get(ar, "oof_predictions")
 
     if y_true is None or y_pred is None:
         ui.label("⚠️ OOFデータが利用できません").classes("text-amber text-caption")
@@ -2123,8 +2147,8 @@ def _render_classification_metrics(ar) -> None:
 # ================================================================
 def _render_residual_analysis(ar) -> None:
     """OOF実測vs予測の残差分析プロット群。"""
-    y_true = ar.oof_true
-    y_pred = ar.oof_predictions
+    y_true = _safe_get(ar, "oof_true")
+    y_pred = _safe_get(ar, "oof_predictions")
 
     if y_true is None or y_pred is None:
         ui.label("OOFデータが利用できません").classes("text-grey")
