@@ -168,7 +168,6 @@ def render_data_tab(state: dict[str, Any]) -> None:
     state["_refresh_tabs"] = _refresh_tabs_fn
 
 
-
 # ================================================================
 # サブタブ1: データ読込
 # ================================================================
@@ -179,7 +178,7 @@ def _render_data_load(state: dict) -> None:
     df_existing = state.get("df")
     fn_existing = state.get("filename", "")
     if df_existing is not None and not df_existing.empty:
-        status_text = f"\u2705 {fn_existing} ({len(df_existing)}行 \u00d7 {len(df_existing.columns)}列)"
+        status_text = f"✅ {fn_existing} ({len(df_existing)}行 × {len(df_existing.columns)}列)"
         upload_status = ui.label(status_text).classes("text-green q-mt-sm")
     else:
         upload_status = ui.label("").classes("text-grey-5 q-mt-sm")
@@ -190,99 +189,97 @@ def _render_data_load(state: dict) -> None:
         _show_preview(df_existing, preview_container)
 
     async def handle_upload(e):
-        """ファイルアップロードハンドラ - 最大互換性版"""
+        """ファイルアップロードハンドラ - NiceGUI 3.x 完全対応版"""
         try:
             logger.info(f"=== ファイルアップロード開始 ===")
-            logger.info(f"Event type: {type(e)}")
-            logger.info(f"Event attrs: {[a for a in dir(e) if not a.startswith('_')]}")
             
-            # === 1. ファイルコンテンツの取得（最大互換性アプローチ）===
+            # === ファイル名の取得 ===
+            filename = getattr(e, 'name', None)
+            if not filename:
+                filename = getattr(e, 'filename', 'uploaded_file.csv')
+            
+            # === ファイルコンテンツの取得（coroutine 対策）===
             content = None
             
-            # Pattern A: e.content (NiceGUI 3.x 標準)
+            # 方法1: e.content が bytes の場合
             if hasattr(e, 'content'):
-                try:
-                    c = e.content
-                    if isinstance(c, bytes):
-                        content = c
-                        logger.info("✓ e.content (bytes) を使用")
-                    elif hasattr(c, 'read') and callable(getattr(c, 'read', None)):
-                        content = c.read()
-                        logger.info("✓ e.content.read() を使用")
-                    else:
-                        content = c
-                        logger.info("✓ e.content (fallback) を使用")
-                except Exception as ce:
-                    logger.warning(f"e.content access failed: {ce}")
+                c = e.content
+                # coroutine かどうかをチェック
+                if inspect.iscoroutine(c):
+                    logger.warning("e.content is coroutine, attempting to read differently")
+                    c = None
+                if c is not None and isinstance(c, (bytes, str)):
+                    content = c
+                    logger.info("✓ e.content (bytes/str) を使用")
             
-            # Pattern B: e.file (代替パターン)
+            # 方法2: e.file から読み取る
             if content is None and hasattr(e, 'file'):
-                try:
-                    f = e.file
-                    if isinstance(f, bytes):
-                        content = f
-                        logger.info("✓ e.file (bytes) を使用")
-                    elif hasattr(f, 'read') and callable(getattr(f, 'read', None)):
-                        content = f.read()
-                        logger.info("✓ e.file.read() を使用")
+                f = e.file
+                if isinstance(f, bytes):
+                    content = f
+                    logger.info("✓ e.file (bytes) を使用")
+                elif hasattr(f, 'read'):
+                    # 同期的に読み取り可能か確認
+                    read_result = f.read()
+                    if inspect.iscoroutine(read_result):
+                        logger.warning("f.read() returned coroutine - this is unexpected")
+                        # ファイルオブジェクト自体を文字列化して試みる
+                        content = str(f)
                     else:
-                        content = f
-                        logger.info("✓ e.file (fallback) を使用")
-                except Exception as fe:
-                    logger.warning(f"e.file access failed: {fe}")
+                        content = read_result
+                        logger.info("✓ e.file.read() を使用")
+                else:
+                    content = f
+                    logger.info("✓ e.file (fallback) を使用")
             
-            # Pattern C: e 自体が bytes（稀なケース）
+            # 方法3: e 自体が bytes の場合
             if content is None and isinstance(e, bytes):
                 content = e
                 logger.info("✓ Event 自体が bytes")
             
             # 全て失敗した場合
             if content is None:
-                logger.error(f"✗ 全ての取得パターンで失敗. Event: {type(e)}")
-                ui.notify('✗ 対応していないファイル形式です', type='negative')
+                logger.error(f"✗ ファイルコンテンツを取得できませんでした。Event type: {type(e)}")
+                ui.notify('✗ ファイルの読み取りに失敗しました', type='negative')
                 return
             
-            logger.info(f"コンテンツ型: {type(content)}, サイズ: {len(content) if isinstance(content, (bytes, str)) else 'N/A'}")
+            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content) if isinstance(content, (bytes, str)) else 'N/A'}")
             
-            # === 2. ファイル名の取得 ===
-            filename = getattr(e, 'name', None)
-            if not filename and hasattr(e, 'filename'):
-                filename = e.filename
-            if not filename and hasattr(e, 'file') and hasattr(e.file, 'name'):
-                filename = e.file.name
-            if not filename:
-                filename = 'uploaded_file.csv'
-            logger.info(f"ファイル名: {filename}")
-            
-            # === 3. CSV/Excel の読み込み ===
-            if filename.endswith('.csv'):
-                if isinstance(content, bytes):
-                    df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
+            # === CSV/Excel の読み込み ===
+            try:
+                if filename.endswith('.csv'):
+                    if isinstance(content, bytes):
+                        df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
+                    else:
+                        # 文字列の場合
+                        df_loaded = pd.read_csv(io.StringIO(content), float_precision='high')
+                elif filename.endswith(('.xlsx', '.xls')):
+                    if isinstance(content, bytes):
+                        df_loaded = pd.read_excel(io.BytesIO(content))
+                    else:
+                        ui.notify('Excel ファイルは bytes 形式が必要です', type='warning')
+                        return
                 else:
-                    df_loaded = pd.read_csv(io.StringIO(content), float_precision='high')
-            elif filename.endswith(('.xlsx', '.xls')):
-                if isinstance(content, bytes):
-                    df_loaded = pd.read_excel(io.BytesIO(content))
-                else:
-                    ui.notify('Excel ファイルは bytes 形式が必要です', type='warning')
+                    upload_status.text = "❌ CSV/Excelファイルのみ対応"
+                    ui.notify('サポートされていないファイル形式です', type='warning')
                     return
-            else:
-                upload_status.text = "❌ CSV/Excel ファイルのみ対応"
-                ui.notify('サポートされていないファイル形式です', type='warning')
+            except Exception as parse_err:
+                logger.error(f"CSV/Excel パースエラー: {parse_err}", exc_info=True)
+                ui.notify(f'ファイル形式エラー: {str(parse_err)[:100]}', type='negative')
                 return
             
-            # === 4. 数値列の精度保証 ===
+            # === 数値列の精度保証: float64 に統一 ===
             for col in df_loaded.select_dtypes(include=['float16', 'float32', 'int8', 'int16', 'int32', 'int64']).columns:
                 df_loaded[col] = df_loaded[col].astype('float64')
             
-            # === 5. state への保存 ===
+            # === state への保存（アプリ内状態管理）===
             state["df"] = df_loaded
             state["filename"] = filename
             state["automl_result"] = None
             state["pipeline_result"] = None
             state["precalc_done"] = False
             
-            # === 6. app.storage への保存（CSV 文字列として）===
+            # === app.storage への保存（セッション永続化）===
             from nicegui import app
             try:
                 csv_buffer = io.StringIO()
@@ -291,22 +288,24 @@ def _render_data_load(state: dict) -> None:
                 app.storage.user['current_df_columns'] = list(df_loaded.columns)
                 app.storage.user['current_df_shape'] = df_loaded.shape
             except Exception as storage_err:
-                logger.warning(f"app.storage 保存警告: {storage_err}")
+                logger.warning(f"app.storage への保存に失敗: {storage_err}")
             
             app.storage.user['data_loaded'] = True
             app.storage.user['data_filename'] = filename
             app.storage.user['data_timestamp'] = pd.Timestamp.now().isoformat()
             
-            logger.info(f"✅ DataFrame 読み込み完了: {df_loaded.shape}")
+            logger.info(f"✅ DataFrame読み込み完了: {df_loaded.shape[0]}行 × {df_loaded.shape[1]}列")
             
-            # === 7. UI 更新 ===
-            upload_status.text = f"✅ {filename} 読み込み完了 ({df_loaded.shape[0]}行 × {df_loaded.shape[1]}列)"
+            # === UI 更新 ===
+            upload_status.text = f"✅ {filename} 読み込み完了 ({len(df_loaded)}行 × {len(df_loaded.columns)}列)"
             upload_status.classes(remove="text-red", add="text-green")
             _show_preview(df_loaded, preview_container)
             _update_metrics(state, metrics_row)
+            
+            # === 列の自動検出 ===
             _auto_detect_columns(state)
             
-            # === 8. 他コンポーネントの再描画 ===
+            # === 他コンポーネントの再描画 ===
             refresh = state.get("_refresh_tabs")
             if refresh:
                 try:
@@ -314,7 +313,7 @@ def _render_data_load(state: dict) -> None:
                 except Exception as refresh_err:
                     logger.warning(f"タブ再描画エラー: {refresh_err}")
             
-            # === 9. LLM 解析タスク（オプション）===
+            # === LLM 解析タスク（オプション）===
             try:
                 from frontend_nicegui.main import render_llm_analysis_report
                 asyncio.create_task(render_llm_analysis_report(df_loaded, metadata={"source": "upload", "filename": filename}))
@@ -325,21 +324,21 @@ def _render_data_load(state: dict) -> None:
             
         except AttributeError as ae:
             logger.error(f"AttributeError: {ae}", exc_info=True)
-            upload_status.text = f"❌ 属性エラー: {str(ae)}"
+            upload_status.text = f"❌ エラー: ファイル属性の取得に失敗しました"
             upload_status.classes(remove="text-green", add="text-red")
             ui.notify(f'✗ {str(ae)}', type='negative')
             
         except pd.errors.EmptyDataError:
             logger.error("Empty CSV file")
-            upload_status.text = "❌ ファイルが空です"
+            upload_status.text = "❌ エラー: ファイルが空です"
             upload_status.classes(remove="text-green", add="text-red")
             ui.notify('✗ ファイルが空です', type='negative')
             
         except Exception as ex:
             logger.error(f"❌ 予期せぬエラー: {ex}", exc_info=True)
-            upload_status.text = f"❌ {type(ex).__name__}: {str(ex)[:100]}"
+            upload_status.text = f"❌ {type(ex).__name__}: {str(ex)}"
             upload_status.classes(remove="text-green", add="text-red")
-            ui.notify(f'✗ {str(ex)[:100]}', type='negative')
+            ui.notify(f'✗ {str(ex)}', type='negative')
 
     ui.upload(
         on_upload=handle_upload,
