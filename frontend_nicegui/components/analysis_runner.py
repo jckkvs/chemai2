@@ -399,6 +399,19 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             state["best_set_name"] = best_set_name
             state["pipeline_result"] = type("PipelineResult", (), {"elapsed": best_result.elapsed_seconds})()
 
+            # [Item 2] NiceGUI ストレージへの永続化 (指示に基づく)
+            try:
+                from nicegui import app
+                # オブジェクトそのものを保存するとシリアライズエラーの可能性があるため、主要な情報を辞書で保存
+                app.storage.user['analysis_results'] = {
+                    'model_name': best_result.best_model_key,
+                    'score': best_result.best_score,
+                    'task': best_result.task,
+                    'timestamp': time.time(),
+                }
+            except Exception as _se:
+                logger.warning(f"ストレージへの保存に失敗: {_se}")
+
             # ── 評価エンジン（StratifiedMetricCalculator）の初期化と一括計算 ──
             try:
                 from backend.metrics.stratified_evaluator import StratifiedMetricCalculator

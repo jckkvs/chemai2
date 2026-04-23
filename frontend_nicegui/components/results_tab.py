@@ -9,7 +9,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from nicegui import ui
+import asyncio
+from nicegui import ui, app
 
 from frontend_nicegui.components.results_tab_extras import (
     _render_model_overview,
@@ -28,6 +29,47 @@ def render_results_tab(state: dict[str, Any]) -> None:
 
     all_results = state.get("automl_results", {})
     single_ar   = state.get("automl_result")
+
+    # [追加] 結果を再読込するボタン (指示に基づく)
+    with ui.row().classes('w-full justify-end q-mb-md'):
+        def _on_reload():
+            # [指示に基づく修正] 複数の保存場所をチェック
+            results = (app.storage.user.get('analysis_results') or 
+                       app.storage.user.get('current_results') or
+                       app.storage.general.get('analysis_results'))
+            
+            # デバッグ用：保存されている全キーを表示
+            logger.info("=== app.storage.user の全キー ===")
+            for key in app.storage.user.keys():
+                logger.info(f"  {key}: {type(app.storage.user[key])}")
+            
+            logger.info(f"Retrieved results: {bool(results)}")
+
+            if results:
+                ui.notify(f"✅ 結果が見つかりました ({results.get('model_name', '不明')})。表示を更新します。", type='positive')
+                # 状態のリフレッシュをトリガー
+                refresh_fn = state.get("_refresh_results")
+                if refresh_fn:
+                    refresh_fn()
+            else:
+                ui.notify('⚠️ 保存された解析結果が見つかりません。', type='warning')
+                logger.warning(f"結果の復元に失敗しました。現在のキー: {list(app.storage.user.keys())}")
+
+        ui.button('🔄 結果を再読込', on_click=_on_reload).props('outline dense icon=refresh').classes('glass-card')
+
+    # [追加] 初期表示チェック（ストレージから結果を復元）
+    async def _initial_check():
+        await asyncio.sleep(0.5)  # UI安定待ち
+        # [修正] 複数キーをチェック
+        results = (app.storage.user.get('analysis_results') or 
+                   app.storage.user.get('current_results'))
+        
+        if results and not single_ar:
+            ui.notify(f"📋 ストレージから前回の解析結果が見つかりました ({results.get('model_name', 'N/A')})", type='info')
+            # ログ出力
+            logger.info(f"[InitialCheck] Storage results found: {results.get('model_name')}")
+
+    ui.timer(0.1, _initial_check, once=True)
 
     # 結果が全くない場合
     if not all_results and single_ar is None:
@@ -2182,3 +2224,30 @@ def _render_residual_analysis(ar) -> None:
         ui.label("Plotlyが必要です: pip install plotly").classes("text-amber")
     except Exception as ex:
         ui.label(f"残差分析エラー: {ex}").classes("text-red text-caption")
+
+# ==============================================================================
+# 指示に基づく追加ヘルパー関数（既存機能を破壊せず並列実装）
+# ==============================================================================
+
+def show_no_results_placeholder(container):
+    """結果がない場合のプレースホルダー表示"""
+    container.clear()
+    with container:
+        with ui.card().classes('w-full bg-gray-50 border border-dashed border-gray-300 p-8 items-center glass-card'):
+            ui.icon('bar_chart', size='3rem', color='grey-7')
+            ui.label('解析結果がまだありません').classes('text-lg text-grey-600 mt-2')
+            ui.label('「🚀 解析開始」ボタンを押して解析を実行してください。').classes('text-sm text-grey-500')
+
+def display_analysis_results_summary(results, container):
+    """解析結果の簡易サマリーを描画（指示書に基づくマージ版）"""
+    container.clear()
+    with container:
+        try:
+            with ui.card().classes('w-full bg-green-50 border-l-4 border-green-500 p-4 glass-card'):
+                ui.label('✅ 解析完了（ストレージ同期）').classes('font-bold text-green-800')
+                if isinstance(results, dict):
+                    ui.markdown(f"**最良モデル**: {results.get('model_name', 'N/A')}")
+                    ui.markdown(f"**スコア**: {results.get('score', 'N/A')}")
+                    ui.markdown(f"**タスク**: {results.get('task', 'N/A')}")
+        except Exception as e:
+            logger.error(f"簡易サマリー表示エラー: {e}")

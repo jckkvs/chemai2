@@ -41,14 +41,16 @@ class CompatibilityManager:
             message=".*urllib3.*chardet.*charset_normalizer.*",
             category=RuntimeWarning
         )
-        # torch.jit.script 非推奨警告の抑制（代替実装は別タスク）
+        # [追加] Plotly engine 引数の非推奨警告を抑制
         warnings.filterwarnings(
             "ignore",
-            message=".*torch.jit.script is deprecated.*",
-            category=DeprecationWarning
+            message=".*Support for the 'engine' argument is deprecated.*",
+            category=DeprecationWarning,
+            module="plotly"
         )
         self.warnings_suppressed.extend([
             "RequestsDependencyWarning",
-            "TorchJITScriptDeprecationWarning"
+            "TorchJITScriptDeprecationWarning",
+            "PlotlyEngineDeprecationWarning"
         ])
         logger.info(f"非致命的警告を {len(self.warnings_suppressed)} 件抑制しました。")

@@ -7,6 +7,7 @@ frontend_nicegui/components/data_tab.py
 from __future__ import annotations
 
 import io
+import asyncio
 import importlib
 import logging
 from typing import Any

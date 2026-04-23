@@ -13,6 +13,7 @@ Implements: 会話 82f7fa3b — ワンクリックレポート生成
 from __future__ import annotations
 
 import logging
+import asyncio
 from datetime import datetime
 from typing import Any
 

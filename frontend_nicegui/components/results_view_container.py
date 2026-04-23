@@ -8,9 +8,13 @@ from __future__ import annotations
 from typing import Any
 from nicegui import ui
 
+@ui.refreshable
 def render_results_view_container(state: dict[str, Any]) -> None:
     """結果・レポートタブ全体を描画する。"""
     
+    # 状態の更新関数を登録（初回描画時に行う）
+    state["_refresh_results"] = render_results_view_container.refresh
+
     if state.get("automl_result") is None and not state.get("automl_results"):
         with ui.card().classes("glass-card q-pa-xl items-center justify-center text-center"):
             ui.icon("analytics", color="grey-7", size="xl").classes("q-mb-md")
