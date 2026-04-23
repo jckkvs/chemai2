@@ -189,70 +189,72 @@ def _render_data_load(state: dict) -> None:
         _show_preview(df_existing, preview_container)
 
     async def handle_upload(e):
-        """ファイルアップロードハンドラ - NiceGUI 3.x 完全対応版"""
+        """ファイルアップロードハンドラ - 修正版"""
         try:
             logger.info(f"=== ファイルアップロード開始 ===")
             
-            # === ファイル名の取得 ===
+            # === 1. ファイル名の取得 ===
             filename = getattr(e, 'name', None)
             if not filename:
                 filename = getattr(e, 'filename', 'uploaded_file.csv')
             
-            # === ファイルコンテンツの取得（coroutine 対策）===
+            # === 2. ファイルコンテンツの取得（簡略化＆確実化） ===
             content = None
             
-            # 方法1: e.content が bytes の場合
-            if hasattr(e, 'content'):
+            # 優先度1: e.content (NiceGUI の標準的な Bytes データ)
+            if hasattr(e, 'content') and e.content is not None:
                 c = e.content
-                # coroutine かどうかをチェック
-                if inspect.iscoroutine(c):
-                    logger.warning("e.content is coroutine, attempting to read differently")
-                    c = None
-                if c is not None and isinstance(c, (bytes, str)):
+                # コルーチンが返ってきた場合は読み飛ばして方法2へ
+                if not inspect.iscoroutine(c):
                     content = c
-                    logger.info("✓ e.content (bytes/str) を使用")
+                    logger.info("✓ e.content (bytes) を使用")
+                else:
+                    logger.warning("e.content is coroutine, skipping to pattern B")
             
-            # 方法2: e.file から読み取る
-            if content is None and hasattr(e, 'file'):
+            # 優先度2: e.file (ストリームの場合)
+            if content is None and hasattr(e, 'file') and e.file is not None:
                 f = e.file
-                if isinstance(f, bytes):
+                if hasattr(f, 'read'):
+                    try:
+                        read_result = f.read()
+                        if inspect.iscoroutine(read_result):
+                            logger.warning("f.read() returned coroutine - unexpected")
+                        elif isinstance(read_result, (bytes, str)):
+                            content = read_result
+                            logger.info(f"✓ e.file.read() ({type(content).__name__}) を使用")
+                    except Exception as read_err:
+                        logger.error(f"e.file.read() 失敗: {read_err}")
+                elif isinstance(f, bytes):
                     content = f
                     logger.info("✓ e.file (bytes) を使用")
-                elif hasattr(f, 'read'):
-                    # 同期的に読み取り可能か確認
-                    read_result = f.read()
-                    if inspect.iscoroutine(read_result):
-                        logger.warning("f.read() returned coroutine - this is unexpected")
-                        # ファイルオブジェクト自体を文字列化して試みる
-                        content = str(f)
-                    else:
-                        content = read_result
-                        logger.info("✓ e.file.read() を使用")
-                else:
-                    content = f
-                    logger.info("✓ e.file (fallback) を使用")
             
-            # 方法3: e 自体が bytes の場合
-            if content is None and isinstance(e, bytes):
-                content = e
-                logger.info("✓ Event 自体が bytes")
-            
-            # 全て失敗した場合
+            # 取得失敗時の処理
             if content is None:
                 logger.error(f"✗ ファイルコンテンツを取得できませんでした。Event type: {type(e)}")
-                ui.notify('✗ ファイルの読み取りに失敗しました', type='negative')
+                ui.notify('✗ ファイルの読み取りに失敗しました（コンテンツなし）', type='negative')
                 return
             
-            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content) if isinstance(content, (bytes, str)) else 'N/A'}")
-            
-            # === CSV/Excel の読み込み ===
+            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content)}")
+
+            # === 3. CSV/Excel の読み込み（エンコーディング対策追加） ===
+            df_loaded = None
             try:
                 if filename.endswith('.csv'):
+                    # io.BytesIO で直接バイナリを渡す（最も安定）
                     if isinstance(content, bytes):
-                        df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
+                        df_loaded = pd.read_csv(
+                            io.BytesIO(content), 
+                            float_precision='high',
+                            encoding='utf-8-sig', 
+                            on_bad_lines='skip'
+                        )
                     else:
-                        # 文字列の場合
-                        df_loaded = pd.read_csv(io.StringIO(content), float_precision='high')
+                        df_loaded = pd.read_csv(
+                            io.StringIO(content), 
+                            float_precision='high',
+                            encoding='utf-8-sig', 
+                            on_bad_lines='skip'
+                        )
                 elif filename.endswith(('.xlsx', '.xls')):
                     if isinstance(content, bytes):
                         df_loaded = pd.read_excel(io.BytesIO(content))
@@ -260,12 +262,18 @@ def _render_data_load(state: dict) -> None:
                         ui.notify('Excel ファイルは bytes 形式が必要です', type='warning')
                         return
                 else:
-                    upload_status.text = "❌ CSV/Excelファイルのみ対応"
+                    upload_status.text = "❌ サポートされていない形式"
                     ui.notify('サポートされていないファイル形式です', type='warning')
                     return
+                    
             except Exception as parse_err:
                 logger.error(f"CSV/Excel パースエラー: {parse_err}", exc_info=True)
                 ui.notify(f'ファイル形式エラー: {str(parse_err)[:100]}', type='negative')
+                return
+
+            if df_loaded is None or df_loaded.empty:
+                logger.warning("読み込んだ DataFrame が空です")
+                ui.notify('読み込んだデータが空です。ファイル内容を確認してください。', type='warning')
                 return
             
             # === 数値列の精度保証: float64 に統一 ===
