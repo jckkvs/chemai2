@@ -68,7 +68,7 @@ def render_export_panel(state: dict[str, Any]) -> None:
                 if ar.task == "regression":
                     metrics = {
                         "R²":   round(float(r2_score(y_t, y_p)), 4),
-                        "RMSE": round(float(mean_squared_error(y_t, y_p, squared=False)), 4),
+                        "RMSE": round(float(mean_squared_error(y_t, y_p) ** 0.5), 4),
                         "MAE":  round(float(mean_absolute_error(y_t, y_p)), 4),
                     }
 

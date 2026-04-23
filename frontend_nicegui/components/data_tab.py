@@ -315,6 +315,10 @@ def _render_data_load(state: dict) -> None:
                 app.storage.user['current_df_shape'] = list(df_loaded.shape)
                 
                 # 【重要】ここでは Pipeline などの結果オブジェクトは保存しない
+                # 既存の結果をクリア（シリアライズエラー防止）
+                for key in list(app.storage.user.keys()):
+                    if key in ['automl_result', 'automl_results', 'pipeline_result', 'model', 'pipeline']:
+                        del app.storage.user[key]
                 
             except Exception as storage_err:
                 logger.warning(f"app.storage 保存警告: {storage_err}")
