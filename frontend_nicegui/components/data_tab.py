@@ -189,7 +189,7 @@ def _render_data_load(state: dict) -> None:
         _show_preview(df_existing, preview_container)
 
     async def handle_upload(e):
-        """ファイルアップロードハンドラ - 修正版"""
+        """ファイルアップロードハンドラ - NiceGUI 3.x 完全対応版"""
         try:
             logger.info(f"=== ファイルアップロード開始 ===")
             
@@ -198,61 +198,40 @@ def _render_data_load(state: dict) -> None:
             if not filename:
                 filename = getattr(e, 'filename', 'uploaded_file.csv')
             
-            # === 2. ファイルコンテンツの取得（簡略化＆確実化） ===
+            # === 2. ファイルコンテンツの取得（最も確実な e.content を優先） ===
             content = None
-            
-            # 優先度1: e.content (NiceGUI の標準的な Bytes データ)
             if hasattr(e, 'content') and e.content is not None:
-                c = e.content
-                # コルーチンが返ってきた場合は読み飛ばして方法2へ
-                if not inspect.iscoroutine(c):
-                    content = c
-                    logger.info("✓ e.content (bytes) を使用")
+                content = e.content
+                # もしコルーチンが返ってきた場合のログ出力（awaitは属性アクセスには通常不要）
+                if inspect.iscoroutine(content):
+                    logger.warning("e.content returned a coroutine - unexpected for property access")
                 else:
-                    logger.warning("e.content is coroutine, skipping to pattern B")
-            
-            # 優先度2: e.file (ストリームの場合)
-            if content is None and hasattr(e, 'file') and e.file is not None:
-                f = e.file
-                if hasattr(f, 'read'):
-                    try:
-                        read_result = f.read()
-                        if inspect.iscoroutine(read_result):
-                            logger.warning("f.read() returned coroutine - unexpected")
-                        elif isinstance(read_result, (bytes, str)):
-                            content = read_result
-                            logger.info(f"✓ e.file.read() ({type(content).__name__}) を使用")
-                    except Exception as read_err:
-                        logger.error(f"e.file.read() 失敗: {read_err}")
-                elif isinstance(f, bytes):
-                    content = f
-                    logger.info("✓ e.file (bytes) を使用")
+                    logger.info(f"✓ e.content を使用 (type: {type(content)}, size: {len(content) if isinstance(content, (bytes, str)) else 'N/A'})")
             
             # 取得失敗時の処理
             if content is None:
                 logger.error(f"✗ ファイルコンテンツを取得できませんでした。Event type: {type(e)}")
-                ui.notify('✗ ファイルの読み取りに失敗しました（コンテンツなし）', type='negative')
+                logger.error(f"  e の属性: {[attr for attr in dir(e) if not attr.startswith('_')]}")
+                ui.notify('✗ ファイルの読み取りに失敗しました', type='negative')
                 return
             
-            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content)}")
-
-            # === 3. CSV/Excel の読み込み（エンコーディング対策追加） ===
-            df_loaded = None
+            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}")
+            
+            # === 3. CSV/Excel の読み込み（BOM/異常行対策を維持） ===
             try:
                 if filename.endswith('.csv'):
-                    # io.BytesIO で直接バイナリを渡す（最も安定）
                     if isinstance(content, bytes):
                         df_loaded = pd.read_csv(
                             io.BytesIO(content), 
                             float_precision='high',
-                            encoding='utf-8-sig', 
+                            encoding='utf-8-sig',
                             on_bad_lines='skip'
                         )
                     else:
                         df_loaded = pd.read_csv(
                             io.StringIO(content), 
                             float_precision='high',
-                            encoding='utf-8-sig', 
+                            encoding='utf-8-sig',
                             on_bad_lines='skip'
                         )
                 elif filename.endswith(('.xlsx', '.xls')):
@@ -265,14 +244,13 @@ def _render_data_load(state: dict) -> None:
                     upload_status.text = "❌ サポートされていない形式"
                     ui.notify('サポートされていないファイル形式です', type='warning')
                     return
-                    
             except Exception as parse_err:
                 logger.error(f"CSV/Excel パースエラー: {parse_err}", exc_info=True)
                 ui.notify(f'ファイル形式エラー: {str(parse_err)[:100]}', type='negative')
                 return
 
             if df_loaded is None or df_loaded.empty:
-                logger.warning("読み込んだ DataFrame が空です")
+                logger.warning("読み込んだデータが空です")
                 ui.notify('読み込んだデータが空です。ファイル内容を確認してください。', type='warning')
                 return
             
