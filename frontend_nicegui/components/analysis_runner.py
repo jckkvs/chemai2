@@ -399,24 +399,33 @@ async def run_analysis(state: dict[str, Any], status_container, on_complete=None
             state["best_set_name"] = best_set_name
             state["pipeline_result"] = type("PipelineResult", (), {"elapsed": best_result.elapsed_seconds})()
 
-            # [指示に基づく修正] NiceGUI ストレージへの永続化
+            # [指示に基づく修正] 解析結果を state と storage の両方に保存
             try:
                 from nicegui import app
-                # 単一の結果オブジェクトとして保存
-                app.storage.user['automl_result'] = best_result
+                
+                # 1. state へ保存（即時表示用）
+                state["automl_result"] = best_result
+                state["automl_results"] = all_results
+                state["best_set_name"] = best_set_name
+                
+                # 2. storage へ保存（セッション永続化用）
+                # 注意: オブジェクト全体がシリアライズ不可な場合に備え、主要情報を別途保存
+                app.storage.user['automl_result'] = best_result 
                 app.storage.user['analysis_complete'] = True
                 
-                # 詳細な履歴としても保存
+                # 互換用サマリー
                 app.storage.user['analysis_results'] = {
-                    'model_name': best_result.best_model_key,
-                    'score': best_result.best_score,
-                    'best_model': best_result.best_model_key,
-                    'task': best_result.task,
+                    'model_name': getattr(best_result, "best_model_key", "不明"),
+                    'score': getattr(best_result, "best_score", None),
+                    'best_model': getattr(best_result, "best_model_key", "不明"),
+                    'task': getattr(best_result, "task", "regression"),
                     'timestamp': time.time(),
                 }
+                
+                logger.info(f"✓ 解析結果を保存完了: {best_set_name}")
                 ui.notify('✅ 解析結果を保存しました', type='positive')
             except Exception as _se:
-                logger.warning(f"ストレージへの保存に失敗: {_se}")
+                logger.warning(f"ストレージへの保存に失敗（シリアライズエラーの可能性）: {_se}")
 
             # ── 評価エンジン（StratifiedMetricCalculator）の初期化と一括計算 ──
             try:
