@@ -194,22 +194,39 @@ def _render_data_load(state: dict) -> None:
             logger.info(f"Event type: {type(e)}")
             logger.info(f"Event attributes: {dir(e)}")
             
-            # NiceGUIのバージョンに応じて使い分け
-            if hasattr(e, 'content'):
+            # NiceGUI 3.x: e.content が標準
+            try:
                 content = e.content
-                logger.info("e.content を使用")
-            elif hasattr(e, 'file'):
-                if hasattr(e.file, 'read'):
-                    content = e.file.read()
+                logger.info("e.content を使用（NiceGUI 3.x）")
+            except AttributeError:
+                # フォールバック：e.file がある場合
+                if hasattr(e, 'file'):
+                    if hasattr(e.file, 'read'):
+                        content = e.file.read()
+                    else:
+                        content = e.file
+                    logger.info("e.file を使用（フォールバック）")
                 else:
-                    content = e.file
-                logger.info("e.file を使用")
-            else:
-                raise AttributeError("No content or file attribute found")
+                    logger.error(f"利用可能な属性が見つかりません。利用可能: {dir(e)}")
+                    raise AttributeError("No content or file attribute found")
             
-            # e.name のフォールバック
-            name = getattr(e, 'name', None) or (getattr(e.file, 'filename', 'unknown.csv') if hasattr(e, 'file') else 'unknown.csv')
-            logger.info(f"ファイル名: {name}")
+            # ファイル名の取得（NiceGUI 3.x 対応）
+            name = "unknown.csv"  # デフォルト
+            try:
+                if hasattr(e, 'name') and e.name:
+                    name = e.name
+                elif hasattr(e, 'filename') and e.filename:
+                    name = e.filename
+                elif hasattr(e, 'file'):
+                    if hasattr(e.file, 'name') and e.file.name:
+                        name = e.file.name
+                    elif hasattr(e.file, 'filename') and e.file.filename:
+                        name = e.file.filename
+                logger.info(f"✅ ファイル名取得: {name}")
+            except Exception as ex:
+                logger.warning(f"ファイル名取得エラー: {ex}")
+                name = "uploaded_file.csv"
+                
         except Exception as ex:
             logger.error(f"ファイル属性の読み取りエラー: {ex}", exc_info=True)
             ui.notify(f'ファイル読み取り失敗: {str(ex)}', type='negative')
