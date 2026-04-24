@@ -1,6 +1,6 @@
 // frontend/src/store/chemai.ts
 import { defineStore } from 'pinia'
-import { api, initSession, uploadData, updateColumns, runPipeline, getResults } from '../api/client'
+import { initSession, uploadData, updateColumns, runPipeline, getResults } from '../api/client'
 
 export const useChemaiStore = defineStore('chemai', {
   state: () => ({

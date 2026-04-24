@@ -7,7 +7,7 @@ export const api = axios.create({ baseURL: API_BASE });
 export async function initSession() {
   const res = await api.post('/session/init');
   localStorage.setItem('chemai_session', res.data.session_id);
-  localStorage.setItem('chemai_session_id', res.data.session_id); // Sync with store
+  localStorage.setItem('chemai_session_id', res.data.session_id); // 同期用
   return res.data.session_id;
 }
 

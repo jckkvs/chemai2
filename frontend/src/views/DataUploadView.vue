@@ -110,8 +110,8 @@ onMounted(async () => {
   if (store.targetCol) selectedTarget.value = store.targetCol
 })
 
-watch(() => store.targetCol, (val) => {
-    selectedTarget.value = val
+watch(() => store.targetCol, (newVal) => {
+    selectedTarget.value = newVal
 })
 
 const handleFileSelect = (e: Event) => {
@@ -135,41 +135,41 @@ const applyTask = () => {
 </script>
 
 <style scoped>
-.data-upload-container { padding: 40px; max-width: 1000px; margin: 0 auto; font-family: 'Inter', sans-serif; }
+.data-upload-container { padding: 40px; max-width: 1100px; margin: 0 auto; font-family: 'Inter', sans-serif; }
 h2 { color: #2d3748; margin-bottom: 30px; font-weight: 800; }
 
 .upload-zone {
-  border: 2px dashed #42b983; padding: 60px; text-align: center;
-  margin-bottom: 30px; border-radius: 12px; transition: all 0.3s;
-  background-color: #f8fafc; cursor: pointer;
+  border: 2px dashed #34d399; padding: 60px; text-align: center;
+  margin-bottom: 30px; border-radius: 16px; transition: all 0.3s;
+  background-color: #f0fdf4; cursor: pointer;
 }
-.upload-zone:hover, .upload-zone.dragging { background: #f0fff4; border-color: #2f855a; transform: translateY(-2px); }
-.upload-btn { padding: 12px 24px; background: #42b983; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
-.hint { color: #718096; margin-top: 15px; font-size: 0.9rem; }
+.upload-zone:hover, .upload-zone.dragging { background: #dcfce7; border-color: #059669; transform: translateY(-2px); }
+.upload-btn { padding: 12px 28px; background: #10b981; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 1rem; }
+.hint { color: #4b5563; margin-top: 15px; font-size: 0.95rem; }
 
 .loading { text-align: center; padding: 40px; }
-.spinner { border: 4px solid #f3f3f3; border-top: 4px solid #42b983; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
+.spinner { border: 4px solid #e5e7eb; border-top: 4px solid #10b981; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-.error-msg { color: #e53e3e; background: #fff5f5; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #fed7d7; }
-.data-result { background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); padding: 24px; border: 1px solid #e2e8f0; }
-.status-bar { padding: 15px; background: #f0fff4; border-left: 4px solid #48bb78; margin-bottom: 25px; font-weight: 600; }
+.error-msg { color: #dc2626; background: #fef2f2; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #fee2e2; }
+.data-result { background: white; border-radius: 16px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); padding: 24px; border: 1px solid #e5e7eb; }
+.status-bar { padding: 15px; background: #ecfdf5; border-left: 5px solid #10b981; margin-bottom: 25px; font-weight: 700; border-radius: 4px; color: #065f46; }
 
 .metrics-row { display: flex; gap: 20px; margin-bottom: 30px; flex-wrap: wrap; }
-.metric-card { background: #f8fafc; padding: 20px; border-radius: 8px; flex: 1; min-width: 150px; text-align: center; border: 1px solid #edf2f7; }
-.metric-card .val { display: block; font-size: 1.8rem; font-weight: 800; color: #2b6cb0; }
-.metric-card .lbl { color: #718096; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.metric-card { background: #f9fafb; padding: 20px; border-radius: 12px; flex: 1; min-width: 150px; text-align: center; border: 1px solid #f3f4f6; }
+.metric-card .val { display: block; font-size: 2rem; font-weight: 900; color: #1e40af; }
+.metric-card .lbl { color: #6b7280; font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
 
-.preview-table-wrapper { overflow-x: auto; margin-bottom: 30px; border-radius: 8px; border: 1px solid #e2e8f0; }
-.preview-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-.preview-table th, .preview-table td { border: 1px solid #edf2f7; padding: 12px; text-align: left; }
-.preview-table th { background: #f1f5f9; font-weight: 700; color: #475569; }
-.target-badge { background: #ebf8ff; color: #2b6cb0; font-size: 0.7rem; padding: 2px 8px; border-radius: 9999px; margin-left: 8px; border: 1px solid #bee3f8; }
+.preview-table-wrapper { overflow-x: auto; margin-bottom: 30px; border-radius: 12px; border: 1px solid #e5e7eb; }
+.preview-table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+.preview-table th, .preview-table td { border: 1px solid #f3f4f6; padding: 12px; text-align: left; }
+.preview-table th { background: #f9fafb; font-weight: 800; color: #374151; }
+.target-badge { background: #dbeafe; color: #1e40af; font-size: 0.75rem; padding: 3px 10px; border-radius: 9999px; margin-left: 8px; border: 1px solid #bfdbfe; font-weight: 700; }
 
-.config-row { display: flex; gap: 40px; align-items: center; padding: 20px; background: #f8fafc; border-radius: 8px; border: 1px solid #edf2f7; }
-.config-item { display: flex; align-items: center; gap: 12px; }
-.config-item label { font-weight: 600; color: #475569; }
-select { padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e0; background: white; font-weight: 500; }
+.config-row { display: flex; gap: 40px; align-items: center; padding: 25px; background: #f9fafb; border-radius: 12px; border: 1px solid #f3f4f6; }
+.config-item { display: flex; align-items: center; gap: 15px; }
+.config-item label { font-weight: 700; color: #374151; }
+select { padding: 10px 15px; border-radius: 8px; border: 1px solid #d1d5db; background: white; font-weight: 600; color: #111827; }
 
 .animate-fade-in { animation: fadeIn 0.4s ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
