@@ -112,13 +112,12 @@ async def init_session():
     """Initialize new session"""
     session_id = str(uuid.uuid4())
     get_session(session_id)
-    logger.info(f"Initialized session: {session_id}")
     return {"session_id": session_id}
 
 @app.post("/api/upload", response_model=UploadResponse)
 async def upload_data(session_id: str = Query(...), file: UploadFile = File(...)):
     """File upload and parsing - migrated from _render_data_load handle_upload"""
-    # フロントエンドの axios.params と同期するため Query(...) を使用
+    # 同期のため Query(...) を使用 (Frontend の client.ts / params との整合性確保)
     session = get_session(session_id)
     logger.info(f"Upload start: {file.filename} (session: {session_id})")
     
@@ -176,8 +175,6 @@ async def upload_data(session_id: str = Query(...), file: UploadFile = File(...)
                     row[k] = round(v, 4)
         session["preview"] = preview
         
-        logger.info(f"✅ Upload successful for {file.filename}")
-
         return UploadResponse(
             success=True,
             filename=file.filename,
@@ -250,7 +247,6 @@ async def run_pipeline(session_id: str = Body(...), cfg: PipelineConfig = Body(.
     
     try:
         # TODO: Integrate existing backend.pipeline.executor or backend.models.automl
-        # from backend.pipeline.executor import run_automl_pipeline
         # result = await run_automl_pipeline(df, target_col, task_type, cfg.model_dump())
         
         logger.info(f"Pipeline run: target={target_col}, models={cfg.selected_models}")
