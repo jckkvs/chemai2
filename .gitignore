@@ -7,6 +7,8 @@ __pycache__/
 # Dependencies
 .venv/
 venv/
+node_modules/
+frontend/node_modules/
 
 # Logs and temp files
 *.log
@@ -47,3 +49,7 @@ dist/
 
 # NiceGUI
 .nicegui/
+
+# Node
+package-lock.json
+.DS_Store
