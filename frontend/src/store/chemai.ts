@@ -1,6 +1,6 @@
 // frontend/src/store/chemai.ts
 import { defineStore } from 'pinia'
-import axios from 'axios'
+import { api, initSession, uploadData, updateColumns, runPipeline, getResults } from '../api/client'
 
 export const useChemaiStore = defineStore('chemai', {
   state: () => ({
@@ -32,13 +32,10 @@ export const useChemaiStore = defineStore('chemai', {
   },
 
   actions: {
-    async initSession() {
-      try {
-        const res = await axios.post(`${this.apiBase}/session/init`)
-        this.sessionId = res.data.session_id
-        localStorage.setItem('chemai_session_id', this.sessionId)
-      } catch (e) {
-        console.error('Session init failed', e)
+    async initialize() {
+      if (!this.sessionId) {
+        this.sessionId = await initSession();
+        localStorage.setItem('chemai_session_id', this.sessionId);
       }
     },
 
@@ -46,17 +43,8 @@ export const useChemaiStore = defineStore('chemai', {
       this.isLoading = true
       this.error = ''
       try {
-        const formData = new FormData()
-        formData.append('file', file)
+        const d = await uploadData(file);
         
-        // session_id を Body に含める形式に変更
-        formData.append('session_id', this.sessionId)
-        
-        const res = await axios.post(`${this.apiBase}/upload`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
-        
-        const d = res.data
         this.filename = d.filename
         this.rows = d.rows
         this.cols = d.cols
@@ -76,11 +64,7 @@ export const useChemaiStore = defineStore('chemai', {
 
     async updateConfig(target: string, task?: string) {
       try {
-        await axios.post(`${this.apiBase}/config/columns`, {
-          session_id: this.sessionId,
-          target_col: target,
-          task_type: task || this.taskType
-        })
+        await updateColumns({ target_col: target, task_type: task || this.taskType })
         this.targetCol = target
         if (task) this.taskType = task as 'regression' | 'classification'
       } catch (e: any) {
@@ -88,26 +72,16 @@ export const useChemaiStore = defineStore('chemai', {
       }
     },
 
-    async fetchPipelineConfig() {
+    async runAnalysis(cfg: any) {
+      this.isLoading = true
       try {
-        const res = await axios.get(`${this.apiBase}/pipeline/config`, {
-          params: { session_id: this.sessionId }
-        })
-        this.pipelineConfig = res.data
+        const res = await runPipeline(cfg);
+        this.isLoading = false
+        return res
       } catch (e: any) {
-        console.error('Failed to fetch pipeline config', e)
-      }
-    },
-
-    async updatePipelineConfig(cfg: any) {
-      try {
-        await axios.post(`${this.apiBase}/pipeline/config`, {
-          session_id: this.sessionId,
-          config: cfg
-        })
-        this.pipelineConfig = cfg
-      } catch (e: any) {
-        this.error = e.response?.data?.detail || 'Pipeline config update failed'
+        this.error = e.response?.data?.detail || 'Analysis failed'
+        this.isLoading = false
+        return null
       }
     }
   }
