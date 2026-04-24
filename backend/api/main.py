@@ -116,11 +116,12 @@ async def init_session():
     return {"session_id": session_id}
 
 @app.post("/api/upload", response_model=UploadResponse)
-async def upload_data(session_id: str = Query(...), file: UploadFile = File(...)):
+async def upload_data(session_id: Optional[str] = Query(None), file: UploadFile = File(...)):
     """File upload and parsing - migrated from _render_data_load handle_upload"""
-    # 同期のため Query(...) を使用 (Frontend の client.ts / params との整合性確保)
-    session = get_session(session_id)
-    logger.info(f"Upload start: {file.filename} (session: {session_id})")
+    # 同期のため Query(...) を使用。セッションIDがない場合はデフォルトを使用。
+    sid = session_id or "default_session"
+    session = get_session(sid)
+    logger.info(f"Upload start: {file.filename} (session: {sid})")
     
     try:
         contents = await file.read()
