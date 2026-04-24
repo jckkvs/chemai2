@@ -1,3 +1,4 @@
+// frontend/src/store/chemai.ts
 import { defineStore } from 'pinia'
 import axios from 'axios'
 
@@ -12,6 +13,15 @@ export const useChemaiStore = defineStore('chemai', {
     preview: [] as Record<string, any>[],
     metrics: {} as Record<string, number>,
     columns: [] as string[],
+    pipelineConfig: {
+      cv_folds: 5,
+      num_scaler: 'standard',
+      num_imputer: 'median',
+      cat_encoder: 'onehot',
+      feature_selector: 'none',
+      selected_models: [],
+      monotonic_constraints: {}
+    },
     isLoading: false,
     error: ''
   }),
@@ -28,7 +38,7 @@ export const useChemaiStore = defineStore('chemai', {
         this.sessionId = res.data.session_id
         localStorage.setItem('chemai_session_id', this.sessionId)
       } catch (e) {
-        console.error("Session init failed", e)
+        console.error('Session init failed', e)
       }
     },
 
@@ -38,23 +48,23 @@ export const useChemaiStore = defineStore('chemai', {
       try {
         const formData = new FormData()
         formData.append('file', file)
+        
+        // session_id を Body に含める形式に変更
         formData.append('session_id', this.sessionId)
         
         const res = await axios.post(`${this.apiBase}/upload`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         })
         
-        const data = res.data
-        this.filename = data.filename
-        this.rows = data.rows
-        this.cols = data.cols
-        this.targetCol = data.target_col
-        this.taskType = data.task_type
-        this.preview = data.preview
-        this.metrics = data.metrics
-        // Get all columns from preview keys if not provided
-        this.columns = Object.keys(data.preview[0] || {})
-        
+        const d = res.data
+        this.filename = d.filename
+        this.rows = d.rows
+        this.cols = d.cols
+        this.targetCol = d.target_col
+        this.taskType = d.task_type
+        this.preview = d.preview
+        this.metrics = d.metrics
+        this.columns = d.columns
         this.isLoading = false
         return true
       } catch (e: any) {
@@ -68,7 +78,8 @@ export const useChemaiStore = defineStore('chemai', {
       try {
         await axios.post(`${this.apiBase}/config/columns`, {
           session_id: this.sessionId,
-          config: { target_col: target, task_type: task || this.taskType }
+          target_col: target,
+          task_type: task || this.taskType
         })
         this.targetCol = target
         if (task) this.taskType = task as 'regression' | 'classification'
@@ -77,19 +88,26 @@ export const useChemaiStore = defineStore('chemai', {
       }
     },
 
-    async runAnalysis(cfg: any) {
-      this.isLoading = true
+    async fetchPipelineConfig() {
       try {
-        const res = await axios.post(`${this.apiBase}/pipeline/run`, {
-          session_id: this.sessionId,
-          ...cfg
+        const res = await axios.get(`${this.apiBase}/pipeline/config`, {
+          params: { session_id: this.sessionId }
         })
-        this.isLoading = false
-        return res.data
+        this.pipelineConfig = res.data
       } catch (e: any) {
-        this.error = e.response?.data?.detail || 'Analysis failed'
-        this.isLoading = false
-        return null
+        console.error('Failed to fetch pipeline config', e)
+      }
+    },
+
+    async updatePipelineConfig(cfg: any) {
+      try {
+        await axios.post(`${this.apiBase}/pipeline/config`, {
+          session_id: this.sessionId,
+          config: cfg
+        })
+        this.pipelineConfig = cfg
+      } catch (e: any) {
+        this.error = e.response?.data?.detail || 'Pipeline config update failed'
       }
     }
   }
