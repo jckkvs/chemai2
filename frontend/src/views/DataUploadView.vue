@@ -58,8 +58,8 @@
       <div class="preview-table-wrapper">
         <table class="preview-table">
           <thead>
-            <tr>
-              <th v-for="col in Object.keys(store.preview[0] || {})" :key="col">
+            <tr v-if="store.preview && store.preview.length > 0">
+              <th v-for="col in Object.keys(store.preview[0])" :key="col">
                 {{ col }}
                 <span v-if="col === store.targetCol" class="target-badge">Target</span>
               </th>
