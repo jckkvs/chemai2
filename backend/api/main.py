@@ -106,6 +106,19 @@ class AnalysisResult(BaseModel):
     feature_importances: Optional[List[dict]] = None
     message: str
 
+class EDAStatsResponse(BaseModel):
+    columns: List[str]
+    stats: List[dict]
+
+class EDACorrelationResponse(BaseModel):
+    columns: List[str]
+    matrix: List[List[float]]
+
+class EDADimReductionResponse(BaseModel):
+    pca: List[dict]
+    tsne: List[dict]
+    explained_variance: List[float]
+
 # ── Endpoints ──
 
 @app.post("/api/session/init")
@@ -281,6 +294,95 @@ async def close_session(session_id: str):
     """Close and cleanup session"""
     clear_session(session_id)
     return {"status": "closed"}
+
+# ── EDA Endpoints ──
+
+@app.get("/api/eda/stats", response_model=EDAStatsResponse)
+async def get_eda_stats(session_id: str):
+    """Get detailed statistical summary for numerical columns"""
+    session = get_session(session_id)
+    df = session.get("df")
+    if df is None:
+        raise HTTPException(status_code=404, detail="No data loaded")
+    
+    num_df = df.select_dtypes(include="number")
+    if num_df.empty:
+        return EDAStatsResponse(columns=[], stats=[])
+    
+    stats_df = num_df.describe().T
+    stats_df["missing_rate"] = (num_df.isna().mean() * 100).round(1)
+    stats_df["skew"] = num_df.skew().round(3)
+    stats_df["kurtosis"] = num_df.kurtosis().round(3)
+    stats_df = stats_df.reset_index().rename(columns={"index": "column"})
+    
+    # Clean for JSON
+    stats_df = stats_df.where(pd.notnull(stats_df), None)
+    
+    return EDAStatsResponse(
+        columns=list(stats_df.columns),
+        stats=stats_df.to_dict(orient="records")
+    )
+
+@app.get("/api/eda/correlation", response_model=EDACorrelationResponse)
+async def get_eda_correlation(session_id: str, method: str = "pearson"):
+    """Get correlation matrix"""
+    session = get_session(session_id)
+    df = session.get("df")
+    if df is None:
+        raise HTTPException(status_code=404, detail="No data loaded")
+    
+    num_df = df.select_dtypes(include="number")
+    if num_df.shape[1] < 2:
+        return EDACorrelationResponse(columns=[], matrix=[])
+    
+    corr = num_df.corr(method=method)
+    # Handle NaN in correlation
+    corr = corr.where(pd.notnull(corr), 0.0)
+    
+    return EDACorrelationResponse(
+        columns=list(corr.columns),
+        matrix=corr.values.tolist()
+    )
+
+@app.get("/api/eda/dim_reduction", response_model=EDADimReductionResponse)
+async def get_eda_dim_reduction(session_id: str):
+    """Run PCA and t-SNE for dimensionality reduction"""
+    session = get_session(session_id)
+    df = session.get("df")
+    if df is None:
+        raise HTTPException(status_code=404, detail="No data loaded")
+    
+    num_df = df.select_dtypes(include="number").dropna()
+    if num_df.shape[0] < 3 or num_df.shape[1] < 2:
+        return EDADimReductionResponse(pca=[], tsne=[], explained_variance=[])
+    
+    target_col = session.get("target_col")
+    X = num_df.drop(columns=[target_col]) if target_col in num_df.columns else num_df
+    y = df.loc[X.index, target_col] if target_col in df.columns else None
+    
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+    
+    X_scaled = StandardScaler().fit_transform(X)
+    
+    # PCA
+    pca = PCA(n_components=min(10, X.shape[1]))
+    X_pca = pca.fit_transform(X_scaled)
+    pca_res = [{"pc1": float(row[0]), "pc2": float(row[1]), "target": y.iloc[i] if y is not None else 0} 
+               for i, row in enumerate(X_pca)]
+    
+    # t-SNE
+    tsne = TSNE(n_components=2, random_state=42)
+    X_tsne = tsne.fit_transform(X_scaled)
+    tsne_res = [{"v1": float(row[0]), "v2": float(row[1]), "target": y.iloc[i] if y is not None else 0} 
+                for i, row in enumerate(X_tsne)]
+    
+    return EDADimReductionResponse(
+        pca=pca_res,
+        tsne=tsne_res,
+        explained_variance=pca.explained_variance_ratio_.tolist()
+    )
 
 if __name__ == "__main__":
     import uvicorn

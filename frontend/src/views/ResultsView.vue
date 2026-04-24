@@ -1,79 +1,145 @@
 <template>
-  <div class="results-view max-w-6xl mx-auto space-y-6">
-    <el-card v-if="results.status === 'completed'" class="bg-slate-900/60 border-0 text-slate-100 shadow-xl">
-      <template #header>
-        <div class="flex items-center gap-2 text-xl font-bold text-emerald-400">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-          Analysis Summary
+  <div class="results-container">
+    <div class="header">
+      <h2>分析結果レポート</h2>
+      <el-button type="primary" plain @click="fetchResults" icon="Refresh">
+        最新の結果を取得
+      </el-button>
+    </div>
+
+    <div v-if="!result" class="empty-state">
+      <el-empty description="実行済みの分析結果がありません" />
+    </div>
+
+    <div v-else class="results-content">
+      <!-- 概要カード -->
+      <el-row :gutter="20">
+        <el-col :span="8">
+          <el-card class="metric-card shadow">
+            <div class="label">最良モデル</div>
+            <div class="value">{{ result.best_model }}</div>
+          </el-card>
+        </el-col>
+        <el-col :span="8">
+          <el-card class="metric-card shadow">
+            <div class="label">検証スコア (R2 / Acc)</div>
+            <div class="value">{{ result.score.toFixed(4) }}</div>
+          </el-card>
+        </el-col>
+        <el-col :span="8">
+          <el-card class="metric-card shadow">
+            <div class="label">ステータス</div>
+            <div class="value success">{{ result.status }}</div>
+          </el-card>
+        </el-col>
+      </el-row>
+
+      <!-- 特徴量重要度 -->
+      <el-card class="chart-card q-mt-lg">
+        <template #header>
+          <div class="card-header">
+            <span>🔥 特徴量重要度 (Top 10)</span>
+          </div>
+        </template>
+        <div class="chart-container">
+          <v-chart class="chart" :option="importanceOption" autoresize />
         </div>
-      </template>
+      </el-card>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-          <div class="p-6 bg-slate-800/40 rounded-2xl border border-slate-700">
-              <p class="text-xs text-slate-500 uppercase font-bold tracking-widest mb-2">Champion Model</p>
-              <h2 class="text-3xl font-black text-white">{{ results.best_model }}</h2>
+      <!-- CVスコア分布 -->
+      <el-card class="chart-card q-mt-lg">
+        <template #header>
+          <div class="card-header">
+            <span>📈 交差検証スコア分布</span>
           </div>
-          <div class="p-6 bg-slate-800/40 rounded-2xl border border-slate-700">
-              <p class="text-xs text-slate-500 uppercase font-bold tracking-widest mb-2">Performance Score</p>
-              <h2 class="text-3xl font-black text-sky-400">{{ results.score?.toFixed(4) }}</h2>
-          </div>
-      </div>
-
-      <div v-if="results.cv_scores" class="mb-10">
-          <h4 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">CV Score Distribution</h4>
-          <div class="flex gap-2">
-              <div v-for="(score, i) in results.cv_scores" :key="i" class="flex-1">
-                  <div class="h-1 bg-slate-700 rounded-full overflow-hidden">
-                      <div class="h-full bg-emerald-500" :style="{ width: (score * 100) + '%' }"></div>
-                  </div>
-                  <div class="text-[10px] text-slate-500 mt-1 text-center">Fold {{ i+1 }}</div>
-              </div>
-          </div>
-      </div>
-
-      <div v-if="results.feature_importances" class="feature-table">
-        <h4 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Top Feature Importances</h4>
-        <el-table :data="results.feature_importances" border stripe class="rounded-xl overflow-hidden">
-          <el-table-column prop="name" label="Feature Name" />
-          <el-table-column prop="value" label="Relative Importance">
-              <template #default="scope">
-                  <div class="flex items-center gap-3">
-                      <el-progress :percentage="scope.row.value * 1000" :show-text="false" class="flex-1" color="#0ea5e9" />
-                      <span class="text-xs font-mono text-slate-400">{{ scope.row.value.toFixed(4) }}</span>
-                  </div>
-              </template>
-          </el-table-column>
-        </el-table>
-      </div>
-    </el-card>
-
-    <el-empty v-else description="Run an analysis to generate results" class="bg-slate-900/40 rounded-3xl p-20 border border-dashed border-slate-800" />
+        </template>
+        <div class="chart-container small">
+          <v-chart class="chart" :option="cvOption" autoresize />
+        </div>
+      </el-card>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import { getResults } from '../api/client';
+import { ref, onMounted, computed } from 'vue'
+import axios from 'axios'
+import { ElMessage } from 'element-plus'
+import { use } from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
+import { BarChart, LineChart } from 'echarts/charts'
+import {
+  GridComponent,
+  TooltipComponent,
+  TitleComponent,
+  LegendComponent
+} from 'echarts/components'
+import VChart from 'vue-echarts'
 
-const results = ref<any>({ status: 'pending' });
+use([
+  CanvasRenderer,
+  BarChart,
+  LineChart,
+  GridComponent,
+  TooltipComponent,
+  TitleComponent,
+  LegendComponent
+])
 
-onMounted(async () => {
+const result = ref<any>(null)
+const API_BASE = 'http://localhost:8000/api'
+const sessionId = localStorage.getItem('chemai_session_id') || 'default_session'
+
+const fetchResults = async () => {
   try {
-    const res = await getResults();
-    results.value = res;
-  } catch (e) {
-    console.warn("No results found in session", e);
+    const res = await axios.get(`${API_BASE}/results`, { params: { session_id: sessionId } })
+    if (res.data.status === 'completed') {
+      result.value = res.data
+    }
+  } catch (e: any) {
+    ElMessage.error('結果の取得に失敗しました')
   }
-});
+}
+
+onMounted(fetchResults)
+
+const importanceOption = computed(() => ({
+  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+  grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+  xAxis: { type: 'value', boundaryGap: [0, 0.01] },
+  yAxis: { type: 'category', data: result.value?.feature_importances.map(f => f.name).reverse() || [] },
+  series: [{
+    type: 'bar',
+    data: result.value?.feature_importances.map(f => f.value).reverse() || [],
+    itemStyle: { color: '#409eff' }
+  }]
+}))
+
+const cvOption = computed(() => ({
+  tooltip: { trigger: 'axis' },
+  xAxis: { type: 'category', data: result.value?.cv_scores.map((_, i) => `Fold ${i+1}`) || [] },
+  yAxis: { type: 'value', min: 'dataMin' },
+  series: [{
+    data: result.value?.cv_scores || [],
+    type: 'line',
+    smooth: true,
+    lineStyle: { color: '#67c23a' },
+    areaStyle: { color: 'rgba(103, 194, 58, 0.2)' }
+  }]
+}))
 </script>
 
 <style scoped>
-:deep(.el-table) {
-    background-color: transparent;
-    --el-table-bg-color: transparent;
-    --el-table-tr-bg-color: transparent;
-    --el-table-header-bg-color: #1e293b;
-    --el-table-text-color: #e2e8f0;
-    --el-table-border-color: #334155;
-}
+.results-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.metric-card { text-align: center; height: 120px; display: flex; flex-direction: column; justify-content: center; border-radius: 8px; }
+.metric-card .label { color: #909399; font-size: 14px; margin-bottom: 8px; }
+.metric-card .value { font-size: 24px; font-weight: bold; color: #303133; }
+.metric-card .value.success { color: #67c23a; }
+.chart-card { margin-top: 20px; border-radius: 8px; }
+.chart-container { height: 450px; width: 100%; }
+.chart-container.small { height: 300px; }
+.chart { width: 100%; height: 100%; }
+.empty-state { margin-top: 100px; }
+.q-mt-lg { margin-top: 20px; }
 </style>
