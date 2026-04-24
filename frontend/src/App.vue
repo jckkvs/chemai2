@@ -1,155 +1,70 @@
+<!-- frontend/src/App.vue -->
 <template>
-  <el-container class="main-layout">
-    <el-aside width="260px" class="sidebar">
-      <div class="brand">
-          <div class="logo-box">
-              <el-icon><Flask /></el-icon>
-          </div>
-          <div class="brand-text">
-              <h1 class="text-white font-black text-lg leading-tight">ChemAI Nexus</h1>
-              <p class="text-[10px] text-sky-400 font-bold tracking-tighter uppercase">Professional Suite v2.0</p>
-          </div>
-      </div>
-
-      <el-menu 
-        router 
-        :default-active="activePath"
-        class="side-menu"
-      >
-        <el-menu-item index="/">
-            <el-icon><FolderOpened /></el-icon>
-            <span>Data Upload</span>
-        </el-menu-item>
-        <el-menu-item index="/pipeline">
+  <div id="app">
+    <el-container class="app-container">
+      <!-- Sidebar -->
+      <el-aside width="200px" class="sidebar">
+        <div class="logo">
+          <el-icon><Flask /></el-icon>
+          <span>ChemAI Nexus</span>
+        </div>
+        <el-menu :default-active="activeMenu" router mode="vertical">
+          <el-menu-item index="/data">
+            <el-icon><Folder /></el-icon>
+            <span>Data</span>
+          </el-menu-item>
+          <el-menu-item index="/pipeline">
             <el-icon><Setting /></el-icon>
-            <span>Pipeline Config</span>
-        </el-menu-item>
-        <el-menu-item index="/results">
-            <el-icon><DataAnalysis /></el-icon>
+            <span>Pipeline</span>
+          </el-menu-item>
+          <el-menu-item index="/results">
+            <el-icon><Document /></el-icon>
             <span>Results</span>
-        </el-menu-item>
-      </el-menu>
+          </el-menu-item>
+        </el-menu>
+      </el-aside>
 
-      <div class="session-info">
-          <p class="text-[9px] text-slate-500 uppercase font-bold mb-1">Active Session</p>
-          <p class="text-[10px] text-slate-400 font-mono truncate">{{ sessionId }}</p>
-      </div>
-    </el-aside>
-
-    <el-main class="content-area">
-      <router-view v-slot="{ Component }">
-        <transition name="fade-slide" mode="out-in">
-          <component :is="Component" />
-        </transition>
-      </router-view>
-    </el-main>
-  </el-container>
+      <!-- Main Content -->
+      <el-container>
+        <el-header class="app-header">
+          <h2 class="text-xl font-bold">ChemAI Nexus v2.0</h2>
+          <div class="header-tags">
+            <el-tag v-if="store.hasData" type="success" size="small">
+              Data Loaded: {{ store.filename }}
+            </el-tag>
+            <el-tag v-else type="info" size="small">No Data</el-tag>
+          </div>
+        </el-header>
+        <el-main class="app-main">
+          <router-view :key="$route.fullPath" />
+        </el-main>
+      </el-container>
+    </el-container>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
-import { useRoute } from 'vue-router';
-import { Flask, FolderOpened, Setting, DataAnalysis } from '@element-plus/icons-vue';
-import { initSession } from './api/client';
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import { Flask, Folder, Setting, Document } from '@element-plus/icons-vue'
+import { useChemaiStore } from './store/chemai'
 
-const route = useRoute();
-const activePath = computed(() => route.path);
-const sessionId = ref('');
-
-onMounted(async () => {
-    const sid = localStorage.getItem('chemai_session');
-    if (!sid) {
-        sessionId.value = await initSession();
-    } else {
-        sessionId.value = sid;
-    }
-});
+const route = useRoute()
+const store = useChemaiStore()
+const activeMenu = computed(() => route.path)
 </script>
 
 <style>
-@import 'element-plus/dist/index.css';
-
-body {
-    margin: 0;
-    background-color: #020617;
-    font-family: 'Inter', -apple-system, sans-serif;
-    color: #e2e8f0;
-}
-
-.main-layout {
-    height: 100vh;
-}
-
-.sidebar {
-    background-color: #0f172a;
-    border-right: 1px solid #1e293b;
-    display: flex;
-    flex-direction: column;
-}
-
-.brand {
-    padding: 30px 20px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.logo-box {
-    background: linear-gradient(135deg, #0ea5e9, #2563eb);
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 20px;
-}
-
-.side-menu {
-    border-right: none !important;
-    background-color: transparent !important;
-    flex: 1;
-}
-
-.el-menu-item {
-    color: #94a3b8 !important;
-    margin: 4px 12px;
-    border-radius: 8px;
-    height: 48px !important;
-}
-
-.el-menu-item:hover, .el-menu-item.is-active {
-    background-color: #1e293b !important;
-    color: #38bdf8 !important;
-}
-
-.el-menu-item.is-active {
-    font-weight: bold;
-}
-
-.session-info {
-    padding: 20px;
-    border-top: 1px solid #1e293b;
-    background-color: rgba(15, 23, 42, 0.5);
-}
-
-.content-area {
-    background: radial-gradient(circle at 50% -20%, #1e293b 0%, #020617 80%);
-    padding: 40px !important;
-    overflow-y: auto;
-}
-
-/* Transitions */
-.fade-slide-enter-active, .fade-slide-leave-active {
-    transition: all 0.3s ease;
-}
-.fade-slide-enter-from {
-    opacity: 0;
-    transform: translateY(10px);
-}
-.fade-slide-leave-to {
-    opacity: 0;
-    transform: translateY(-10px);
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body, #app { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.app-container { height: 100%; }
+.sidebar { background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: white; border-right: none; }
+.logo { display: flex; align-items: center; gap: 10px; padding: 20px; font-size: 18px; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.el-menu { background: transparent; border-right: none; }
+.el-menu-item { color: rgba(255,255,255,0.8) !important; }
+.el-menu-item.is-active { background: rgba(255,255,255,0.1) !important; color: #42b983 !important; }
+.el-menu-item:hover { background: rgba(255,255,255,0.05) !important; }
+.app-header { background: #f5f7fa; border-bottom: 1px solid #e4e7ed; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; height: 64px; }
+.app-main { background: #f0f2f5; padding: 20px; overflow-y: auto; }
+.header-tags { display: flex; gap: 10px; }
 </style>
