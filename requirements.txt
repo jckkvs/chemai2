@@ -39,8 +39,8 @@ mordred>=1.2
 # ========== パイプライン拡張（オプション） ==========
 skrebate>=0.62           # ReliefF (scikit-rebate)
 boruta>=0.3              # Boruta
-sklearn-genetic-opt>=5.0 # GeneticSelection
-linear-tree>=0.6         # LinearTree
+sklearn-genetic-opt>=0.10 # GeneticSelection
+linear-tree>=0.3         # LinearTree
 group-lasso>=0.4         # GroupLasso
 imodels>=1.4             # 解釈可能モデル(FIGS, RuleFit等)
 sage-importance>=0.0.6   # SAGE特徴量重要度
@@ -68,6 +68,13 @@ accelerate>=0.30.0
 torch>=2.3.0
 pyyaml>=6.0
 huggingface_hub>=0.23.0
+
+# ========== FastAPI Nexus Backend ==========
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+pydantic>=2.5.0
+python-dotenv>=1.0.0
 
 # 互換性維持のための依存バージョン指定
 urllib3>=1.26.0,<3.0.0
