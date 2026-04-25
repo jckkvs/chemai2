@@ -1,38 +1,67 @@
+<!-- frontend/src/App.vue -->
 <template>
   <el-container class="app-container">
-    <!-- Sidebar -->
-    <el-aside width="200px" class="sidebar">
-      <div class="logo">
-        <el-icon><Flask /></el-icon>
-        <span>ChemAI Nexus</span>
+    <!-- Sidebar Sidebar -->
+    <el-aside width="260px" class="sidebar">
+      <div class="logo-section">
+        <h1 class="logo-text">ChemAI<span>Nexus</span></h1>
       </div>
-      <el-menu :default-active="activeMenu" router mode="vertical">
+      
+      <el-menu
+        :default-active="activeRoute"
+        class="side-menu"
+        background-color="transparent"
+        text-color="#c0c4cc"
+        active-text-color="#ffffff"
+        router
+      >
         <el-menu-item index="/data">
-          <el-icon><Folder /></el-icon>
-          <span>データ</span>
+          <el-icon><DataLine /></el-icon>
+          <span>Data Management</span>
         </el-menu-item>
+        
         <el-menu-item index="/eda">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>EDA</span>
+          <el-icon><PieChart /></el-icon>
+          <span>Exploratory Analysis</span>
         </el-menu-item>
+        
         <el-menu-item index="/ml">
-          <el-icon><DataBoard /></el-icon>
-          <span>機械学習</span>
+          <el-icon><Cpu /></el-icon>
+          <span>ML Studio</span>
         </el-menu-item>
+        
         <el-menu-item index="/results">
-          <el-icon><Document /></el-icon>
-          <span>結果</span>
+          <el-icon><TrendCharts /></el-icon>
+          <span>Results Report</span>
         </el-menu-item>
       </el-menu>
+
+      <div class="sidebar-footer">
+        <div class="version">v2.0.0 Stable</div>
+      </div>
     </el-aside>
 
     <!-- Main Content -->
-    <el-container>
+    <el-container class="main-container">
       <el-header class="app-header">
-        <h2 class="text-xl font-bold">ChemAI Nexus v2.0</h2>
+        <div class="header-left">
+          <el-breadcrumb separator="/">
+            <el-breadcrumb-item>Workspace</el-breadcrumb-item>
+            <el-breadcrumb-item>{{ currentViewName }}</el-breadcrumb-item>
+          </el-breadcrumb>
+        </div>
+        <div class="header-right">
+          <el-button link icon="QuestionFilled">Documentation</el-button>
+          <el-avatar size="small" icon="UserFilled" />
+        </div>
       </el-header>
+
       <el-main class="app-main">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <transition name="fade-transform" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
       </el-main>
     </el-container>
   </el-container>
@@ -41,69 +70,127 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Flask, Folder, DataAnalysis, DataBoard, Document } from '@element-plus/icons-vue'
 
 const route = useRoute()
-const activeMenu = computed(() => route.path)
+const activeRoute = computed(() => route.path)
+
+const currentViewName = computed(() => {
+  const map: Record<string, string> = {
+    '/data': 'Data Management',
+    '/eda': 'Exploratory Analysis',
+    '/ml': 'ML Studio',
+    '/results': 'Results Report'
+  }
+  return map[route.path] || 'Home'
+})
 </script>
 
 <style>
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+:root {
+  --sidebar-bg: #1a1c1e;
+  --header-bg: #ffffff;
+  --main-bg: #f5f7fa;
+  --primary-color: #409eff;
 }
 
-html, body, #app {
-  height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 .app-container {
-  height: 100%;
+  height: 100vh;
+  overflow: hidden;
 }
 
+/* Sidebar Styling */
 .sidebar {
-  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+  background-color: var(--sidebar-bg);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.logo-section {
+  padding: 30px 24px;
+}
+
+.logo-text {
   color: white;
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.5px;
+  font-weight: 800;
 }
 
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 20px;
-  font-size: 18px;
-  font-weight: bold;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
+.logo-text span {
+  color: var(--primary-color);
+  font-weight: 300;
 }
 
-.el-menu {
-  background: transparent;
+.side-menu {
   border-right: none;
+  flex: 1;
 }
 
-.el-menu-item {
-  color: rgba(255,255,255,0.8) !important;
+.side-menu .el-menu-item {
+  height: 56px;
+  margin: 4px 12px;
+  border-radius: 8px;
 }
 
-.el-menu-item.is-active {
-  background: rgba(255,255,255,0.1) !important;
-  color: #42b983 !important;
+.side-menu .el-menu-item.is-active {
+  background-color: var(--primary-color) !important;
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
 }
 
+.sidebar-footer {
+  padding: 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  color: #606266;
+  font-size: 0.8rem;
+}
+
+/* Header Styling */
 .app-header {
-  background: #f5f7fa;
-  border-bottom: 1px solid #e4e7ed;
+  background-color: var(--header-bg);
   display: flex;
   align-items: center;
-  padding: 0 20px;
-  height: 60px;
+  justify-content: space-between;
+  border-bottom: 1px solid #ebeef5;
+  padding: 0 30px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+/* Main Content Area */
+.main-container {
+  background-color: var(--main-bg);
 }
 
 .app-main {
-  background: #f0f2f5;
-  padding: 20px;
+  padding: 30px;
   overflow-y: auto;
+}
+
+/* Transitions */
+.fade-transform-enter-active,
+.fade-transform-leave-active {
+  transition: all 0.3s;
+}
+
+.fade-transform-enter-from {
+  opacity: 0;
+  transform: translateX(-10px);
+}
+
+.fade-transform-leave-to {
+  opacity: 0;
+  transform: translateX(10px);
 }
 </style>

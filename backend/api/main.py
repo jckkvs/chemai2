@@ -11,6 +11,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from backend.pipeline.executor import run_automl_pipeline
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO)
@@ -251,7 +252,7 @@ async def update_pipeline_config(session_id: str = Body(...), config: PipelineCo
 
 @app.post("/api/pipeline/run", response_model=AnalysisResult)
 async def run_pipeline(session_id: str = Body(...), cfg: PipelineConfig = Body(...)):
-    """Execute ML pipeline - placeholder for existing backend.models integration"""
+    """Execute ML pipeline using AutoMLEngine"""
     session = get_session(session_id)
     df = session.get("df")
     if df is None:
@@ -261,21 +262,10 @@ async def run_pipeline(session_id: str = Body(...), cfg: PipelineConfig = Body(.
     task_type = session["task_type"]
     
     try:
-        # TODO: Integrate existing backend.pipeline.executor or backend.models.automl
-        # result = await run_automl_pipeline(df, target_col, task_type, cfg.model_dump())
+        # Run the actual pipeline
+        result_dict = await run_automl_pipeline(df, target_col, task_type, cfg.model_dump())
         
-        logger.info(f"Pipeline run: target={target_col}, models={cfg.selected_models}")
-        
-        # Stub response for frontend integration
-        result = AnalysisResult(
-            status="completed",
-            best_model="RandomForest",
-            score=0.85,
-            cv_scores=[0.82, 0.84, 0.86, 0.85, 0.84],
-            feature_importances=[{"name": c, "value": 0.1} for c in df.columns[:5] if c != target_col],
-            message="Analysis completed successfully"
-        )
-        
+        result = AnalysisResult(**result_dict)
         session["automl_result"] = result.model_dump()
         return result
         
