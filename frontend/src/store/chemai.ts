@@ -101,6 +101,17 @@ export const useChemaiStore = defineStore('chemai', {
       } catch (e: any) {
         this.error = e.response?.data?.detail || 'Pipeline config update failed'
       }
+    },
+
+    setData(d: any) {
+      this.filename = d.filename
+      this.rows = d.rows
+      this.cols = d.cols
+      this.targetCol = d.target_col
+      this.taskType = d.task_type
+      this.preview = d.preview
+      this.metrics = d.metrics
+      this.columns = d.columns
     }
   }
 })

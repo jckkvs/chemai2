@@ -3,22 +3,38 @@
   <div class="data-upload-container">
     <div class="header-section">
       <h2>📂 Data Management</h2>
-      <p class="subtitle">Upload your CSV/Excel files and configure analytical targets</p>
+      <p class="subtitle">Upload your CSV/Excel files or select from standard chemical benchmarks</p>
     </div>
 
-    <!-- Upload Zone -->
-    <div 
-      class="upload-zone" 
-      @dragover.prevent 
-      @drop="handleDrop"
-      :class="{ 'dragging': isDragging }"
-    >
-      <input type="file" ref="fileInput" @change="handleFileSelect" accept=".csv,.xlsx,.xls" hidden />
-      <el-button type="primary" size="large" @click="$refs.fileInput.click()" icon="Upload">
-        Select CSV/Excel File
-      </el-button>
-      <p class="hint">or drag & drop here</p>
-    </div>
+    <el-tabs type="border-card" class="upload-tabs shadow">
+      <!-- Custom Upload Tab -->
+      <el-tab-pane>
+        <template #label>
+          <span class="tab-label"><el-icon><Upload /></el-icon> Upload Custom Data</span>
+        </template>
+        
+        <div 
+          class="upload-zone" 
+          @dragover.prevent 
+          @drop="handleDrop"
+          :class="{ 'dragging': isDragging }"
+        >
+          <input type="file" ref="fileInput" @change="handleFileSelect" accept=".csv,.xlsx,.xls" hidden />
+          <el-button type="primary" size="large" @click="$refs.fileInput.click()" icon="Upload">
+            Select CSV/Excel File
+          </el-button>
+          <p class="hint">or drag & drop here</p>
+        </div>
+      </el-tab-pane>
+
+      <!-- Benchmark Tab -->
+      <el-tab-pane>
+        <template #label>
+          <span class="tab-label"><el-icon><Collection /></el-icon> Benchmark Datasets</span>
+        </template>
+        <BenchmarkSelector />
+      </el-tab-pane>
+    </el-tabs>
 
     <!-- Loading -->
     <div v-if="store.isLoading" class="loading-overlay">
@@ -32,7 +48,7 @@
     </div>
 
     <!-- Results Display -->
-    <div v-if="store.hasData" class="data-result">
+    <div v-if="store.hasData" class="data-result mt-8 animate-fade-in">
       <el-card class="status-card shadow">
         <template #header>
           <div class="card-header">
@@ -73,7 +89,7 @@
         <div class="preview-section">
           <h3>📊 Data Preview</h3>
           <el-table :data="store.preview" border stripe size="small" height="300">
-            <el-table-column v-for="col in columns" :key="col" :prop="col" :label="col" min-width="120">
+            <el-table-column v-for="col in store.columns" :key="col" :prop="col" :label="col" min-width="150">
               <template #header>
                 <div class="col-header">
                   {{ col }}
@@ -89,7 +105,7 @@
           <h3>🎯 Analytical Configuration</h3>
           <el-form inline class="config-form">
             <el-form-item label="Target Column">
-              <el-select v-model="store.targetCol" @change="applyTarget" placeholder="Select target">
+              <el-select v-model="store.targetCol" @change="applyTarget" placeholder="Select target" style="width: 250px">
                 <el-option v-for="c in store.columns" :value="c" :key="c">{{ c }}</el-option>
               </el-select>
             </el-form-item>
@@ -107,14 +123,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useChemaiStore } from '../store/chemai'
+import BenchmarkSelector from '../components/ml/BenchmarkSelector.vue'
+import { Upload, Collection, Loading } from '@element-plus/icons-vue'
 
 const store = useChemaiStore()
 const fileInput = ref<HTMLInputElement | null>(null)
 const isDragging = ref(false)
-
-const columns = computed(() => Object.keys(store.preview[0] || {}))
 
 onMounted(async () => {
   await store.initialize()

@@ -3,20 +3,21 @@ frontend_nicegui/components/data_tab.py
 データ設定タブ：データ読込・列の役割設定・SMILES特徴量・EDA・パイプライン設計
 全機能をサブタブで構造化。Progressive Disclosure で初心者/上級者を両立。
 """
-from __future__ import annotations  # 修正: future → __future__
+from __future__ import annotations
 import io
 import asyncio
-import inspect
 import importlib
 import logging
 from typing import Any
 import numpy as np
 import pandas as pd
 from nicegui import ui
+
+# ローカルインポート（循環参照回避のため関数内で import するものも含む）
 from frontend_nicegui.components.feature_comparison_dashboard import render_feature_comparison_dashboard
 from frontend_nicegui.components.debug_samples_selector import create_debug_samples_selector
 
-logger = logging.getLogger(__name__)  # 修正: name → __name__
+logger = logging.getLogger(__name__)
 
 # ─── サンプルSMILES ─────────────────────────────────
 SAMPLE_SMILES = [
@@ -27,7 +28,7 @@ SAMPLE_SMILES = [
     "CC(=O)CC", "CCCCO",
 ]
 
-# ── 全エンジン定義 ──
+# ─── 全エンジン定義 ─────────────────────────────────
 _ALL_ENGINES: list[tuple[str, str, str, dict]] = [
     ("RDKit", "backend.chem.rdkit_adapter", "RDKitAdapter", {"compute_fp": False}),
     ("Mordred", "backend.chem.mordred_adapter", "MordredAdapter", {"selected_only": True}),
@@ -45,6 +46,7 @@ _ALL_ENGINES: list[tuple[str, str, str, dict]] = [
     ("Chemprop", "backend.chem.chemprop_adapter", "ChempropAdapter", {}),
 ]
 
+
 def render_data_tab(state: dict[str, Any]) -> None:
     """データ設定タブ全体を描画する。"""
     with ui.tabs().classes("full-width").props("dense active-color=cyan indicator-color=cyan") as sub_tabs:
@@ -56,6 +58,9 @@ def render_data_tab(state: dict[str, Any]) -> None:
         tab_eda = ui.tab("eda", label="📊 EDA", icon="analytics")
 
     # ── @ui.refreshable を使った各タブの描画関数定義 ──
+    # NiceGUI では全タブパネルが初期時に描画されるため遅延描画は行わない。
+    # データ更新後は view_fn.refresh() を呼ぶことで再描画する。
+
     @ui.refreshable
     def _tab_load_view():
         _render_data_load(state)
@@ -70,6 +75,9 @@ def render_data_tab(state: dict[str, Any]) -> None:
         from frontend_nicegui.components.constraint_panel import render_constraint_panel
         render_constraint_panel(state)
 
+    # _tab_smiles_view は @ui.refreshable を使わず
+    # コンテナ+タイマー方式で確実に描画する（後述）
+
     @ui.refreshable
     def _tab_eda_view():
         _render_eda(state)
@@ -81,11 +89,13 @@ def render_data_tab(state: dict[str, Any]) -> None:
     _refreshable_views = {
         "load": _tab_load_view,
         "columns": _tab_columns_view,
+        # "smiles" は コンテナ方式で管理（_rebuild_smiles参照）
         "eda": _tab_eda_view,
     }
 
-    # ── タブパネルを描画（全パネル即時描画）──
+    # ── タブパネルを描画（全パネル即時描画） ──
     with ui.tab_panels(sub_tabs, value=tab_load).classes("full-width"):
+
         with ui.tab_panel(tab_load):
             _tab_load_view()
 
@@ -96,6 +106,7 @@ def render_data_tab(state: dict[str, Any]) -> None:
             _tab_constraints_view()
 
         with ui.tab_panel(tab_smiles):
+            # コンテナ方式で確実に描画（@ui.refreshable のサイレント失敗問題を回避）
             _smiles_container = ui.column().classes("full-width")
 
             def _rebuild_smiles():
@@ -106,10 +117,13 @@ def render_data_tab(state: dict[str, Any]) -> None:
                         from frontend_nicegui.components.smiles_feature_panel import render_smiles_feature_panel
                         render_smiles_feature_panel(state)
                     except Exception as _e:
-                        logger.error(f"[DataTab] SMILES tab render error: {_e}", exc_info=True)
+                        logger.error(
+                            f"[DataTab] SMILES tab render error: {_e}",
+                            exc_info=True,
+                        )
                         ui.label(f"⚠️ 表示エラー: {_e}").classes("text-red q-pa-md")
 
-            _rebuild_smiles()
+            _rebuild_smiles()  # 初期描画
 
         with ui.tab_panel(tab_mixture):
             from frontend_nicegui.components.mixture_input_panel import render_mixture_panel
@@ -118,15 +132,18 @@ def render_data_tab(state: dict[str, Any]) -> None:
         with ui.tab_panel(tab_eda):
             _tab_eda_view()
 
+        # 設定タブは外側「⚙️ 設定」タブに統合済み。内側に重複する必要なし。
+
     # ── stateに再描画ヘルパーを登録 ──
     def _refresh_tabs_fn():
-        """全サブタブを再描画する（loadタブ除く）。"""
+        """全サブタブを再描画する（load タブ除く）。"""
+        # SMILESタブ: コンテナ方式で確実に再描画
         try:
             _rebuild_smiles()
             logger.debug("[DataTab] rebuilt smiles tab via container")
         except Exception as exc:
             logger.warning(f"[DataTab] smiles container rebuild failed: {exc}")
-        
+        # その他のタブ: refreshable 方式
         for key, view_fn in _refreshable_views.items():
             if key != "load":
                 try:
@@ -134,7 +151,7 @@ def render_data_tab(state: dict[str, Any]) -> None:
                     logger.debug(f"[DataTab] refreshed tab {key!r}")
                 except Exception as exc:
                     logger.warning(f"[DataTab] refresh failed for {key!r}: {exc}")
-        
+        # 外側タブ（EDA・逆解析・結果・DoE）をコンテナ再描画
         for refresh_key in ("_refresh_eda_main", "_refresh_inverse", "_refresh_results", "_refresh_doe"):
             fn = state.get(refresh_key)
             if callable(fn):
@@ -146,105 +163,66 @@ def render_data_tab(state: dict[str, Any]) -> None:
 
     state["_refresh_tabs"] = _refresh_tabs_fn
 
-# =================================================================
+
+# ========================================================================
 # サブタブ1: データ読込
-# =================================================================
+# ========================================================================
 def _render_data_load(state: dict) -> None:
     """ファイルアップロード + サンプル + ベンチマークのデータ読込UI"""
+    # データ読み込み済みの場合はステータスを復元
     df_existing = state.get("df")
     fn_existing = state.get("filename", "")
-    
     if df_existing is not None and not df_existing.empty:
         status_text = f"✅ {fn_existing} ({len(df_existing)}行 × {len(df_existing.columns)}列)"
         upload_status = ui.label(status_text).classes("text-green q-mt-sm")
     else:
         upload_status = ui.label(" ").classes("text-grey-5 q-mt-sm")
-    
     preview_container = ui.column().classes("full-width q-mt-md")
 
+    # 既存データがある場合はプレビューを即座に表示（タブ切替でリセットされない）
     if df_existing is not None and not df_existing.empty:
         _show_preview(df_existing, preview_container)
 
     async def handle_upload(e):
         """ファイルアップロードハンドラ - NiceGUI 3.x 完全対応版"""
         try:
-            logger.info("=== ファイルアップロード開始 ===")
-            
-            filename = getattr(e, 'name', None)
-            if not filename:
-                filename = getattr(e, 'filename', 'uploaded_file.csv')
-            
-            content = None
-            
-            if hasattr(e, 'content'):
-                c = e.content
-                if inspect.iscoroutine(c):
-                    logger.warning("e.content is coroutine, attempting to read differently")
-                    c = None
-                if c is not None and isinstance(c, (bytes, str)):
-                    content = c
-                    logger.info("✓ e.content (bytes/str) を使用")
-            
-            if content is None and hasattr(e, 'file'):
-                f = e.file
-                if isinstance(f, bytes):
-                    content = f
-                    logger.info("✓ e.file (bytes) を使用")
-                elif hasattr(f, 'read'):
-                    read_result = f.read()
-                    if inspect.iscoroutine(read_result):
-                        logger.warning("f.read() returned coroutine - this is unexpected")
-                        content = str(f)
-                    else:
-                        content = read_result
-                        logger.info("✓ e.file.read() を使用")
-                else:
-                    content = f
-                    logger.info("✓ e.file (fallback) を使用")
-            
-            if content is None and isinstance(e, bytes):
-                content = e
-                logger.info("✓ Event 自体が bytes")
-            
-            if content is None:
-                logger.error(f"✗ ファイルコンテンツを取得できませんでした。Event type: {type(e)}")
-                ui.notify('✗ ファイルの読み取りに失敗しました', type='negative')
-                return
-            
-            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content) if isinstance(content, (bytes, str)) else 'N/A'}")
-            
-            try:
-                if filename.endswith('.csv'):
-                    if isinstance(content, bytes):
-                        df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
-                    else:
-                        df_loaded = pd.read_csv(io.StringIO(content), float_precision='high')
-                elif filename.endswith(('.xlsx', '.xls')):
-                    if isinstance(content, bytes):
-                        df_loaded = pd.read_excel(io.BytesIO(content))
-                    else:
-                        ui.notify('Excel ファイルは bytes 形式が必要です', type='warning')
-                        return
-                else:
-                    upload_status.text = "❌ CSV/Excelファイルのみ対応"
-                    ui.notify('サポートされていないファイル形式です', type='warning')
-                    return
-            except Exception as parse_err:
-                logger.error(f"CSV/Excel パースエラー: {parse_err}", exc_info=True)
-                ui.notify(f'ファイル形式エラー: {str(parse_err)[:100]}', type='negative')
+            logger.info(f"=== ファイルアップロード開始 ===")
+            logger.info(f"Event type: {type(e)}")
+            logger.info(f"Event attributes: {dir(e)}")
+
+            # === NiceGUI 3.x 標準 API: e.content (bytes), e.name (str) ===
+            # 複雑な hasattr チェーンは廃止し、標準仕様に準拠
+            content = e.content
+            filename = e.name
+
+            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content) if content else 0} bytes")
+
+            # === ファイル形式の判定と読み込み ===
+            if filename.endswith('.csv'):
+                df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
+            elif filename.endswith(('.xlsx', '.xls')):
+                df_loaded = pd.read_excel(io.BytesIO(content))
+            else:
+                upload_status.text = "❌ CSV/Excelファイルのみ対応"
+                ui.notify('サポートされていないファイル形式です', type='warning')
                 return
 
+            # === 数値列の精度保証: float64 に統一 ===
             for col in df_loaded.select_dtypes(include=['float16', 'float32', 'int8', 'int16', 'int32', 'int64']).columns:
                 df_loaded[col] = df_loaded[col].astype('float64')
-            
+
+            # === state への保存（アプリ内状態管理）===
             state["df"] = df_loaded
             state["filename"] = filename
             state["automl_result"] = None
             state["pipeline_result"] = None
             state["precalc_done"] = False
-            
+
+            # === app.storage への保存（セッション永続化）===
+            # DataFrame はシリアライズ不可なため、CSV 文字列として保存
             from nicegui import app
             try:
+                # CSV 文字列として保存（シリアライズ可能）
                 csv_buffer = io.StringIO()
                 df_loaded.to_csv(csv_buffer, index=False)
                 app.storage.user['current_df_csv'] = csv_buffer.getvalue()
@@ -252,52 +230,58 @@ def _render_data_load(state: dict) -> None:
                 app.storage.user['current_df_shape'] = df_loaded.shape
             except Exception as storage_err:
                 logger.warning(f"app.storage への保存に失敗: {storage_err}")
-            
+                # 保存失敗しても処理は継続（state には保存済み）
+
             app.storage.user['data_loaded'] = True
             app.storage.user['data_filename'] = filename
             app.storage.user['data_timestamp'] = pd.Timestamp.now().isoformat()
-            
+
             logger.info(f"✅ DataFrame読み込み完了: {df_loaded.shape[0]}行 × {df_loaded.shape[1]}列")
-            
+            logger.info(f"app.storage.user['data_loaded'] = {app.storage.user.get('data_loaded')}")
+
+            # === UI 更新 ===
             upload_status.text = f"✅ {filename} 読み込み完了 ({len(df_loaded)}行 × {len(df_loaded.columns)}列)"
             upload_status.classes(remove="text-red", add="text-green")
             _show_preview(df_loaded, preview_container)
             _update_metrics(state, metrics_row)
-            
+
+            # === 列の自動検出 ===
             _auto_detect_columns(state)
-            
+
+            # === 他コンポーネントの再描画 ===
             refresh = state.get("_refresh_tabs")
             if refresh:
                 try:
                     refresh()
                 except Exception as refresh_err:
                     logger.warning(f"タブ再描画エラー: {refresh_err}")
-            
+
+            # === LLM 解析タスクの発火（オプション機能）===
             try:
                 from frontend_nicegui.main import render_llm_analysis_report
                 asyncio.create_task(render_llm_analysis_report(df_loaded, metadata={"source": "upload", "filename": filename}))
             except ImportError:
-                pass
-            
+                pass  # LLM 機能未実装時はスキップ
+
             ui.notify(f'✅ {filename} を読み込みました ({df_loaded.shape[0]}行)', type='positive')
-            
+
         except AttributeError as ae:
-            logger.error(f"AttributeError: {ae}", exc_info=True)
+            logger.error(f"NiceGUI event attribute error: {ae}", exc_info=True)
             upload_status.text = f"❌ エラー: ファイル属性の取得に失敗しました"
             upload_status.classes(remove="text-green", add="text-red")
-            ui.notify(f'✗ {str(ae)}', type='negative')
-            
+            ui.notify(f'ファイル読み取りエラー: {str(ae)}', type='negative')
+
         except pd.errors.EmptyDataError:
             logger.error("Empty CSV file")
             upload_status.text = "❌ エラー: ファイルが空です"
             upload_status.classes(remove="text-green", add="text-red")
-            ui.notify('✗ ファイルが空です', type='negative')
-            
+            ui.notify('ファイルが空です', type='negative')
+
         except Exception as ex:
             logger.error(f"❌ 予期せぬエラー: {ex}", exc_info=True)
-            upload_status.text = f"❌ {type(ex).__name__}: {str(ex)}"
+            upload_status.text = f"❌ エラー: {type(ex).__name__}: {str(ex)}"
             upload_status.classes(remove="text-green", add="text-red")
-            ui.notify(f'✗ {str(ex)}', type='negative')
+            ui.notify(f'エラー: {str(ex)}', type='negative')
 
     ui.upload(
         on_upload=handle_upload,
@@ -305,13 +289,16 @@ def _render_data_load(state: dict) -> None:
         auto_upload=True,
     ).props('accept=".csv,.xlsx,.xls" color="purple"').classes("full-width")
 
+    # メトリクスカード行
     metrics_row = ui.row().classes("q-gutter-md q-mt-md full-width")
     _update_metrics(state, metrics_row)
 
+    # ── サンプルデータ（統合セレクター） ──
     with ui.expansion("🧪 デバッグ用サンプルデータ", icon="science").classes("full-width q-mt-md").props("default-opened"):
         ui.label("開発・検証用のサンプルデータを選択してロードできます。").classes("text-caption text-grey-6 q-mb-md")
-        
+
         def handle_debug_data_loaded(df, task_type, target_col, filename):
+            """デバッグセレクターからのデータ読み込みハンドラ"""
             state["df"] = df
             state["filename"] = filename
             state["automl_result"] = None
@@ -320,26 +307,31 @@ def _render_data_load(state: dict) -> None:
             state["precalc_df"] = None
             state["_chem_adapters"] = None
             state["_applied_recommendation"] = None
-            
+
+            # --- データ認識不具合対応: 状態更新と検証 ---
             try:
                 from frontend_nicegui.main import set_loaded_data
                 set_loaded_data(df)
             except ImportError:
                 pass
 
+            # 内部の自動判定ロジックを呼ぶ
             _auto_detect_columns(state)
-            
+
+            # セレクターで定義された情報を優先適用
             state["task_type"] = task_type
             state["target_col"] = target_col
-            
+
+            # UI更新
             upload_status.text = f"✅ {filename} 読み込み完了 ({len(df)}行)"
             _show_preview(df, preview_container)
             _update_metrics(state, metrics_row)
-            
+
             refresh = state.get("_refresh_tabs")
             if refresh:
                 refresh()
 
+            # --- LLM 解析タスクの発火 ---
             try:
                 from frontend_nicegui.main import render_llm_analysis_report
                 asyncio.create_task(render_llm_analysis_report(df, metadata={"source": "debug_sample", "filename": filename}))
@@ -348,6 +340,7 @@ def _render_data_load(state: dict) -> None:
 
         create_debug_samples_selector(on_data_loaded=handle_debug_data_loaded)
 
+        # ── ベンチマークデータ ──
         ui.separator()
         ui.label("公開ベンチマーク").classes("text-subtitle2 q-mt-sm")
         ui.label("ケモインフォマティクスで使われる標準データセット").classes("text-caption text-grey-6")
@@ -370,7 +363,8 @@ def _render_data_load(state: dict) -> None:
                         state["precalc_df"] = None
                         state["_chem_adapters"] = None
                         state["_applied_recommendation"] = None
-                        
+
+                        # --- データ認識不具合対応: 状態更新と検証 ---
                         try:
                             from frontend_nicegui.main import set_loaded_data
                             set_loaded_data(df_bench)
@@ -388,6 +382,7 @@ def _render_data_load(state: dict) -> None:
                         if refresh:
                             refresh()
 
+                        # --- LLM 解析タスクの発火 ---
                         try:
                             from frontend_nicegui.main import render_llm_analysis_report
                             asyncio.create_task(render_llm_analysis_report(df_bench, metadata={"source": "benchmark", "dataset": bname}))
@@ -398,27 +393,30 @@ def _render_data_load(state: dict) -> None:
                     except Exception as ex:
                         ui.notify(f"エラー: {ex}", type="negative")
 
-                ui.button(f"📥 {desc}", on_click=_load_bench).props("outline color=orange size=sm").tooltip(f"目的変数: {target}")
+                ui.button(
+                    f"📥 {desc}", on_click=_load_bench
+                ).props("outline color=orange size=sm").tooltip(f"目的変数: {target}")
 
-# =================================================================
+
+# ========================================================================
 # サブタブ2: 列の役割設定
-# =================================================================
-pass
-
+# ========================================================================
+# pass  # Logic moved to frontend_nicegui/components/column_role_panel.py
 def _on_target_change(val: str, state: dict) -> None:
     state["target_col"] = val
     state["precalc_done"] = False
+    # タスク自動判定
     if state["df"] is not None and val in state["df"].columns:
         if pd.api.types.is_float_dtype(state["df"][val]):
             state["task_type"] = "regression"
         else:
             state["task_type"] = "classification"
 
-# =================================================================
-# サブタブ3: SMILES特徴量
-# =================================================================
-pass
 
+# ========================================================================
+# サブタブ3: SMILES特徴量
+# ========================================================================
+# pass  # Logic moved to frontend_nicegui/components/smiles_feature_panel.py
 def _show_descriptor_summary(state: dict, container) -> None:
     """記述子計算結果のサマリーを表示"""
     container.clear()
@@ -429,6 +427,7 @@ def _show_descriptor_summary(state: dict, container) -> None:
         n = len(precalc.columns)
         calc_summary = state.get("calc_summary", {})
 
+        # メトリクスカード
         with ui.row().classes("q-gutter-md"):
             with ui.card().classes("glass-card q-pa-md"):
                 ui.label(str(n)).classes("text-h4 text-bold hero-gradient")
@@ -438,6 +437,7 @@ def _show_descriptor_summary(state: dict, container) -> None:
                 ui.label(str(ok_count)).classes("text-h4 text-bold hero-gradient")
                 ui.label("成功エンジン").classes("text-caption text-grey-5")
 
+        # エンジン別結果テーブル
         ui.separator()
         ui.label("エンジン別結果").classes("text-subtitle2 q-mt-md")
         rows = []
@@ -453,9 +453,10 @@ def _show_descriptor_summary(state: dict, container) -> None:
                 rows=rows,
             ).classes("full-width").props("dense flat bordered")
 
-# =================================================================
+
+# ========================================================================
 # サブタブ4: EDA
-# =================================================================
+# ========================================================================
 def _render_eda(state: dict) -> None:
     """特徴量の探索的データ分析 — 統合EDAパネルに委譲。"""
     if state["df"] is None:
@@ -467,9 +468,10 @@ def _render_eda(state: dict) -> None:
     from frontend_nicegui.components.eda_panel import render_eda_panel
     render_eda_panel(state)
 
-# =================================================================
+
+# ========================================================================
 # サブタブ5: パイプライン設計
-# =================================================================
+# ========================================================================
 def _render_pipeline(state: dict) -> None:
     """CV設定・前処理・特徴選択・モデル選択・単調制約"""
     if state["df"] is None:
@@ -485,6 +487,9 @@ def _render_pipeline(state: dict) -> None:
     if task == "auto":
         task = "regression" if (target_col and pd.api.types.is_float_dtype(df[target_col])) else "classification"
 
+    # ────────────────────────────────────────────
+    # 💾 設定プリセット管理
+    # ────────────────────────────────────────────
     with ui.expansion("💾 設定プリセット（保存/読込）", icon="bookmark").classes("full-width q-mb-md"):
         from backend.preset_manager import save_preset as _save_preset
         from backend.preset_manager import load_preset as _load_preset
@@ -507,10 +512,10 @@ def _render_pipeline(state: dict) -> None:
                                     ui.label(p["name"]).classes("text-subtitle2 text-bold")
                                     desc = p.get("description", "")
                                     if desc:
-                                        ui.label(desc).classes("text-caption text-grey").style("font-size: 0.7rem;")
+                                        ui.label(desc).classes("text-caption text-grey").style("font-size: 0.7rem; ")
                                     ui.label(f"{p['n_settings']}個の設定 | {p.get('created_at', '')[:10]}").classes(
                                         "text-caption text-grey"
-                                    ).style("font-size:0.82rem;")
+                                    ).style("font-size: 0.82rem; ")
                                 with ui.row().classes("q-gutter-xs"):
                                     pname = p["name"]
 
@@ -531,6 +536,7 @@ def _render_pipeline(state: dict) -> None:
 
         _refresh_preset_list()
 
+        # 保存フォーム
         ui.separator()
         ui.label("新規プリセット保存").classes("text-subtitle2 q-mt-sm")
         with ui.row().classes("items-end q-gutter-sm full-width"):
@@ -553,9 +559,13 @@ def _render_pipeline(state: dict) -> None:
 
             ui.button("💾 保存", on_click=_do_save).props("outline color=cyan size=sm no-caps")
 
+    # ────────────────────────────────────────────
+    # 📤 設定エクスポート / インポート
+    # ────────────────────────────────────────────
     with ui.expansion("📤 設定エクスポート / インポート（YAML）", icon="import_export").classes("full-width q-mb-sm"):
         from backend.preset_manager import export_config_yaml, import_config_yaml
 
+        # エクスポート
         ui.label("📤 エクスポート（コピーして共有）").classes("text-subtitle2")
         export_area = ui.textarea("YAML設定", value="").classes("full-width").props("outlined readonly rows=4")
 
@@ -568,6 +578,7 @@ def _render_pipeline(state: dict) -> None:
 
         ui.separator().classes("q-my-sm")
 
+        # インポート
         ui.label("📥 インポート（YAMLを貼り付け）").classes("text-subtitle2")
         import_area = ui.textarea("YAML設定を貼り付け", value="").classes("full-width").props("outlined rows=4")
 
@@ -585,6 +596,9 @@ def _render_pipeline(state: dict) -> None:
 
         ui.button("📥 インポート", on_click=_do_import).props("outline color=amber size=sm no-caps")
 
+    # ────────────────────────────────────────────
+    # 📜 解析履歴
+    # ────────────────────────────────────────────
     with ui.expansion("📜 解析履歴", icon="history").classes("full-width q-mb-md"):
         from backend.preset_manager import list_history
 
@@ -595,7 +609,7 @@ def _render_pipeline(state: dict) -> None:
             rows = []
             for h in history:
                 rows.append({
-                    "日時": h.get("timestamp", "")[:16].replace("T", "  "),
+                    "日時": h.get("timestamp", "")[:16].replace("T", " "),
                     "ファイル": h.get("filename", ""),
                     "最良モデル": h.get("best_model", ""),
                     "スコア": f"{h.get('best_score', 0):.4f}",
@@ -607,14 +621,25 @@ def _render_pipeline(state: dict) -> None:
             ]
             ui.table(columns=columns, rows=rows).classes("full-width").props("dense flat bordered")
 
+    # ────────────────────────────────────────────
+    # 1. 交差検証設定
+    # ────────────────────────────────────────────
     from frontend_nicegui.components.cv_config_ui import render_cv_config
     render_cv_config(state)
 
     ui.separator().classes("q-my-sm")
 
-    with ui.expansion("🔧 前処理設定（スケーリング・欠損値・変換）", icon="transform").classes("full-width"):
-        ui.label("列の型ごとに異なる前処理を適用します。デフォルト設定で問題なく動作します。").classes("text-caption text-grey q-mb-sm")
+    # ────────────────────────────────────────────
+    # 2. 前処理設定（ColumnTransformer相当）
+    # ────────────────────────────────────────────
+    with ui.expansion(
+        "🔧 前処理設定（スケーリング・欠損値・変換）", icon="transform",
+    ).classes("full-width"):
+        ui.label(
+            "列の型ごとに異なる前処理を適用します。デフォルト設定で問題なく動作します。"
+        ).classes("text-caption text-grey q-mb-sm")
 
+        # 数値列の前処理
         with ui.card().classes("glass-card q-pa-sm full-width q-mb-sm"):
             ui.label("🔢 数値列").classes("text-subtitle2")
             with ui.row().classes("q-gutter-sm items-end"):
@@ -658,6 +683,7 @@ def _render_pipeline(state: dict) -> None:
                     on_change=lambda e: state.update({"num_transform": e.value}),
                 ).classes("w-56")
 
+        # カテゴリ列の前処理
         with ui.card().classes("glass-card q-pa-sm full-width q-mb-sm"):
             ui.label("🔤 カテゴリ列").classes("text-subtitle2")
             with ui.row().classes("q-gutter-sm items-end"):
@@ -684,7 +710,11 @@ def _render_pipeline(state: dict) -> None:
                     on_change=lambda e: state.update({"cat_imputer": e.value}),
                 ).classes("w-48")
 
+    # ────────────────────────────────────────────
+    # 3. 特徴量生成・選択
+    # ────────────────────────────────────────────
     with ui.expansion("🎯 特徴量生成・選択", icon="filter_alt").classes("full-width"):
+        # 特徴量生成
         ui.label("生成").classes("text-subtitle2")
         with ui.row().classes("q-gutter-sm"):
             ui.checkbox(
@@ -708,6 +738,7 @@ def _render_pipeline(state: dict) -> None:
 
         ui.separator().classes("q-my-xs")
 
+        # 特徴量選択
         ui.label("選択").classes("text-subtitle2")
         _selector_label = "回帰" if task == "regression" else "分類"
         ui.select(
@@ -736,6 +767,9 @@ def _render_pipeline(state: dict) -> None:
                 on_change=lambda e: state.update({"n_features_to_select": int(e.value)}),
             ).classes("w-40")
 
+    # ────────────────────────────────────────────
+    # 4. モデル選択
+    # ────────────────────────────────────────────
     ui.separator()
     ui.label("🤖 使用するモデル").classes("text-subtitle1 q-mt-md")
 
@@ -748,13 +782,16 @@ def _render_pipeline(state: dict) -> None:
         if "selected_models" not in state or not state["selected_models"]:
             state["selected_models"] = defaults
 
+        # クイック選択ボタン
         with ui.row().classes("q-gutter-sm q-mb-sm"):
             def _select_all():
                 state["selected_models"] = [m["key"] for m in available]
                 ui.notify(f"全{len(available)}モデルを選択", type="info")
+
             def _select_defaults():
                 state["selected_models"] = defaults
                 ui.notify(f"デフォルト{len(defaults)}モデルを選択", type="info")
+
             def _select_fast():
                 fast_keys = [m["key"] for m in available
                              if any(t in m.get("tags", []) for t in ["linear", "tree"])]
@@ -767,6 +804,7 @@ def _render_pipeline(state: dict) -> None:
             n_sel = len(state.get("selected_models", []))
             ui.badge(f"{n_sel}選択中", color="cyan").props("outline")
 
+        # カテゴリ分け
         categories: dict[str, list] = {"線形系": [], "カーネル系": [], "決定木系": [], "その他": []}
         for m in available:
             k = m["key"].lower() + m["name"].lower()
@@ -801,13 +839,20 @@ def _render_pipeline(state: dict) -> None:
                                 lambda e, key=m["key"]: _toggle_model(state, key, e.value)
                             )
 
+        # ── 選択モデルのパラメータ自動UI ──
         _render_model_auto_params(state, available)
 
     except Exception as ex:
         ui.label(f"モデル一覧取得エラー: {ex}").classes("text-red")
 
+    # ────────────────────────────────────────────
+    # 5. 単調制約（説明変数ごと）
+    # ────────────────────────────────────────────
     _render_monotonic_constraints(state, df, target_col)
 
+    # ────────────────────────────────────────────
+    # 6. 詳細設定（上級者用折りたたみ）
+    # ────────────────────────────────────────────
     ui.separator()
     with ui.expansion("🔬 その他の詳細設定", icon="tune").classes("full-width q-mt-md"):
         with ui.row().classes("q-gutter-md"):
@@ -827,8 +872,9 @@ def _render_pipeline(state: dict) -> None:
                 lambda e: state.update({"do_shap": e.value})
             )
 
+
 def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str) -> None:
-    """説明変数ごとの単調制約UI — ダイアログベース。"""
+    \"\"\"説明変数ごとの単調制約UI — ダイアログベース。\"\"\"
     from frontend_nicegui.components.dialog_manager import (
         create_settings_dialog,
         render_settings_summary,
@@ -844,6 +890,7 @@ def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str
 
     constraints = state["monotonic_constraints"]
 
+    # サマリー情報
     n_inc = sum(1 for v in constraints.values() if v == 1)
     n_dec = sum(1 for v in constraints.values() if v == -1)
     n_total = n_inc + n_dec
@@ -851,6 +898,7 @@ def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str
     summary = [f"対象列: {len(numeric_cols)}個"]
     if n_total > 0:
         summary.append(f"↗ 増加: {n_inc}件, ↘ 減少: {n_dec}件")
+        # 代表例（最大3つ）
         examples = [(c, v) for c, v in constraints.items() if v != 0][:3]
         for c, v in examples:
             sym = "↗" if v == 1 else "↘"
@@ -859,26 +907,63 @@ def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str
         summary.append("制約なし（デフォルト）")
 
     def _build_content():
-        ui.label("⚠️ 上級者向け機能: ドメイン知識に基づき設定してください。").classes("text-caption text-amber q-mb-sm")
-        ui.label("各説明変数の目的変数に対する単調増加/減少の制約を設定。XGBoost, LightGBM, monotonic kernel等で利用されます。").classes("text-caption text-grey q-mb-sm")
+        ui.label(
+            "⚠️ 上級者向け機能: ドメイン知識に基づき設定してください。"
+        ).classes("text-caption text-amber q-mb-sm")
+        ui.label(
+            "各説明変数の目的変数に対する単調増加/減少の制約を設定。"
+            "XGBoost, LightGBM, monotonic kernel等で利用されます。"
+        ).classes("text-caption text-grey q-mb-sm")
 
+        # 一括操作
         with ui.row().classes("q-gutter-sm q-mb-sm"):
-            ui.button("全て制約なし", on_click=lambda: (constraints.clear(), ui.notify("全制約をリセット", type="info"))).props("flat dense no-caps size=sm color=grey")
+            ui.button(
+                "全て制約なし",
+                on_click=lambda: (
+                    constraints.clear(),
+                    ui.notify("全制約をリセット", type="info"),
+                ),
+            ).props("flat dense no-caps size=sm color=grey")
 
+        # 各列の制約設定（ラジオボタン方式）
         for col in numeric_cols:
             current = constraints.get(col, 0)
             with ui.row().classes("items-center q-gutter-xs full-width q-mb-xs"):
-                ui.label(col).classes("text-body2").style("width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;")
-                ui.radio({0: "制約なし", 1: "↗ 単調増加", -1: "↘ 単調減少"}, value=current, on_change=lambda e, c=col: constraints.update({c: e.value})).props("dense inline")
+                ui.label(col).classes("text-body2").style(
+                    "width: 200px; overflow: hidden; text-overflow: ellipsis; "
+                    "white-space: nowrap; "
+                )
+                ui.radio(
+                    {0: "制約なし", 1: "↗ 単調増加", -1: "↘ 単調減少"},
+                    value=current,
+                    on_change=lambda e, c=col: constraints.update({c: e.value}),
+                ).props("dense inline")
 
     def _open_dialog():
-        dlg = create_settings_dialog(title="📐 単調性制約設定", icon="trending_up", width="85vw", max_width="800px", content_builder=_build_content, state=state, snapshot_keys=["monotonic_constraints"])
+        dlg = create_settings_dialog(
+            title="📐 単調性制約設定",
+            icon="trending_up",
+            width="85vw",
+            max_width="800px",
+            content_builder=_build_content,
+            state=state,
+            snapshot_keys=["monotonic_constraints"],
+        )
         dlg.open()
 
-    render_settings_summary(icon="trending_up", title="単調性制約", summary_lines=summary, button_label="⚙️ 制約設定", on_click=_open_dialog, badge_text=f"{n_total}件設定" if n_total > 0 else "なし", badge_color="amber" if n_total > 0 else "grey")
+    render_settings_summary(
+        icon="trending_up",
+        title="単調性制約",
+        summary_lines=summary,
+        button_label="⚙️ 制約設定",
+        on_click=_open_dialog,
+        badge_text=f"{n_total}件設定" if n_total > 0 else "なし",
+        badge_color="amber" if n_total > 0 else "grey",
+    )
+
 
 def _toggle_model(state: dict, key: str, checked: bool) -> None:
-    """モデルの選択/解除をstateに反映"""
+    \"\"\"モデルの選択/解除をstateに反映\"\"\"
     selected = state.get("selected_models", [])
     if checked and key not in selected:
         selected.append(key)
@@ -886,12 +971,19 @@ def _toggle_model(state: dict, key: str, checked: bool) -> None:
         selected.remove(key)
     state["selected_models"] = selected
 
+
 def _render_model_auto_params(state: dict, available_models: list) -> None:
-    """選択されたモデルごとにパラメータ自動UIを生成する。"""
+    \"\"\"
+    選択されたモデルごとにパラメータ自動UIを生成する。
+    introspect_params() でクラスの __init__ パラメータを自動検出し、
+    auto_params_ui.render_param_editor() でUIウィジェットを自動描画する。
+    新モデル追加時にUIコード変更は不要。
+    \"\"\"
     selected = state.get("selected_models", [])
     if not selected:
         return
 
+    # モデルclass辞書を構築
     model_classes = {}
     for m in available_models:
         if m["key"] in selected and "class" in m:
@@ -901,33 +993,54 @@ def _render_model_auto_params(state: dict, available_models: list) -> None:
         return
 
     ui.separator()
-    with ui.expansion(f"⚙️ 選択モデルのパラメータ設定 ({len(model_classes)}モデル)", icon="tune").classes("full-width q-mt-md"):
-        ui.label("各モデルの引数を自動検出して表示しています。デフォルト値のまま変更しなければ標準設定で実行されます。").classes("text-caption text-grey-6 q-mb-md")
+    with ui.expansion(
+        f"⚙️ 選択モデルのパラメータ設定 ({len(model_classes)}モデル)",
+        icon="tune",
+    ).classes("full-width q-mt-md"):
+        ui.label(
+            "各モデルの引数を自動検出して表示しています。"
+            "デフォルト値のまま変更しなければ標準設定で実行されます。"
+        ).classes("text-caption text-grey-6 q-mb-md")
 
         if "model_params" not in state:
             state["model_params"] = {}
 
         for model_key, (model_name, model_cls) in model_classes.items():
-            with ui.expansion(f"🔹 {model_name} ({model_cls.__name__})", icon="settings").classes("full-width q-mb-xs"):
+            with ui.expansion(
+                f"🔹 {model_name} ({model_cls.__name__})",
+                icon="settings",
+            ).classes("full-width q-mb-xs"):
                 try:
                     from frontend_nicegui.components.auto_params_ui import render_param_editor
                     from backend.ui.param_schema import introspect_params
                     specs = introspect_params(model_cls)
                     if specs:
                         existing = state["model_params"].get(model_key, {})
-                        values = render_param_editor(specs, title=model_name, values=existing)
+                        values = render_param_editor(
+                            specs,
+                            title=model_name,
+                            values=existing,
+                        )
                         state["model_params"][model_key] = values
                     else:
                         ui.label("ℹ️ パラメータなし").classes("text-grey-6")
                 except Exception as ex:
                     ui.label(f"⚠️ パラメータ取得エラー: {ex}").classes("text-amber")
 
+
 def _render_adapter_auto_params(state: dict) -> None:
-    """各SMILES記述子エンジンのパラメータ自動UIを生成する。"""
+    \"\"\"
+    各SMILES記述子エンジンのパラメータ自動UIを生成する。
+    introspect_params() でアダプタクラスの __init__ パラメータを自動検出。
+    パラメータがある場合のみUIを表示する。
+    \"\"\"
     if "adapter_params" not in state:
         state["adapter_params"] = {}
 
-    ui.label("各エンジンの引数を自動検出して表示しています。変更しなければデフォルト設定で計算されます。").classes("text-caption text-grey-6 q-mb-md")
+    ui.label(
+        "各エンジンの引数を自動検出して表示しています。"
+        "変更しなければデフォルト設定で計算されます。"
+    ).classes("text-caption text-grey-6 q-mb-md")
 
     for ename, emod, ecls, ekwargs in _ALL_ENGINES:
         try:
@@ -938,32 +1051,42 @@ def _render_adapter_auto_params(state: dict) -> None:
             specs = introspect_params(adapter_cls)
 
             if not specs:
-                continue
+                continue  # パラメータなしのエンジンはスキップ
 
-            with ui.expansion(f"🔹 {ename} ({len(specs)}パラメータ)", icon="settings").classes("full-width q-mb-xs"):
+            with ui.expansion(
+                f"🔹 {ename} ({len(specs)}パラメータ)",
+                icon="settings",
+            ).classes("full-width q-mb-xs"):
                 try:
                     from frontend_nicegui.components.auto_params_ui import render_param_editor
                     existing = state["adapter_params"].get(ename, {})
-                    values = render_param_editor(specs, title=ename, values=existing, compact=True)
+                    values = render_param_editor(
+                        specs,
+                        title=ename,
+                        values=existing,
+                        compact=True,
+                    )
                     state["adapter_params"][ename] = values
                 except Exception as ex:
                     ui.label(f"⚠️ {ex}").classes("text-amber")
 
         except Exception:
-            pass
+            pass  # インポート不可のエンジンはスキップ
 
-# =================================================================
+
+# ========================================================================
 # ユーティリティ関数
-# =================================================================
+# ========================================================================
 def _auto_detect_columns(state: dict) -> None:
-    """目的変数・SMILES列を自動検出してstateに設定"""
+    \"\"\"目的変数・SMILES列を自動検出してstateに設定\"\"\"
     df = state["df"]
     if df is None:
         return
-    
+    # 目的変数: 最後の列
     state["target_col"] = df.columns[-1]
+
+    # SMILES列: "smiles" という名前の列を探す
     state["smiles_col"] = ""
-    
     try:
         from backend.data.type_detector import TypeDetector
         detector = TypeDetector()
@@ -981,43 +1104,50 @@ def _auto_detect_columns(state: dict) -> None:
                 state["smiles_col"] = col
                 break
 
+    # タスク自動判定
     target = state["target_col"]
     if pd.api.types.is_float_dtype(df[target]):
         state["task_type"] = "regression"
     else:
         state["task_type"] = "classification"
 
+    # スマートデフォルト適用
     smart_fn = state.get("_apply_smart_defaults")
     if callable(smart_fn):
         try:
             smart_fn()
         except Exception:
             pass
-        
+
+    # ------ Item 13: 特徴量の分類と統計量計算 (単調性制約用) ------
     try:
         from frontend_nicegui.utils.feature_classifier import FeatureClassifier
         from backend.models.monotonic_constraints import ConstraintRangeCalculator
         from backend.chem.feature_metadata import feature_metadata
-        
+
         known_sources = feature_metadata.export_for_frontend()
         feature_cols = [c for c in df.columns if c not in {state["target_col"], state["smiles_col"]}]
-        
+
+        # 統計量の計算
         state["feature_stats"] = ConstraintRangeCalculator.compute_feature_stats(df, feature_cols)
-        
+
+        # クラス分類
         state["feature_classification"] = {}
         for feat in feature_cols:
             state["feature_classification"][feat] = FeatureClassifier.classify_feature(feat, known_sources)
-        
+
+        # UI設定のリセット（安全のため）
         if "monotonicity_constraints" in state:
             state["monotonicity_constraints"]["_by_feature"].clear()
             state["monotonicity_constraints"]["_by_set"].clear()
-            
+
     except Exception as e:
         logger.warning(f"特徴量メタデータの登録に失敗しました: {e}")
 
+    # ------ Item 15: EDA(次元削減)のキャッシュをクリア ------
     state.pop("dim_red_results", None)
     if "data" in getattr(state, "__dict__", {}):
-        pass
+        pass  # Handle case where state has .data dictionary. If not, just use state dict
     try:
         if hasattr(state, "data"):
             state.data.pop("dim_red_results", None)
@@ -1027,12 +1157,16 @@ def _auto_detect_columns(state: dict) -> None:
     except Exception:
         pass
 
+
 def _show_preview(df: pd.DataFrame, container) -> None:
-    """DataFrameのプレビューをテーブルとして表示"""
+    \"\"\"DataFrameのプレビューをテーブルとして表示\"\"\"
     container.clear()
     with container:
         preview = df.head(8)
-        columns = [{"name": col, "label": col, "field": col, "align": "left", "sortable": True} for col in preview.columns]
+        columns = [
+            {"name": col, "label": col, "field": col, "align": "left", "sortable": True}
+            for col in preview.columns
+        ]
         rows = []
         for _, row in preview.iterrows():
             row_dict = {}
@@ -1047,8 +1181,9 @@ def _show_preview(df: pd.DataFrame, container) -> None:
             rows.append(row_dict)
         ui.table(columns=columns, rows=rows).classes("full-width").props("dense flat bordered")
 
+
 def _update_metrics(state: dict, container) -> None:
-    """メトリクスカードの更新"""
+    \"\"\"メトリクスカードの更新\"\"\"
     container.clear()
     df = state.get("df")
     if df is None:
