@@ -1,7 +1,6 @@
 """
 backend/api/main.py
 ChemAI Nexus FastAPI Backend - Production Ready Implementation
-完全な型安全性・エラーハンドリング・セッション管理・ロギングを実装
 """
 from __future__ import annotations
 
@@ -21,8 +20,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, field_validator, ConfigDict, ValidationError
-
-from backend.pipeline.executor import run_automl_pipeline
 
 # ── 構造化ロギング設定 ─────────────────────────────────
 def setup_logging():
@@ -122,7 +119,7 @@ class AnalysisResult(BaseModel):
     best_model: Optional[str] = None
     score: Optional[float] = Field(None, ge=0.0, le=1.0)
     cv_scores: Optional[List[float]] = None
-    feature_importances: Optional[List[Dict[str, Any]]] = None
+    feature_importances: Optional[List[Dict[str, Any]]] = None # Changed to Any to support {"name": ..., "value": ...}
     message: str
     
     @field_validator("cv_scores")
@@ -188,7 +185,7 @@ class InMemorySessionBackend(SessionBackend):
             self.delete(sid)
         return len(expired)
 
-# Global backend instance for memory implementation
+# Global backend instance
 _GLOBAL_BACKEND = InMemorySessionBackend()
 
 # ── 依存性注入 ─────────────────────────────────
@@ -586,12 +583,12 @@ async def update_pipeline_config(
 @app.post("/api/pipeline/run", response_model=AnalysisResult, tags=["pipeline"])
 async def run_pipeline(
     cfg: PipelineConfig,
+    background_tasks: BackgroundTasks,
     session_id: str = Query(...),
     backend: SessionBackend = Depends(get_session_backend),
-    background_tasks: BackgroundTasks = None,
     request_id: str = Depends(get_request_id)
 ):
-    """Execute ML pipeline using AutoMLEngine"""
+    """Execute ML pipeline using AutoMLEngine in background"""
     session = backend.get(session_id)
     if not session or session["df"] is None:
         raise HTTPException(status_code=404, detail="No data loaded")
@@ -600,28 +597,42 @@ async def run_pipeline(
     target_col = session["target_col"]
     task_type = session["task_type"]
     
-    logger.info(f"Pipeline run: session={session_id}, target={target_col}, task={task_type} [req:{request_id}]")
+    logger.info(f"Pipeline run initiated: session={session_id}, target={target_col} [req:{request_id}]")
     
-    try:
-        # Execute the real AutoML pipeline
-        result_dict = await run_automl_pipeline(
-            df, 
-            target_col, 
-            task_type, 
-            cfg.model_dump()
-        )
-        
-        result = AnalysisResult(**result_dict)
-        
-        session["automl_result"] = result.model_dump()
-        session["last_accessed"] = datetime.now().isoformat()
-        backend.set(session_id, session)
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Pipeline failed: {e}", exc_info=True, extra={"request_id": request_id})
-        return AnalysisResult(status="failed", message=f"Pipeline execution error: {str(e)}")
+    # Initialize result as running
+    running_result = AnalysisResult(
+        status="running",
+        message="Analysis started in background"
+    )
+    session["automl_result"] = running_result.model_dump()
+    backend.set(session_id, session)
+
+    # Define background task logic
+    async def task_wrapper():
+        try:
+            from backend.pipeline.executor import run_automl_pipeline
+            result_dict = await run_automl_pipeline(
+                df, target_col, task_type, cfg.model_dump()
+            )
+            # Fetch latest session to avoid overwriting other potential updates
+            latest_session = backend.get(session_id)
+            if latest_session:
+                latest_session["automl_result"] = result_dict
+                latest_session["last_accessed"] = datetime.now().isoformat()
+                backend.set(session_id, latest_session)
+                logger.info(f"Pipeline completed: session={session_id} [req:{request_id}]")
+        except Exception as e:
+            logger.error(f"Background pipeline failed: {e}", exc_info=True)
+            latest_session = backend.get(session_id)
+            if latest_session:
+                latest_session["automl_result"] = {
+                    "status": "failed",
+                    "message": f"Execution error: {str(e)}"
+                }
+                backend.set(session_id, latest_session)
+
+    background_tasks.add_task(task_wrapper)
+    return running_result
 
 @app.get("/api/results", response_model=AnalysisResult, tags=["results"])
 async def get_results(
