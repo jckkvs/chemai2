@@ -1,6 +1,6 @@
 // frontend/src/store/chemai.ts
 import { defineStore } from 'pinia'
-import { initSession, uploadData, updateColumns, runPipeline, getResults } from '../api/client'
+import { initSession, uploadData, updateColumns, runPipeline, getResults, getPipelineConfig, updatePipelineConfig } from '../api/client'
 
 export const useChemaiStore = defineStore('chemai', {
   state: () => ({
@@ -82,6 +82,24 @@ export const useChemaiStore = defineStore('chemai', {
         this.error = e.response?.data?.detail || 'Analysis failed'
         this.isLoading = false
         return null
+      }
+    },
+
+    async fetchPipelineConfig() {
+      try {
+        const res = await getPipelineConfig();
+        this.pipelineConfig = res
+      } catch (e: any) {
+        console.error('Failed to fetch pipeline config', e)
+      }
+    },
+
+    async updatePipelineConfig(cfg: any) {
+      try {
+        await updatePipelineConfig(cfg)
+        this.pipelineConfig = cfg
+      } catch (e: any) {
+        this.error = e.response?.data?.detail || 'Pipeline config update failed'
       }
     }
   }

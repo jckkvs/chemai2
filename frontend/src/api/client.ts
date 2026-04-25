@@ -65,3 +65,13 @@ export async function getResults() {
   const res = await api.get('/results')
   return res.data
 }
+
+export async function getPipelineConfig() {
+  const res = await api.get('/pipeline/config')
+  return res.data
+}
+
+export async function updatePipelineConfig(config: any) {
+  const res = await api.post('/pipeline/config', config)
+  return res.data
+}
