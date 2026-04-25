@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Literal, AsyncGenerator
 from contextlib import asynccontextmanager
 
+import re
 import pandas as pd
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body, Query, Depends, Request, status, BackgroundTasks
@@ -20,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, field_validator, ConfigDict, ValidationError
+from sklearn.impute import SimpleImputer
 
 # ── 構造化ロギング設定 ─────────────────────────────────
 def setup_logging():
@@ -280,13 +282,22 @@ def parse_dataframe(content: bytes, filename: str) -> pd.DataFrame:
         else:
             raise ValueError("Unsupported format")
         
+        # --- データクリーニング (自動除外ロジック) ---
+        # 解析対象外となる列名を正規表現やリストで除外
+        drop_patterns = ["sample_id", "category", "^id$", "index", "unnamed"]
+        cols_to_drop = []
+        for col in df.columns:
+            col_lower = col.lower().strip()
+            if any(re.match(p, col_lower) for p in drop_patterns):
+                cols_to_drop.append(col)
+        
+        if cols_to_drop:
+            logger.info(f"Dropping columns: {cols_to_drop}")
+            df = df.drop(columns=cols_to_drop, errors='ignore')
+        
         # 数値列の精度保証
         for col in df.select_dtypes(include=["float16", "float32", "int8", "int16", "int32", "int64"]).columns:
             df[col] = df[col].astype("float64")
-        
-        # 不要列の自動除外（解析対象外）
-        exclude_cols = ["Sample_ID", "Category", "sample_id", "category", "id", "ID"]
-        df = df.drop(columns=[c for c in exclude_cols if c in df.columns], errors="ignore")
         
         return df
     except pd.errors.EmptyDataError:
@@ -580,12 +591,13 @@ async def update_pipeline_config(
 @app.post("/api/pipeline/run", response_model=AnalysisResult, tags=["pipeline"])
 async def run_pipeline(
     cfg: PipelineConfig,
-    background_tasks: BackgroundTasks,
     session_id: str = Query(...),
     backend: SessionBackend = Depends(get_session_backend),
     request_id: str = Depends(get_request_id)
 ):
-    """Execute ML pipeline using AutoMLEngine in background"""
+    """
+    実際の ML パイプラインを実行する関数 (Scikit-learn 統合)
+    """
     session = backend.get(session_id)
     if not session or session["df"] is None:
         raise HTTPException(status_code=404, detail="No data loaded")
@@ -594,41 +606,93 @@ async def run_pipeline(
     target_col = session["target_col"]
     task_type = session["task_type"]
     
-    logger.info(f"Pipeline run initiated: session={session_id}, target={target_col} [req:{request_id}]")
+    # 目的変数と説明変数に分割
+    # 除外列の削除 (Sample_ID, Category などが含まれている場合を想定)
+    exclude_cols = [target_col, "Sample_ID", "Category", "id", "ID"]
+    feature_cols = [c for c in df.columns if c not in exclude_cols]
     
-    # Initialize result as running
-    running_result = AnalysisResult(
-        status="running",
-        message="Analysis started in background"
-    )
-    session["automl_result"] = running_result.model_dump()
-    backend.set(session_id, session)
-
-    # Define background task logic
-    async def task_wrapper():
-        try:
-            from backend.pipeline.executor import run_automl_pipeline
-            result_dict = await run_automl_pipeline(
-                df, target_col, task_type, cfg.model_dump()
-            )
-            latest_session = backend.get(session_id)
-            if latest_session:
-                latest_session["automl_result"] = result_dict
-                latest_session["last_accessed"] = datetime.now().isoformat()
-                backend.set(session_id, latest_session)
-                logger.info(f"Pipeline completed: session={session_id} [req:{request_id}]")
-        except Exception as e:
-            logger.error(f"Background pipeline failed: {e}", exc_info=True)
-            latest_session = backend.get(session_id)
-            if latest_session:
-                latest_session["automl_result"] = {
-                    "status": "failed",
-                    "message": f"Execution error: {str(e)}"
-                }
-                backend.set(session_id, latest_session)
-
-    background_tasks.add_task(task_wrapper)
-    return running_result
+    if not feature_cols:
+        return AnalysisResult(status="failed", message="有効な特徴量が 0 です")
+        
+    X = df[feature_cols]
+    y = df[target_col]
+    
+    # 欠損値の補完 (SimpleImputer)
+    imputer = SimpleImputer(strategy='median')
+    X_imputed = imputer.fit_transform(X)
+    
+    # 前処理: スケーリング
+    if cfg.num_scaler == "standard":
+        from sklearn.preprocessing import StandardScaler
+        scaler = StandardScaler()
+        X_processed = scaler.fit_transform(X_imputed)
+    elif cfg.num_scaler == "minmax":
+        from sklearn.preprocessing import MinMaxScaler
+        scaler = MinMaxScaler()
+        X_processed = scaler.fit_transform(X_imputed)
+    else:
+        X_processed = X_imputed
+        
+    # モデル選択と学習
+    model = None
+    score = 0.0
+    cv_scores = []
+    importances = []
+    
+    logger.info(f"Training model: {cfg.selected_models or ['default']} [req:{request_id}]")
+    
+    try:
+        if task_type == "regression":
+            from sklearn.ensemble import RandomForestRegressor
+            from sklearn.model_selection import cross_val_score
+            
+            model = RandomForestRegressor(n_estimators=100, random_state=42)
+            model.fit(X_processed, y)
+            
+            cv_scores = cross_val_score(model, X_processed, y, cv=min(5, len(df)), scoring="r2")
+            score = float(cv_scores.mean())
+            
+            importances = [
+                {"name": name, "value": float(val)}
+                for name, val in zip(feature_cols, model.feature_importances_)
+            ]
+            
+        else: # Classification
+            from sklearn.ensemble import RandomForestClassifier
+            from sklearn.model_selection import cross_val_score
+            
+            model = RandomForestClassifier(n_estimators=100, random_state=42)
+            model.fit(X_processed, y)
+            
+            cv_scores = cross_val_score(model, X_processed, y, cv=min(5, len(df)), scoring="accuracy")
+            score = float(cv_scores.mean())
+            
+            importances = [
+                {"name": name, "value": float(val)}
+                for name, val in zip(feature_cols, model.feature_importances_)
+            ]
+        
+        # 重要度でソート
+        importances.sort(key=lambda x: x["value"], reverse=True)
+        
+        result = AnalysisResult(
+            status="completed",
+            best_model="RandomForest",
+            score=round(score, 4),
+            cv_scores=[round(s, 4) for s in cv_scores.tolist() if isinstance(cv_scores, np.ndarray)] if isinstance(cv_scores, np.ndarray) else [round(s, 4) for s in cv_scores],
+            feature_importances=importances[:10],
+            message=f"完了: {task_type} | CV Score: {score:.4f}"
+        )
+        
+        session["automl_result"] = result.model_dump()
+        session["last_accessed"] = datetime.now().isoformat()
+        backend.set(session_id, session)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}", exc_info=True)
+        return AnalysisResult(status="failed", message=f"Pipeline execution error: {str(e)}")
 
 @app.get("/api/results", response_model=AnalysisResult, tags=["results"])
 async def get_results(
