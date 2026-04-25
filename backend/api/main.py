@@ -140,13 +140,20 @@ async def upload_data(session_id: Optional[str] = Query(None), file: UploadFile 
     try:
         contents = await file.read()
         
-        # Parse based on extension
+        # Parse based on extension with high precision and NA handling
         if file.filename.endswith('.csv'):
-            df = pd.read_csv(io.BytesIO(contents), float_precision='high')
+            df = pd.read_csv(
+                io.BytesIO(contents), 
+                float_precision='high',
+                na_values=['', ' ', 'None', 'nan', 'NaN']
+            )
         elif file.filename.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(io.BytesIO(contents))
         else:
             raise HTTPException(status_code=400, detail="Unsupported file format. Use CSV or Excel.")
+        
+        if df.empty:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
         
         # Precision guarantee: cast all numeric columns to float64
         for col in df.select_dtypes(include=['float16', 'float32', 'int8', 'int16', 'int32', 'int64']).columns:
