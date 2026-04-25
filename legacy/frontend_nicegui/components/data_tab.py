@@ -4,8 +4,10 @@ frontend_nicegui/components/data_tab.py
 全機能をサブタブで構造化。Progressive Disclosure で初心者/上級者を両立。
 """
 from __future__ import annotations
+
 import io
 import asyncio
+import inspect
 import importlib
 import logging
 from typing import Any
@@ -13,7 +15,6 @@ import numpy as np
 import pandas as pd
 from nicegui import ui
 
-# ローカルインポート（循環参照回避のため関数内で import するものも含む）
 from frontend_nicegui.components.feature_comparison_dashboard import render_feature_comparison_dashboard
 from frontend_nicegui.components.debug_samples_selector import create_debug_samples_selector
 
@@ -184,104 +185,159 @@ def _render_data_load(state: dict) -> None:
         _show_preview(df_existing, preview_container)
 
     async def handle_upload(e):
-        """ファイルアップロードハンドラ - NiceGUI 3.x 完全対応版"""
+        """ファイルアップロードハンドラ - 最大互換性版"""
         try:
             logger.info(f"=== ファイルアップロード開始 ===")
             logger.info(f"Event type: {type(e)}")
-            logger.info(f"Event attributes: {dir(e)}")
-
-            # === NiceGUI 3.x 標準 API: e.content (bytes), e.name (str) ===
-            # 複雑な hasattr チェーンは廃止し、標準仕様に準拠
-            content = e.content
-            filename = e.name
-
-            logger.info(f"ファイル名: {filename}, コンテンツ型: {type(content)}, サイズ: {len(content) if content else 0} bytes")
-
-            # === ファイル形式の判定と読み込み ===
+            logger.info(f"Event attrs: {[a for a in dir(e) if not a.startswith('_')]}")
+            
+            # === 1. ファイルコンテンツの取得（最大互換性アプローチ）===
+            content = None
+            
+            # Pattern A: e.content (NiceGUI 3.x 標準)
+            if hasattr(e, 'content'):
+                try:
+                    c = e.content
+                    if isinstance(c, bytes):
+                        content = c
+                        logger.info("✓ e.content (bytes) を使用")
+                    elif hasattr(c, 'read') and callable(getattr(c, 'read', None)):
+                        content = c.read()
+                        logger.info("✓ e.content.read() を使用")
+                    else:
+                        content = c
+                        logger.info("✓ e.content (fallback) を使用")
+                except Exception as ce:
+                    logger.warning(f"e.content access failed: {ce}")
+            
+            # Pattern B: e.file (代替パターン)
+            if content is None and hasattr(e, 'file'):
+                try:
+                    f = e.file
+                    if isinstance(f, bytes):
+                        content = f
+                        logger.info("✓ e.file (bytes) を使用")
+                    elif hasattr(f, 'read') and callable(getattr(f, 'read', None)):
+                        content = f.read()
+                        logger.info("✓ e.file.read() を使用")
+                    else:
+                        content = f
+                        logger.info("✓ e.file (fallback) を使用")
+                except Exception as fe:
+                    logger.warning(f"e.file access failed: {fe}")
+            
+            # Pattern C: e 自体が bytes（稀なケース）
+            if content is None and isinstance(e, bytes):
+                content = e
+                logger.info("✓ Event 自体が bytes")
+            
+            # 全て失敗した場合
+            if content is None:
+                logger.error(f"✗ 全ての取得パターンで失敗. Event: {type(e)}")
+                ui.notify('✗ 対応していないファイル形式です', type='negative')
+                return
+            
+            logger.info(f"コンテンツ型: {type(content)}, サイズ: {len(content) if isinstance(content, (bytes, str)) else 'N/A'}")
+            
+            # === 2. ファイル名の取得 ===
+            filename = getattr(e, 'name', None)
+            if not filename and hasattr(e, 'filename'):
+                filename = e.filename
+            if not filename and hasattr(e, 'file') and hasattr(e.file, 'name'):
+                filename = e.file.name
+            if not filename:
+                filename = 'uploaded_file.csv'
+            logger.info(f"ファイル名: {filename}")
+            
+            # === 3. CSV/Excel の読み込み ===
             if filename.endswith('.csv'):
-                df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
+                if isinstance(content, bytes):
+                    df_loaded = pd.read_csv(io.BytesIO(content), float_precision='high')
+                else:
+                    df_loaded = pd.read_csv(io.StringIO(content), float_precision='high')
             elif filename.endswith(('.xlsx', '.xls')):
-                df_loaded = pd.read_excel(io.BytesIO(content))
+                if isinstance(content, bytes):
+                    df_loaded = pd.read_excel(io.BytesIO(content))
+                else:
+                    ui.notify('Excel ファイルは bytes 形式が必要です', type='warning')
+                    return
             else:
-                upload_status.text = "❌ CSV/Excelファイルのみ対応"
+                upload_status.text = "❌ CSV/Excel ファイルのみ対応"
                 ui.notify('サポートされていないファイル形式です', type='warning')
                 return
-
-            # === 数値列の精度保証: float64 に統一 ===
+            
+            # === 4. 数値列の精度保証 ===
             for col in df_loaded.select_dtypes(include=['float16', 'float32', 'int8', 'int16', 'int32', 'int64']).columns:
                 df_loaded[col] = df_loaded[col].astype('float64')
-
-            # === state への保存（アプリ内状態管理）===
+            
+            # === 5. state への保存 ===
             state["df"] = df_loaded
             state["filename"] = filename
             state["automl_result"] = None
             state["pipeline_result"] = None
             state["precalc_done"] = False
-
-            # === app.storage への保存（セッション永続化）===
-            # DataFrame はシリアライズ不可なため、CSV 文字列として保存
+            
+            # === 6. app.storage への保存（CSV 文字列として）===
             from nicegui import app
             try:
-                # CSV 文字列として保存（シリアライズ可能）
                 csv_buffer = io.StringIO()
                 df_loaded.to_csv(csv_buffer, index=False)
                 app.storage.user['current_df_csv'] = csv_buffer.getvalue()
                 app.storage.user['current_df_columns'] = list(df_loaded.columns)
                 app.storage.user['current_df_shape'] = df_loaded.shape
             except Exception as storage_err:
-                logger.warning(f"app.storage への保存に失敗: {storage_err}")
-                # 保存失敗しても処理は継続（state には保存済み）
-
+                logger.warning(f"app.storage 保存警告: {storage_err}")
+            
             app.storage.user['data_loaded'] = True
             app.storage.user['data_filename'] = filename
             app.storage.user['data_timestamp'] = pd.Timestamp.now().isoformat()
-
-            logger.info(f"✅ DataFrame読み込み完了: {df_loaded.shape[0]}行 × {df_loaded.shape[1]}列")
-            logger.info(f"app.storage.user['data_loaded'] = {app.storage.user.get('data_loaded')}")
-
-            # === UI 更新 ===
-            upload_status.text = f"✅ {filename} 読み込み完了 ({len(df_loaded)}行 × {len(df_loaded.columns)}列)"
+            
+            logger.info(f"✅ DataFrame 読み込み完了: {df_loaded.shape}")
+            
+            # === 7. UI 更新 ===
+            upload_status.text = f"✅ {filename} 読み込み完了 ({df_loaded.shape[0]}行 × {df_loaded.shape[1]}列)"
             upload_status.classes(remove="text-red", add="text-green")
             _show_preview(df_loaded, preview_container)
             _update_metrics(state, metrics_row)
-
-            # === 列の自動検出 ===
             _auto_detect_columns(state)
-
-            # === 他コンポーネントの再描画 ===
+            
+            # === 8. 他コンポーネントの再描画 ===
             refresh = state.get("_refresh_tabs")
             if refresh:
                 try:
                     refresh()
                 except Exception as refresh_err:
                     logger.warning(f"タブ再描画エラー: {refresh_err}")
-
-            # === LLM 解析タスクの発火（オプション機能）===
+            
+            # === 9. LLM 解析タスク（オプション）===
             try:
                 from frontend_nicegui.main import render_llm_analysis_report
                 asyncio.create_task(render_llm_analysis_report(df_loaded, metadata={"source": "upload", "filename": filename}))
             except ImportError:
-                pass  # LLM 機能未実装時はスキップ
-
+                pass
+            
             ui.notify(f'✅ {filename} を読み込みました ({df_loaded.shape[0]}行)', type='positive')
-
+            
         except AttributeError as ae:
-            logger.error(f"NiceGUI event attribute error: {ae}", exc_info=True)
-            upload_status.text = f"❌ エラー: ファイル属性の取得に失敗しました"
+            logger.error(f"AttributeError: {ae}", exc_info=True)
+            upload_status.text = f"❌ 属性エラー: {str(ae)}"
             upload_status.classes(remove="text-green", add="text-red")
-            ui.notify(f'ファイル読み取りエラー: {str(ae)}', type='negative')
-
+            ui.notify(f'✗ {str(ae)}', type='negative')
+            return
+            
         except pd.errors.EmptyDataError:
             logger.error("Empty CSV file")
-            upload_status.text = "❌ エラー: ファイルが空です"
+            upload_status.text = "❌ ファイルが空です"
             upload_status.classes(remove="text-green", add="text-red")
-            ui.notify('ファイルが空です', type='negative')
-
+            ui.notify('✗ ファイルが空です', type='negative')
+            return
+            
         except Exception as ex:
             logger.error(f"❌ 予期せぬエラー: {ex}", exc_info=True)
-            upload_status.text = f"❌ エラー: {type(ex).__name__}: {str(ex)}"
+            upload_status.text = f"❌ {type(ex).__name__}: {str(ex)[:100]}"
             upload_status.classes(remove="text-green", add="text-red")
-            ui.notify(f'エラー: {str(ex)}', type='negative')
+            ui.notify(f'✗ {str(ex)[:100]}', type='negative')
+            return
 
     ui.upload(
         on_upload=handle_upload,
@@ -296,7 +352,7 @@ def _render_data_load(state: dict) -> None:
     # ── サンプルデータ（統合セレクター） ──
     with ui.expansion("🧪 デバッグ用サンプルデータ", icon="science").classes("full-width q-mt-md").props("default-opened"):
         ui.label("開発・検証用のサンプルデータを選択してロードできます。").classes("text-caption text-grey-6 q-mb-md")
-
+        
         def handle_debug_data_loaded(df, task_type, target_col, filename):
             """デバッグセレクターからのデータ読み込みハンドラ"""
             state["df"] = df
@@ -307,7 +363,7 @@ def _render_data_load(state: dict) -> None:
             state["precalc_df"] = None
             state["_chem_adapters"] = None
             state["_applied_recommendation"] = None
-
+            
             # --- データ認識不具合対応: 状態更新と検証 ---
             try:
                 from frontend_nicegui.main import set_loaded_data
@@ -317,16 +373,16 @@ def _render_data_load(state: dict) -> None:
 
             # 内部の自動判定ロジックを呼ぶ
             _auto_detect_columns(state)
-
+            
             # セレクターで定義された情報を優先適用
             state["task_type"] = task_type
             state["target_col"] = target_col
-
+            
             # UI更新
             upload_status.text = f"✅ {filename} 読み込み完了 ({len(df)}行)"
             _show_preview(df, preview_container)
             _update_metrics(state, metrics_row)
-
+            
             refresh = state.get("_refresh_tabs")
             if refresh:
                 refresh()
@@ -363,7 +419,7 @@ def _render_data_load(state: dict) -> None:
                         state["precalc_df"] = None
                         state["_chem_adapters"] = None
                         state["_applied_recommendation"] = None
-
+                        
                         # --- データ認識不具合対応: 状態更新と検証 ---
                         try:
                             from frontend_nicegui.main import set_loaded_data
@@ -874,7 +930,7 @@ def _render_pipeline(state: dict) -> None:
 
 
 def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str) -> None:
-    \"\"\"説明変数ごとの単調制約UI — ダイアログベース。\"\"\"
+    """説明変数ごとの単調制約UI — ダイアログベース。"""
     from frontend_nicegui.components.dialog_manager import (
         create_settings_dialog,
         render_settings_summary,
@@ -963,7 +1019,7 @@ def _render_monotonic_constraints(state: dict, df: pd.DataFrame, target_col: str
 
 
 def _toggle_model(state: dict, key: str, checked: bool) -> None:
-    \"\"\"モデルの選択/解除をstateに反映\"\"\"
+    """モデルの選択/解除をstateに反映"""
     selected = state.get("selected_models", [])
     if checked and key not in selected:
         selected.append(key)
@@ -973,12 +1029,12 @@ def _toggle_model(state: dict, key: str, checked: bool) -> None:
 
 
 def _render_model_auto_params(state: dict, available_models: list) -> None:
-    \"\"\"
+    """
     選択されたモデルごとにパラメータ自動UIを生成する。
     introspect_params() でクラスの __init__ パラメータを自動検出し、
     auto_params_ui.render_param_editor() でUIウィジェットを自動描画する。
     新モデル追加時にUIコード変更は不要。
-    \"\"\"
+    """
     selected = state.get("selected_models", [])
     if not selected:
         return
@@ -1029,11 +1085,11 @@ def _render_model_auto_params(state: dict, available_models: list) -> None:
 
 
 def _render_adapter_auto_params(state: dict) -> None:
-    \"\"\"
+    """
     各SMILES記述子エンジンのパラメータ自動UIを生成する。
     introspect_params() でアダプタクラスの __init__ パラメータを自動検出。
     パラメータがある場合のみUIを表示する。
-    \"\"\"
+    """
     if "adapter_params" not in state:
         state["adapter_params"] = {}
 
@@ -1078,7 +1134,7 @@ def _render_adapter_auto_params(state: dict) -> None:
 # ユーティリティ関数
 # ========================================================================
 def _auto_detect_columns(state: dict) -> None:
-    \"\"\"目的変数・SMILES列を自動検出してstateに設定\"\"\"
+    """目的変数・SMILES列を自動検出してstateに設定"""
     df = state["df"]
     if df is None:
         return
@@ -1118,36 +1174,36 @@ def _auto_detect_columns(state: dict) -> None:
             smart_fn()
         except Exception:
             pass
-
+        
     # ------ Item 13: 特徴量の分類と統計量計算 (単調性制約用) ------
     try:
         from frontend_nicegui.utils.feature_classifier import FeatureClassifier
         from backend.models.monotonic_constraints import ConstraintRangeCalculator
         from backend.chem.feature_metadata import feature_metadata
-
+        
         known_sources = feature_metadata.export_for_frontend()
         feature_cols = [c for c in df.columns if c not in {state["target_col"], state["smiles_col"]}]
-
+        
         # 統計量の計算
         state["feature_stats"] = ConstraintRangeCalculator.compute_feature_stats(df, feature_cols)
-
+        
         # クラス分類
         state["feature_classification"] = {}
         for feat in feature_cols:
             state["feature_classification"][feat] = FeatureClassifier.classify_feature(feat, known_sources)
-
+            
         # UI設定のリセット（安全のため）
         if "monotonicity_constraints" in state:
             state["monotonicity_constraints"]["_by_feature"].clear()
             state["monotonicity_constraints"]["_by_set"].clear()
-
+            
     except Exception as e:
         logger.warning(f"特徴量メタデータの登録に失敗しました: {e}")
 
     # ------ Item 15: EDA(次元削減)のキャッシュをクリア ------
     state.pop("dim_red_results", None)
     if "data" in getattr(state, "__dict__", {}):
-        pass  # Handle case where state has .data dictionary. If not, just use state dict
+        pass # Handle case where state has .data dictionary. If not, just use state dict
     try:
         if hasattr(state, "data"):
             state.data.pop("dim_red_results", None)
@@ -1159,7 +1215,7 @@ def _auto_detect_columns(state: dict) -> None:
 
 
 def _show_preview(df: pd.DataFrame, container) -> None:
-    \"\"\"DataFrameのプレビューをテーブルとして表示\"\"\"
+    """DataFrameのプレビューをテーブルとして表示"""
     container.clear()
     with container:
         preview = df.head(8)
@@ -1183,7 +1239,7 @@ def _show_preview(df: pd.DataFrame, container) -> None:
 
 
 def _update_metrics(state: dict, container) -> None:
-    \"\"\"メトリクスカードの更新\"\"\"
+    """メトリクスカードの更新"""
     container.clear()
     df = state.get("df")
     if df is None:

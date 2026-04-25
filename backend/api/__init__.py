@@ -1,2 +1,5 @@
 # backend/api/__init__.py
-# Empty init for package recognition
+"""FastAPI app registration"""
+from .main import app
+
+__all__ = ["app"]

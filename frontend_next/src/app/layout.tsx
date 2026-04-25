@@ -1,15 +1,11 @@
 // src/app/layout.tsx
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
-import './globals.css'
-const inter = Inter({ subsets: ['latin'] })
+import Providers from '@/components/Providers'
 
 export const metadata: Metadata = {
   title: 'ChemAI Nexus',
   description: 'ケモインフォマティクス機械学習プラットフォーム',
 }
-
-import Providers from '@/components/Providers'
 
 export default function RootLayout({
   children,
@@ -18,7 +14,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ja">
-      <body className={inter.className}>
+      <head>
+        <link rel="stylesheet" href="/globals.css" />
+      </head>
+      <body className="font-sans">
         <Providers>
           {children}
         </Providers>

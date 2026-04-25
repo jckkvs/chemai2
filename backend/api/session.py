@@ -7,6 +7,10 @@ from typing import Dict, Any, Optional
 # In-memory session store
 SESSIONS: Dict[str, Dict[str, Any]] = {}
 
+def get_all_sessions():
+    """Return all active sessions"""
+    return SESSIONS
+
 def get_session(session_id: str) -> Dict[str, Any]:
     """Retrieve or initialize a session by ID"""
     if session_id not in SESSIONS:
