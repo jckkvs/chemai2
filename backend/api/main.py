@@ -17,7 +17,7 @@ from backend.pipeline.executor import run_automl_pipeline
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="ChemAI Nexus API", version="2.0.0", docs_url="/api/docs")
+app = FastAPI(title="ChemAI Nexus API", version="2.0.0", docs_url="/docs")
 
 app.add_middleware(
     CORSMiddleware,
