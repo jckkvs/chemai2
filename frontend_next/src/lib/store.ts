@@ -1,107 +1,106 @@
-// src/lib/store.ts
-import { create } from 'zustand'
-import type { TaskType, PipelineConfig, AnalysisResult } from './types'
-
-interface ChemAIState {
-  // Session
-  sessionId: string | null
-  setSessionId: (id: string) => void
-  
-  // Data
-  filename: string | null
-  df: Record<string, any>[] | null
-  columns: string[]
-  targetCol: string | null
-  taskType: TaskType
-  metrics: {
-    rows: number
-    cols: number
-    missing_rate: number
-    numeric_cols: number
-  } | null
-  
-  // Pipeline
-  pipelineConfig: PipelineConfig
-  analysisResult: AnalysisResult | null
-  isLoading: boolean
-  error: string | null
-  
-  // Actions
-  setLoadedData: (data: {
-    filename: string
-    df: Record<string, any>[]
-    columns: string[]
-    targetCol: string
-    taskType: TaskType
-    metrics: { rows: number; cols: number; missing_rate: number; numeric_cols: number }
-  }) => void
-  updatePipelineConfig: (config: Partial<PipelineConfig>) => void
-  setAnalysisResult: (result: AnalysisResult) => void
-  setLoading: (loading: boolean) => void
-  setError: (error: string | null) => void
-  clearData: () => void
-}
+// frontend_next/src/lib/store.ts
+import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import type { ChemAIState, PipelineConfig, AnalysisResult, EDAResults, DataColumn } from './types';
 
 const defaultPipelineConfig: PipelineConfig = {
+  cv_strategy: 'kfold',
   cv_folds: 5,
-  num_scaler: 'standard',
-  num_imputer: 'median',
-  cat_encoder: 'onehot',
-  feature_selector: 'none',
-  selected_models: [],
-  monotonic_constraints: {},
-  do_polynomial: false,
-  poly_degree: 2,
+  preprocessing: {
+    num_scaler: 'standard',
+    num_imputer: 'median',
+    num_transform: 'none',
+    cat_encoder: 'onehot',
+    cat_imputer: 'most_frequent',
+  },
+  feature_generation: {
+    do_polynomial: false,
+    poly_degree: 2,
+    poly_interaction_only: true,
+  },
+  feature_selection: {
+    feature_selector: 'none',
+    n_features_to_select: 20,
+  },
+  estimator: 'RandomForestRegressor',
+  estimator_params: {},
+  monotonic_constraints: [],
   do_eda: true,
   do_prep: true,
   do_eval: true,
-}
+  do_pca: true,
+  do_shap: true,
+};
 
-export const useChemAIStore = create<ChemAIState>((set) => ({
-  // Initial state
-  sessionId: null,
-  filename: null,
-  df: null,
-  columns: [],
-  targetCol: null,
-  taskType: 'regression',
-  metrics: null,
-  pipelineConfig: defaultPipelineConfig,
-  analysisResult: null,
-  isLoading: false,
-  error: null,
-  
-  // Actions
-  setSessionId: (id) => set({ sessionId: id }),
-  
-  setLoadedData: (data) => set({
-    filename: data.filename,
-    df: data.df,
-    columns: data.columns,
-    targetCol: data.targetCol,
-    taskType: data.taskType,
-    metrics: data.metrics,
-    error: null,
-  }),
-  
-  updatePipelineConfig: (config) => set((state) => ({
-    pipelineConfig: { ...state.pipelineConfig, ...config },
-  })),
-  
-  setAnalysisResult: (result) => set({ analysisResult: result }),
-  
-  setLoading: (loading) => set({ isLoading: loading }),
-  
-  setError: (error) => set({ error }),
-  
-  clearData: () => set({
-    filename: null,
-    df: null,
-    columns: [],
-    targetCol: null,
-    taskType: 'regression',
-    metrics: null,
-    analysisResult: null,
-    error: null,
-  }),
-}))
+export const useChemAIStore = create<ChemAIState>()(
+  persist(
+    (set, get) => ({
+      // Initial state
+      sessionId: null,
+      filename: null,
+      columns: [],
+      targetCol: null,
+      taskType: 'regression',
+      preview: [],
+      metrics: null,
+      pipelineConfig: defaultPipelineConfig,
+      availableEstimators: [],
+      availableFeatureEngines: [],
+      analysisResult: null,
+      edaResults: null,
+      isLoading: false,
+      error: null,
+      activeTab: 'data',
+      
+      // Actions
+      setSessionId: (sessionId) => set({ sessionId }),
+      
+      setLoadedData: ({ filename, columns, targetCol, taskType, preview, metrics }) => 
+        set({
+          filename,
+          columns,
+          targetCol,
+          taskType,
+          preview,
+          metrics,
+          error: null,
+        }),
+      
+      updatePipelineConfig: (updates) => 
+        set((state) => ({
+          pipelineConfig: { ...state.pipelineConfig, ...updates },
+        })),
+      
+      setAnalysisResult: (result) => set({ analysisResult: result }),
+      
+      setEDAResults: (results) => set({ edaResults: results }),
+      
+      setLoading: (isLoading) => set({ isLoading }),
+      
+      setError: (error) => set({ error }),
+      
+      setActiveTab: (activeTab) => set({ activeTab }),
+      
+      clearData: () => set({
+        filename: null,
+        columns: [],
+        targetCol: null,
+        preview: [],
+        metrics: null,
+        analysisResult: null,
+        edaResults: null,
+        error: null,
+      }),
+    }),
+    {
+      name: 'chemai-storage',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        // Only persist essential state, not large data
+        sessionId: state.sessionId,
+        pipelineConfig: state.pipelineConfig,
+        activeTab: state.activeTab,
+      }),
+    }
+  )
+);

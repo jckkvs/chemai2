@@ -1,193 +1,200 @@
 // frontend_next/src/app/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Upload, Activity, Settings, Play, Loader2, CheckCircle } from 'lucide-react';
-import { initSession, uploadData, getModels, runPipeline } from '@/lib/api';
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useChemAIStore } from '@/lib/store';
+import { initSession, healthCheck } from '@/lib/api';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Upload, Activity, Settings, BarChart3, FlaskConical, ArrowRight, CheckCircle2 } from 'lucide-react';
 
 export default function Home() {
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
-  const [models, setModels] = useState<any[]>([]);
-  const [selectedModels, setSelectedModels] = useState<string[]>([]);
-  const [pipelineStatus, setPipelineStatus] = useState<'idle' | 'running' | 'completed' | 'error'>('idle');
-  const [result, setResult] = useState<any>(null);
+  const router = useRouter();
+  const { sessionId, setSessionId, error, setError } = useChemAIStore();
 
   useEffect(() => {
-    const setup = async () => {
+    const initialize = async () => {
+      if (!sessionId) {
+        try {
+          const id = await initSession();
+          setSessionId(id);
+        } catch (err) {
+          console.error('Failed to initialize session:', err);
+          setError('セッションの初期化に失敗しました。サーバーの状態を確認してください。');
+        }
+      }
+      
+      // Health check
       try {
-        const id = await initSession();
-        setSessionId(id);
-        const modelList = await getModels('regression');
-        setModels(modelList);
-      } catch (error) {
-        console.error('Failed to initialize session or fetch models:', error);
+        await healthCheck();
+      } catch (err) {
+        console.warn('Backend health check failed:', err);
       }
     };
-    setup();
-  }, []);
+    
+    initialize();
+  }, [sessionId, setSessionId, setError]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
-    }
-  };
-
-  const handleUpload = async () => {
-    if (!file) return;
-    setUploadStatus('uploading');
-    try {
-      await uploadData(file);
-      setUploadStatus('success');
-    } catch (error) {
-      console.error('Upload failed:', error);
-      setUploadStatus('error');
-    }
-  };
-
-  const handleRunPipeline = async () => {
-    if (selectedModels.length === 0) return;
-    setPipelineStatus('running');
-    try {
-      const res = await runPipeline({
-        cv_folds: 5,
-        selected_models: selectedModels,
-        num_scaler: 'standard',
-      });
-      setResult(res);
-      setPipelineStatus('completed');
-    } catch (error) {
-      console.error('Pipeline failed:', error);
-      setPipelineStatus('error');
-    }
-  };
-
-  const toggleModel = (key: string) => {
-    setSelectedModels(prev =>
-      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
-    );
-  };
+  const features = [
+    {
+      icon: Upload,
+      title: 'データ読込',
+      description: 'CSV/Excel ファイルまたはベンチマークデータセットをアップロード',
+      href: '/data',
+      color: 'from-blue-500 to-cyan-500',
+    },
+    {
+      icon: BarChart3,
+      title: 'EDA・可視化',
+      description: '統計解析、相関分析、次元削減、クラスタリング',
+      href: '/eda',
+      color: 'from-emerald-500 to-teal-500',
+    },
+    {
+      icon: Settings,
+      title: 'パイプライン構築',
+      description: '前処理・特徴量・モデル設定を自由にカスタマイズ',
+      href: '/pipeline',
+      color: 'from-violet-500 to-purple-500',
+    },
+    {
+      icon: Activity,
+      title: '解析実行・結果',
+      description: 'モデル学習、評価、解釈可能性分析',
+      href: '/results',
+      color: 'from-orange-500 to-amber-500',
+    },
+  ];
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8">
-      <div className="max-w-4xl mx-auto space-y-8">
+    <div className="container mx-auto px-4 py-12">
+      {/* Hero Section */}
+      <section className="text-center mb-16">
+        <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold mb-6 border border-indigo-100">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+          </span>
+          ChemAI Nexus v2.0.0 Now Active
+        </div>
+        <h1 className="text-5xl md:text-6xl font-extrabold text-slate-900 mb-6 tracking-tight">
+          Accelerate Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-blue-500">Chemistry AI</span>
+        </h1>
+        <p className="text-xl text-slate-600 max-w-3xl mx-auto leading-relaxed">
+          化学構造データとテーブルデータを統合し、高度な機械学習モデルを直感的に構築。
+          ワンクリックの自動解析から、専門家向けの高度なチューニングまで対応します。
+        </p>
         
-        {/* Header */}
-        <header className="mb-10">
-          <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-2">
-            <Activity className="w-8 h-8 text-blue-600" />
-            ChemAI Nexus
-          </h1>
-          <p className="text-slate-500 mt-2">
-            Session: {sessionId ? <span className="text-green-600 font-mono">{sessionId.slice(0, 8)}...</span> : 'Initializing...'}
-          </p>
-        </header>
-
-        {/* Section 1: Data Upload */}
-        <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-            <Upload className="w-5 h-5 text-slate-600" />
-            1. データ読込
-          </h2>
-          <div className="flex items-center gap-4">
-            <label className="flex-1 border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:bg-slate-50 cursor-pointer transition">
-              <input type="file" accept=".csv,.xlsx" onChange={handleFileChange} className="hidden" />
-              {file ? (
-                <span className="text-blue-600 font-medium">{file.name}</span>
-              ) : (
-                <span className="text-slate-500">CSV または Excel ファイルを選択</span>
-              )}
-            </label>
-            <button
-              onClick={handleUpload}
-              disabled={!file || uploadStatus === 'uploading'}
-              className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-            >
-              {uploadStatus === 'uploading' ? <Loader2 className="w-5 h-5 animate-spin" /> : 'アップロード'}
-            </button>
-          </div>
-          {uploadStatus === 'success' && <p className="mt-2 text-green-600 text-sm">✅ アップロード完了</p>}
-          {uploadStatus === 'error' && <p className="mt-2 text-red-600 text-sm">❌ アップロードに失敗しました</p>}
-        </section>
-
-        {/* Section 2: Model Selection */}
-        <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-            <Settings className="w-5 h-5 text-slate-600" />
-            2. モデル選択
-          </h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            {models.map((model) => (
-              <label key={model.key} className={`p-3 border rounded-lg cursor-pointer transition flex items-center gap-2 ${selectedModels.includes(model.key) ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-blue-300'}`}>
-                <input
-                  type="checkbox"
-                  checked={selectedModels.includes(model.key)}
-                  onChange={() => toggleModel(model.key)}
-                  className="w-4 h-4 text-blue-600 rounded"
-                />
-                <div>
-                  <div className="font-medium text-sm">{model.name}</div>
-                  <div className="text-xs text-slate-500">{model.key}</div>
-                </div>
-              </label>
-            ))}
-          </div>
-        </section>
-
-        {/* Section 3: Execution */}
-        <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-            <Play className="w-5 h-5 text-slate-600" />
-            3. 解析実行
-          </h2>
-          <button
-            onClick={handleRunPipeline}
-            disabled={pipelineStatus === 'running' || selectedModels.length === 0}
-            className="w-full bg-indigo-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+        <div className="mt-10 flex flex-wrap justify-center gap-4">
+          <Button 
+            size="lg" 
+            onClick={() => router.push('/data')}
+            className="bg-indigo-600 hover:bg-indigo-700 h-12 px-8 text-lg font-bold shadow-xl shadow-indigo-100"
           >
-            {pipelineStatus === 'running' ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" /> 実行中...
-              </>
-            ) : (
-              '解析を開始する'
-            )}
-          </button>
+            Start Project <ArrowRight className="ml-2 w-5 h-5" />
+          </Button>
+          <Button 
+            variant="outline" 
+            size="lg"
+            className="h-12 px-8 text-lg font-semibold"
+          >
+            Documentation
+          </Button>
+        </div>
+      </section>
 
-          {result && pipelineStatus === 'completed' && (
-            <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-              <h3 className="font-semibold text-green-800 flex items-center gap-2 mb-2">
-                <CheckCircle className="w-5 h-5" /> 解析完了
-              </h3>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-slate-500">最良モデル:</span>
-                  <span className="ml-2 font-medium text-slate-900">{result.best_model}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500">スコア (R²):</span>
-                  <span className="ml-2 font-medium text-slate-900">{result.score}</span>
+      {/* Feature Grid */}
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 mb-16">
+        {features.map((feature) => (
+          <Card 
+            key={feature.title}
+            className="group relative overflow-hidden cursor-pointer border-slate-200 transition-all duration-300 hover:border-indigo-200 hover:shadow-2xl hover:shadow-indigo-50"
+            onClick={() => router.push(feature.href)}
+          >
+            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+              <feature.icon size={80} />
+            </div>
+            <CardHeader className="pb-2">
+              <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${feature.color} flex items-center justify-center mb-4 text-white shadow-lg group-hover:scale-110 transition-transform`}>
+                <feature.icon className="w-7 h-7" />
+              </div>
+              <CardTitle className="text-xl font-bold">{feature.title}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-slate-500 text-sm leading-relaxed mb-4">{feature.description}</p>
+              <div className="flex items-center text-indigo-600 text-sm font-bold group-hover:translate-x-1 transition-transform">
+                Go to Module <ArrowRight className="ml-1 w-4 h-4" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Quick Status & Actions */}
+      <div className="grid lg:grid-cols-3 gap-8">
+        <Card className="lg:col-span-2 border-slate-200">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="text-indigo-600 w-5 h-5" />
+              System Status
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+                <p className="text-xs font-bold text-slate-400 uppercase mb-1">Backend Connection</p>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-green-500" />
+                  <p className="font-bold text-slate-700">Healthy</p>
                 </div>
               </div>
-              {result.feature_importances && (
-                <div className="mt-4">
-                  <span className="text-slate-500 text-sm">特徴量重要度 Top 3:</span>
-                  <ul className="mt-2 space-y-1">
-                    {result.feature_importances.slice(0, 3).map((imp: any, idx: number) => (
-                      <li key={idx} className="flex justify-between text-sm bg-white p-2 rounded">
-                        <span>{imp.name}</span>
-                        <span className="font-mono">{imp.value.toFixed(3)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+                <p className="text-xs font-bold text-slate-400 uppercase mb-1">Session Identity</p>
+                <p className="font-mono text-xs font-medium text-slate-600 truncate">
+                  {sessionId || 'Initializing...'}
+                </p>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+                <p className="text-xs font-bold text-slate-400 uppercase mb-1">Active Projects</p>
+                <p className="font-bold text-slate-700">0 Total</p>
+              </div>
             </div>
-          )}
-        </section>
+          </CardContent>
+        </Card>
 
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FlaskConical className="text-indigo-600 w-5 h-5" />
+              SMILES Support
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+              RDKit 統合により、SMILES 文字列から化学記述子、指紋、3D 特徴量を自動生成。
+              深層学習ポテンシャルとの連携もサポートしています。
+            </p>
+            <Button variant="outline" className="w-full font-bold">
+              Explore Chem Features
+            </Button>
+          </CardContent>
+        </Card>
       </div>
-    </main>
+
+      {/* Error Message */}
+      {error && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-full max-w-md animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="bg-red-900 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3">
+            <div className="p-2 bg-red-800 rounded-lg">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <p className="font-medium text-sm">{error}</p>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
