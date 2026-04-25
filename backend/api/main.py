@@ -119,7 +119,7 @@ class AnalysisResult(BaseModel):
     best_model: Optional[str] = None
     score: Optional[float] = Field(None, ge=0.0, le=1.0)
     cv_scores: Optional[List[float]] = None
-    feature_importances: Optional[List[Dict[str, Any]]] = None # Changed to Any to support {"name": ..., "value": ...}
+    feature_importances: Optional[List[Dict[str, Any]]] = None # Changed to Any for real data support
     message: str
     
     @field_validator("cv_scores")
@@ -185,14 +185,11 @@ class InMemorySessionBackend(SessionBackend):
             self.delete(sid)
         return len(expired)
 
-# Global backend instance
 _GLOBAL_BACKEND = InMemorySessionBackend()
 
 # ── 依存性注入 ─────────────────────────────────
 def get_session_backend() -> SessionBackend:
     """環境に応じたセッションバックエンドを返す"""
-    # if settings.env == "production" and settings.redis_url:
-    #     return RedisSessionBackend(settings.redis_url)
     return _GLOBAL_BACKEND
 
 def get_default_session_config() -> Dict[str, Any]:
@@ -614,7 +611,6 @@ async def run_pipeline(
             result_dict = await run_automl_pipeline(
                 df, target_col, task_type, cfg.model_dump()
             )
-            # Fetch latest session to avoid overwriting other potential updates
             latest_session = backend.get(session_id)
             if latest_session:
                 latest_session["automl_result"] = result_dict
