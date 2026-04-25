@@ -1,10 +1,10 @@
 // frontend_next/src/config/estimatorSchemas.ts
-// Dynamic UI configuration for sklearn-compatible estimators
-// This file defines the UI schema for each estimator's parameters
+// Dynamic UI configuration for estimators and feature engines
+// Schema-driven: adding a new estimator auto-generates its parameter UI
 
 import type { EstimatorSchema, TaskType, UIComponentConfig } from '@/lib/types';
 
-// Helper to create common parameter configs
+// Helper factories for common parameter types
 const createNumberParam = (label: string, description: string, defaultVal: number, min?: number, max?: number, step = 1): UIComponentConfig => ({
   type: 'number',
   label,
@@ -34,6 +34,14 @@ const createToggleParam = (label: string, description: string, defaultVal: boole
 
 const createSelectParam = (label: string, description: string, defaultVal: string, options: Array<{ value: string; label: string }>): UIComponentConfig => ({
   type: 'select',
+  label,
+  description,
+  default: defaultVal,
+  options,
+});
+
+const createMultiSelectParam = (label: string, description: string, defaultVal: string[], options: Array<{ value: string; label: string }>): UIComponentConfig => ({
+  type: 'multi-select',
   label,
   description,
   default: defaultVal,
@@ -207,8 +215,8 @@ export const estimatorSchemas: Record<string, EstimatorSchema> = {
       n_estimators: createNumberParam('Number of Trees', 'Number of boosting rounds', 100, 10, 2000, 10),
       max_depth: createNumberParam('Max Depth', 'Maximum tree depth', 6, 1, 20, 1),
       learning_rate: createSliderParam('Learning Rate', 'Step size shrinkage', 0.3, 0.001, 1.0, 0.001),
-      subsample: createSliderParam('Subsample', 'Subsample ratio', 1.0, 0.1, 1.0, 0.05),
-      colsample_bytree: createSliderParam('Col Sample', 'Column subsample ratio', 1.0, 0.1, 1.0, 0.05),
+      subsample: createSliderParam('Subsample', 'Subsample ratio of training instances', 1.0, 0.1, 1.0, 0.05),
+      colsample_bytree: createSliderParam('Col Sample', 'Subsample ratio of columns', 1.0, 0.1, 1.0, 0.05),
       reg_alpha: createSliderParam('L1 Regularization', 'L1 penalty', 0.0, 0.0, 10.0, 0.1),
       reg_lambda: createSliderParam('L2 Regularization', 'L2 penalty', 1.0, 0.0, 10.0, 0.1),
       random_state: createNumberParam('Random State', 'Random seed', 42, 0, 9999, 1),
@@ -217,7 +225,27 @@ export const estimatorSchemas: Record<string, EstimatorSchema> = {
   },
 };
 
-// Helper function to get schema by key
+// Feature engine schemas (for SMILES/chemical descriptors)
+export const featureEngineSchemas: Record<string, any> = {
+  rdkit_descriptors: {
+    name: 'RDKit Basic Descriptors',
+    description: 'Physicochemical descriptors: MW, LogP, TPSA, H-bond donors/acceptors, etc.',
+    params: {
+      normalize: createToggleParam('Normalize', 'Scale features to [0,1] range', true),
+      selected_descriptors: createMultiSelectParam('Select Descriptors', 'Choose which descriptors to compute', [], [
+        { value: 'MolWt', label: 'Molecular Weight' },
+        { value: 'LogP', label: 'LogP (octanol-water)' },
+        { value: 'TPSA', label: 'Topological Polar Surface Area' },
+        { value: 'NumHDonors', label: 'H-Bond Donors' },
+        { value: 'NumHAcceptors', label: 'H-Bond Acceptors' },
+        { value: 'NumRotatableBonds', label: 'Rotatable Bonds' },
+        { value: 'RingCount', label: 'Ring Count' },
+      ]),
+    },
+  },
+};
+
+// Helper functions
 export function getEstimatorSchema(key: string, taskType: TaskType): EstimatorSchema | undefined {
   const schema = estimatorSchemas[key];
   if (!schema) return undefined;
@@ -225,21 +253,17 @@ export function getEstimatorSchema(key: string, taskType: TaskType): EstimatorSc
   return schema;
 }
 
-// Helper to filter estimators by task type
 export function getEstimatorsForTask(taskType: TaskType): EstimatorSchema[] {
   return Object.values(estimatorSchemas).filter(
     (schema) => schema.task_types.includes(taskType)
   );
 }
 
-// Helper to generate dynamic form config from schema
+export function getFeatureEngineSchema(key: string): any {
+  return featureEngineSchemas[key] || null;
+}
+
 export function generateFormConfig(schema: EstimatorSchema, taskType: TaskType): Record<string, UIComponentConfig> {
   const filtered = { ...schema.params };
-  
-  // Hide params not supported for task type
-  if (taskType === 'classification' && schema.key.includes('Regressor')) {
-    // Could add task-specific filtering logic here
-  }
-  
   return filtered;
 }
