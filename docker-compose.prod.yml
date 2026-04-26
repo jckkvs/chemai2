@@ -1,0 +1,132 @@
+# docker-compose.prod.yml
+version: "3.9"
+
+services:
+  fastapi:
+    build:
+      context: .
+      dockerfile: backend_fastapi/Dockerfile
+      target: final
+    container_name: chemai-api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8G
+    volumes:
+      - data_volume:/app/data
+      - export_volume:/app/exports
+      - cache_volume:/app/.cache
+    environment:
+      - DATABASE_URL=postgresql://chemai:${POSTGRES_PASSWORD}@postgres:5432/chemai_db
+      - REDIS_URL=redis://redis:6379/0
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - LOG_LEVEL=WARNING
+      - WORKERS=4
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - chemai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: backend_fastapi/Dockerfile
+    command: celery -A backend.celery_app worker --loglevel=info --concurrency=4 --prefetch-multiplier=1
+    volumes:
+      - data_volume:/app/data
+      - cache_volume:/app/.cache
+    environment:
+      - DATABASE_URL=postgresql://chemai:${POSTGRES_PASSWORD}@postgres:5432/chemai_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - fastapi
+      - redis
+    networks:
+      - chemai-net
+
+  streamlit:
+    build:
+      context: ./frontend_streamlit
+      dockerfile: Dockerfile
+    container_name: chemlit-ui
+    restart: unless-stopped
+    environment:
+      - API_BASE_URL=http://fastapi:8000
+      - LOG_LEVEL=INFO
+    ports:
+      - "8501:8501"
+    depends_on:
+      - fastapi
+    networks:
+      - chemai-net
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: chemai-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - fastapi
+      - streamlit
+    networks:
+      - chemai-net
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: chemai-db
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=chemai
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=chemai_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chemai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - chemai-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: chemai-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    networks:
+      - chemai-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  data_volume:
+  export_volume:
+  cache_volume:
+  nginx_logs:
+
+networks:
+  chemai-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

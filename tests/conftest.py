@@ -1,60 +1,132 @@
 """
-tests/conftest.py
-
-pytest共通フィクスチャと設定。
+Test Configuration & Fixtures - chemai2/tests/conftest.py
+Shared pytest fixtures, hypothesis strategies, and async test utilities
 """
-from __future__ import annotations
-
 import os
-
-# ---------- MKL DLL クラッシュ回避 (Windows) ----------
-# Intel MKL の threadpoolctl が MKL_Get_Max_Threads() 呼出時に
-# SEH exception (WinError 0xc06d007f) を起こす環境固有バグの回避策。
-# テスト起動前に環境変数でスレッド数を制限する。
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-os.environ.setdefault("MKL_THREADING_LAYER", "SEQUENTIAL")
-
+import tempfile
+from pathlib import Path
+from typing import Dict, List, Any
+import numpy as np
+import pandas as pd
 import pytest
-from backend.utils.optional_import import probe_all_optional_libraries
+from hypothesis import strategies as st
+from hypothesis.extra.numpy import arrays
+from fastapi.testclient import TestClient
+from unittest.mock import AsyncMock, patch
 
-# テストセッション開始時に可用性キャッシュを初期化
-probe_all_optional_libraries()
-
-
-
-@pytest.fixture(scope="session")
-def random_seed() -> int:
-    return 42
+from backend.main import app
+from backend.core.config import settings
+from backend.chem.plugins import DescriptorPluginRegistry
 
 
-@pytest.fixture(scope="session")
-def small_regression_df():
-    import numpy as np
-    import pandas as pd
-    """セッションスコープの小さい回帰DataFrameフィクスチャ。"""
+# ========== Environment Override for Testing ==========
+@pytest.fixture(autouse=True)
+def test_env_override():
+    """Override settings for test isolation"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = Path(tmpdir)
+        os.environ["DATABASE_URL"] = "sqlite:///./test_chemai.db"
+        os.environ["REDIS_URL"] = "redis://localhost:6379/15"
+        os.environ["DATA_DIR"] = str(test_dir / "data")
+        os.environ["EXPORT_DIR"] = str(test_dir / "exports")
+        os.environ["CACHE_DIR"] = str(test_dir / ".cache")
+        os.environ["DEBUG"] = "true"
+        
+        # Reload settings with test env
+        settings.__init__()
+        yield
+        os.environ.pop("DATABASE_URL", None)
+        os.environ.pop("DATA_DIR", None)
+
+
+# ========== Data Fixtures ==========
+@st.composite
+def synthetic_chemical_data(draw):
+    """Hypothesis strategy for generating valid synthetic chemical datasets"""
+    n_rows = draw(st.integers(min_value=10, max_value=200))
+    n_numeric = draw(st.integers(min_value=2, max_value=5))
+    n_categorical = draw(st.integers(min_value=0, max_value=2))
+    
+    data = {}
+    # Numeric features
+    for i in range(n_numeric):
+        data[f"numeric_{i}"] = draw(arrays(
+            np.float64, shape=n_rows, elements=st.floats(min_value=-100, max_value=100, allow_nan=False)
+        ))
+    
+    # Categorical features
+    categories = ["catA", "catB", "catC"]
+    for i in range(n_categorical):
+        data[f"cat_{i}"] = draw(st.lists(st.sampled_from(categories), min_size=n_rows, max_size=n_rows))
+    
+    # Target variable
+    target_vals = draw(arrays(np.float64, shape=n_rows, elements=st.floats(min_value=-10, max_value=10)))
+    data["target"] = target_vals
+    
+    df = pd.DataFrame(data)
+    return df
+
+
+@pytest.fixture
+def mock_dataset():
+    """Generate deterministic mock dataset for unit tests"""
     np.random.seed(42)
-    n = 150
-    return pd.DataFrame({
-        "numeric_a": np.random.randn(n),
-        "numeric_b": np.random.exponential(5, n),
-        "cat_a": np.random.choice(["X", "Y", "Z"], n),
-        "binary": np.random.randint(0, 2, n).astype(float),
-        "target": np.random.randn(n),
+    df = pd.DataFrame({
+        "smiles": ["CCO", "CCCO", "c1ccccc1", "CC(=O)O", "CN1C=NC2=C1C(=O)N(C(=O)N2C)C"] * 10,
+        "mol_weight": np.random.normal(100, 20, 50),
+        "logp": np.random.normal(2, 1, 50),
+        "solubility": np.random.exponential(5, 50),
+        "group": np.random.choice(["A", "B"], 50),
+        "target": np.random.normal(50, 10, 50)
     })
+    return df
 
 
-@pytest.fixture(scope="session")
-def small_classification_df():
-    import numpy as np
-    import pandas as pd
-    """セッションスコープの分類DataFrameフィクスチャ。"""
-    np.random.seed(42)
-    n = 150
+@pytest.fixture
+def client():
+    """FastAPI TestClient with automatic lifespan handling"""
+    with TestClient(app) as c:
+        yield c
+
+
+# ========== Mock Plugins ==========
+@pytest.fixture
+def mock_descriptor_plugin(tmp_path):
+    """Create a temporary plugin directory with a mock plugin"""
+    plugin_dir = tmp_path / "plugins"
+    plugin_dir.mkdir()
+    
+    plugin_code = '''
+"""
+# --- YAML Metadata ---
+# name: "mock_plugin"
+# category: "custom"
+# param_schema:
+#   scale_factor:
+#     type: "float"
+#     default: 1.0
+#     description: "Scaling factor for output"
+"""
+from typing import List
+import pandas as pd
+
+def calculate_descriptors(smiles_list: List[str], scale_factor: float = 1.0) -> pd.DataFrame:
     return pd.DataFrame({
-        "f1": np.random.randn(n),
-        "f2": np.random.randn(n),
-        "f3": np.random.choice(["A", "B", "C"], n),
-        "target": np.random.randint(0, 2, n),
+        "mock_feat1": [len(s) * scale_factor for s in smiles_list],
+        "mock_feat2": [s.count("C") * scale_factor for s in smiles_list]
     })
+'''
+    plugin_file = plugin_dir / "mock_descriptor.py"
+    plugin_file.write_text(plugin_code)
+    
+    return plugin_dir
+
+
+# ========== Async Utilities ==========
+@pytest.fixture
+def mock_websocket():
+    """Mock WebSocket for async progress testing"""
+    ws = AsyncMock()
+    ws.send_json = AsyncMock()
+    ws.receive_text = AsyncMock(side_effect=StopIteration)
+    return ws

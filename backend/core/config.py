@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     # MLflow settings
     MLFLOW_TRACKING_URI: str = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
     
+    # Task Queue settings
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
+    
     class Config:
         env_file = ".env"
 
