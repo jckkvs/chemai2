@@ -174,118 +174,76 @@ def build_pipeline(config: PipelineConfig) -> Pipeline:
 # ============================================================
 
 def apply_monotonic_constraints(
-    estimator: Any,
-    column_meta: dict[str, ColumnMeta],
-    feature_names: list[str] | None = None,
-    *,
-    soft_monotonic_kwargs: dict[str, Any] | None = None,
-) -> Any:
+    estimator,
+    column_meta: Dict[str, 'ColumnMeta'],
+    feature_names: Optional[List[str]] = None,
+    verbose: bool = False
+):
     """
-    estimatorの種類に応じて単調性制約を適用する。
-
-    ルーティング戦略（2段階）:
-    ──────────────────────────
-    1. ネイティブ対応（XGBoost / LightGBM / HistGB / XGBRFRegressor等）:
-       get_params() に "monoton" キーが存在する場合。
-       ※ monotonic=2(自動検出)はネイティブ非対応のため事前解決不可→0にフォールバック
-
-    2. ペナルティ拡張法（その他全モデル: SVR, GPR, RFR, Ridge, MLP, ...）:
-       MonotonicConstraintRegressor / MonotonicConstraintClassifier でラップ。
-       ±3σ範囲でペナルティサンプル拡張 + 反復フィッティング。
-       monotonic=2 は fit時に Spearman相関で自動解決。
-
-    制約強度:
-       column_meta の constraint_strength ("weak"/"strong") を反映。
-       同一ラッパー内は最初に見つかった非None値を採用。
-
-    Args:
-        estimator: sklearn 互換の推定器
-        column_meta: 列名 → ColumnMeta の辞書
-        feature_names: 特徴量名リスト。None なら column_meta のキー順。
-        soft_monotonic_kwargs: ラッパーに渡す追加引数
-            n_grid, sigma_factor, penalty_weight, max_iter
-
-    Returns:
-        設定済み estimator
+    単調性制約を推定器に適用するラッパー関数
+    
+    【修正点1】列名解決ロジックの強化：変換前後の列名マッピングに対応
     """
-    names = feature_names or list(column_meta.keys())
-    n_features = len(names)
-    constraints = tuple(
-        column_meta.get(n, ColumnMeta()).monotonic for n in names
-    )
-
-    if not any(c != 0 for c in constraints):
-        logger.debug("monotonic_constraints: 全て 0 のためスキップ")
+    from backend.models.monotonic_kernel import ConstrainedEstimatorWrapper
+    
+    # 制約対象の列をフィルタリング
+    constraints = {}
+    for col, meta in column_meta.items():
+        if hasattr(meta, 'monotonic') and meta.monotonic in (1, -1):
+            # 【修正点2】feature_names が指定されている場合のマッピング
+            if feature_names and col not in feature_names:
+                # 列名が変換された可能性: 部分一致でマッチングを試みる
+                matched = [f for f in feature_names if col in f or f.startswith(col + "_")]
+                if matched:
+                    if verbose:
+                        logger.info(f"Column '{col}' mapped to {matched[0]} after transformation")
+                    constraints[matched[0]] = meta.monotonic
+                continue
+            constraints[col] = meta.monotonic
+    
+    if not constraints:
+        if verbose:
+            logger.info("No monotonic constraints to apply")
         return estimator
-
-    n_constrained = sum(1 for c in constraints if c != 0)
-    cls_name = type(estimator).__name__
-
-    # constraint_strength の集約（最初の非None値を採用）
-    strength: str | None = None
-    for n in names:
-        meta = column_meta.get(n)
-        if meta and hasattr(meta, "constraint_strength") and meta.constraint_strength:
-            strength = meta.constraint_strength
-            break
-
-    # ── Step 1: ネイティブ対応チェック ──
-    try:
-        params = estimator.get_params()
-    except Exception:
-        logger.debug(f"get_params() 失敗 ({cls_name}) → スキップ")
+    
+    # 【修正点3】推定器が既に制約ラッパー済みの場合の二重適用防止
+    if isinstance(estimator, ConstrainedEstimatorWrapper):
+        if verbose:
+            logger.warning("Estimator already wrapped with constraints. Skipping re-wrap.")
         return estimator
-
-    monotonic_keys = [k for k in params if "monoton" in k.lower()]
-
-    if monotonic_keys:
-        # ネイティブモデルは monotonic=2 非対応 → 0 にフォールバック
-        native_constraints = tuple(
-            (0 if c == 2 else c) for c in constraints
+    
+    # 【修正点4】制約適用可能な推定器のチェック
+    supported = ['HistGradientBoostingRegressor', 'HistGradientBoostingClassifier', 
+                 'XGBRegressor', 'XGBClassifier', 'LGBMRegressor', 'LGBMClassifier']
+    est_name = type(estimator).__name__
+    
+    if est_name not in supported and not hasattr(estimator, 'monotonic_cst'):
+        if verbose:
+            logger.info(f"Estimator {est_name} does not support native monotonic constraints. "
+                       f"Using soft constraint wrapper.")
+        # 【修正点5】ソフト制約ラッパーへのフォールバック
+        return ConstrainedEstimatorWrapper(
+            base_estimator=estimator,
+            constraints=constraints,
+            strength='soft',  # 強制的にソフト制約を使用
+            feature_names=feature_names
         )
-        if not any(c != 0 for c in native_constraints):
-            logger.debug("ネイティブモデル: 自動検出のみで確定制約なし → スキップ")
-            return estimator
-
-        for key in monotonic_keys:
-            try:
-                if "lgbm" in cls_name.lower() or "lightgbm" in cls_name.lower():
-                    val: Any = list(native_constraints)
-                elif "histgradient" in cls_name.lower():
-                    val = list(native_constraints)
-                else:
-                    val = native_constraints
-                estimator.set_params(**{key: val})
-                n_native = sum(1 for c in native_constraints if c != 0)
-                logger.info(
-                    f"✅ 単調性制約(ネイティブ): {cls_name}.{key}, "
-                    f"{n_native}/{n_features} 変数"
-                )
-                break
-            except Exception as e:
-                logger.warning(f"set_params({key}=...) 失敗: {e}")
-        return estimator
-
-    # ── Step 2: ペナルティ拡張法ラッパー（全モデル対応） ──
-    try:
-        from backend.models.monotonic_wrapper import wrap_monotonic
-    except ImportError as e:
-        logger.warning(f"monotonic_wrapper モジュールが見つかりません: {e}")
-        return estimator
-
-    kwargs: dict[str, Any] = {"constraint_strength": strength}
-    if soft_monotonic_kwargs:
-        for k in ("n_grid", "sigma_factor", "penalty_weight", "max_iter"):
-            if k in soft_monotonic_kwargs:
-                kwargs[k] = soft_monotonic_kwargs[k]
-
-    wrapped = wrap_monotonic(estimator, constraints, **kwargs)
-    strength_label = f" [{strength}]" if strength else ""
-    logger.info(
-        f"✅ 単調性制約(ペナルティ拡張){strength_label}: {cls_name}, "
-        f"{n_constrained}/{n_features} 変数"
-    )
-    return wrapped
+    
+    # Native monotonic constraints 適用
+    if hasattr(estimator, 'set_params') and 'monotonic_cst' in estimator.get_params():
+        # 【修正点6】feature_names の順序と制約配列の整合性確保
+        if feature_names:
+            monotonic_array = []
+            for feat in feature_names:
+                val = constraints.get(feat, 0)
+                monotonic_array.append(int(val))
+            estimator.set_params(monotonic_cst=tuple(monotonic_array))
+            if verbose:
+                logger.info(f"Applied native monotonic constraints: {monotonic_array}")
+        else:
+            logger.warning("feature_names not provided for native constraint application")
+    
+    return estimator
 
 
 

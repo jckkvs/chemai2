@@ -312,44 +312,60 @@ class AutoMLEngine:
         else:
             cv_key = self.cv_key
 
+        # 【修正点1】Scaffold SplitのSMILES列名解決を強化
         if cv_key == "scaffold":
             _chosen_smiles_col = None
             if isinstance(smiles_col, str):
                 _chosen_smiles_col = smiles_col
             elif isinstance(smiles_col, list) and len(smiles_col) > 0:
-                _chosen_smiles_col = smiles_col[0].get("smiles_col")
-            
+                # 辞書形式 {"smiles_col": "...", "fraction_col": "..."} にも対応
+                first_item = smiles_col[0]
+                if isinstance(first_item, dict):
+                    _chosen_smiles_col = first_item.get("smiles_col")
+                else:
+                    _chosen_smiles_col = first_item
+
             if _chosen_smiles_col and _chosen_smiles_col in df.columns:
                 try:
                     from rdkit.Chem.Scaffolds.MurckoScaffold import MurckoScaffoldSmiles
+                    
                     def get_scaffold(s):
                         try:
-                            if pd.isna(s): return "unknown"
+                            if pd.isna(s): 
+                                return "unknown"
                             return MurckoScaffoldSmiles(str(s))
                         except Exception:
                             return "unknown"
                     groups = df[_chosen_smiles_col].apply(get_scaffold).values
                     logger.info(f"Scaffold Split groups computed from {_chosen_smiles_col}.")
                 except ImportError:
-                    logger.warning("RDKit is not installed. Falling back to KFold.")
+                    # 【修正点2】RDKit未インストール時の明確なフォールバック
+                    logger.warning("RDKit is not installed. Falling back to KFold for Scaffold Split.")
+                    cv_key = "stratified_kfold" if task == "classification" else "kfold"
+                except Exception as e:
+                    logger.warning(f"Scaffold computation failed: {e}. Falling back to KFold.")
                     cv_key = "stratified_kfold" if task == "classification" else "kfold"
             else:
-                logger.warning("SMILES column not found for Scaffold Split. Falling back to KFold.")
+                # 【修正点3】SMILES列が見つからない場合の処理
+                logger.warning(f"SMILES column '{_chosen_smiles_col}' not found for Scaffold Split. Falling back to KFold.")
                 cv_key = "stratified_kfold" if task == "classification" else "kfold"
 
-        # GroupKFold系の場合: グループ数 >= n_splits のバリデーション
+        # 【修正点4】GroupKFold系のグループ数バリデーションを強化
         if cv_key in ("group_kfold", "leave_one_group_out", "scaffold") and groups is not None:
             n_unique_groups = len(np.unique(groups))
             if n_unique_groups < self.cv_folds:
                 if n_unique_groups >= 2:
+                    # 【修正点5】グループ数が足りない場合の自動調整
                     logger.warning(
-                        f"{cv_key}: グループ数({n_unique_groups}) < n_splits({self.cv_folds})。"
-                        f"n_splitsを{n_unique_groups}に自動調整します。"
+                        f"{cv_key}: Group count ({n_unique_groups}) < n_splits ({self.cv_folds}). "
+                        f"Automatically adjusting n_splits to {n_unique_groups}."
                     )
                     self.cv_folds = n_unique_groups
                 else:
+                    # 【修正点6】グループが1つのみの場合のフォールバック
                     logger.warning(
-                        f"{cv_key}: グループ数({n_unique_groups})が不足。通常KFoldにフォールバックします。"
+                        f"{cv_key}: Only {n_unique_groups} unique group(s). "
+                        f"Falling back to standard KFold."
                     )
                     cv_key = "stratified_kfold" if task == "classification" else "kfold"
                     groups = None

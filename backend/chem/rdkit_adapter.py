@@ -331,21 +331,26 @@ class RDKitAdapter(BaseChemAdapter):
                             float(mol_h.GetAtomWithIdx(i).GetDoubleProp('_GasteigerCharge'))
                             for i in range(mol_h.GetNumAtoms())
                         ]
+                        # 【修正点1】NaN/infをフィルタリング
                         charges = [q for q in charges if np.isfinite(q)]
-                        if charges:
+                        
+                        if charges:  # 【修正点2】空リスト時の安全な分岐
                             ca = np.array(charges)
-                            row["gasteiger_q_max"]      = float(np.max(ca))
-                            row["gasteiger_q_min"]      = float(np.min(ca))
-                            row["gasteiger_q_range"]    = float(np.max(ca) - np.min(ca))
-                            row["gasteiger_q_std"]      = float(np.std(ca))
+                            row["gasteiger_q_max"] = float(np.max(ca))
+                            row["gasteiger_q_min"] = float(np.min(ca))
+                            row["gasteiger_q_range"] = float(np.max(ca) - np.min(ca))
+                            row["gasteiger_q_std"] = float(np.std(ca))
                             row["gasteiger_q_abs_mean"] = float(np.mean(np.abs(ca)))
                         else:
+                            # 【修正点3】計算失敗時の明確なNaN設定
                             for k in ["gasteiger_q_max", "gasteiger_q_min",
-                                      "gasteiger_q_range", "gasteiger_q_std", "gasteiger_q_abs_mean"]:
+                                     "gasteiger_q_range", "gasteiger_q_std", "gasteiger_q_abs_mean"]:
                                 row[k] = np.nan
-                    except Exception:
+                    except Exception as e:
+                        # 【修正点4】例外時のログ出力と安全なフォールバック
+                        logger.warning(f"RDKit Gasteiger charge calculation failed for SMILES {smi!r}: {e}")
                         for k in ["gasteiger_q_max", "gasteiger_q_min",
-                                  "gasteiger_q_range", "gasteiger_q_std", "gasteiger_q_abs_mean"]:
+                                 "gasteiger_q_range", "gasteiger_q_std", "gasteiger_q_abs_mean"]:
                             row[k] = np.nan
 
                 # ── Morgan フィンガープリント (ECFP4) ──
