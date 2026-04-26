@@ -180,7 +180,10 @@ class ShapExplainer:
             shap, model, X_arr, background_data
         )
 
-        shap_values = explainer(X_arr)
+        # 【精緻化】メモリ効率を考慮したバッチ処理
+        shap_values = self.calculate_shap_values(
+            explainer, X, background_data=background_data
+        )
 
         # shap.Explanation または np.ndarray に対応
         if hasattr(shap_values, "values"):
@@ -215,6 +218,71 @@ class ShapExplainer:
             shap_interaction_values=interaction_values,
             base_values=base_values,
         )
+
+    def calculate_shap_values(
+        self,
+        explainer: Any,
+        X: np.ndarray | pd.DataFrame,
+        background_data: np.ndarray | pd.DataFrame | None = None,
+        batch_size: Optional[int] = None,
+    ) -> np.ndarray:
+        """
+        Calculate SHAP values with memory-efficient batching
+        """
+        import time
+        import psutil
+        import gc
+        
+        start_time = time.time()
+        process = psutil.Process()
+        initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+        
+        X_df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
+        n_samples = len(X_df)
+        
+        # バッチサイズ自動設定
+        if batch_size is None:
+            available_memory = psutil.virtual_memory().available / 1024 / 1024
+            estimated_per_sample = 0.5
+            batch_size = max(10, min(1000, int(available_memory * 0.3 / estimated_per_sample)))
+            logger.debug(f"Auto-set batch_size={batch_size}")
+        
+        shap_values_list = []
+        n_batches = (n_samples + batch_size - 1) // batch_size
+        
+        try:
+            for i in range(0, n_samples, batch_size):
+                batch_end = min(i + batch_size, n_samples)
+                batch_X = X_df.iloc[i:batch_end]
+                
+                # SHAP計算 (explainerによっては引数が異なる場合があるためラップ)
+                try:
+                    batch_shap = explainer(batch_X.values)
+                except Exception:
+                    # fallback for older shap versions or specific explainers
+                    batch_shap = explainer.shap_values(batch_X.values)
+
+                # shap.Explanation オブジェクトの場合は .values を取得
+                if hasattr(batch_shap, "values"):
+                    batch_shap = batch_shap.values
+                
+                shap_values_list.append(batch_shap)
+                
+                current_memory = process.memory_info().rss / 1024 / 1024
+                if i % (batch_size * 5) == 0:
+                    logger.debug(f"SHAP batch {i//batch_size + 1}/{n_batches}: mem={current_memory:.1f}MB")
+                    gc.collect()
+            
+            shap_values = np.vstack(shap_values_list).astype(np.float64)
+            elapsed = time.time() - start_time
+            logger.info(f"SHAP calculation completed in {elapsed:.2f}s")
+            return shap_values
+            
+        except Exception as e:
+            logger.error(f"SHAP calculation failed: {e}")
+            if shap_values_list:
+                return np.vstack(shap_values_list).astype(np.float64)
+            raise
 
     def _build_explainer(
         self,

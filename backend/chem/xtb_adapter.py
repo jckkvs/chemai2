@@ -1,19 +1,9 @@
-"""
-backend/chem/xtb_adapter.py
-
-XTB (GFN2-xTB) による量子化学計算に基づく記述子生成アダプター。
-
-Implements: §3.9 XTB量子化学記述子
-引用: Bannwarth et al., J. Chem. Theory Comput. 2019, DOI: 10.1021/acs.jctc.8b01176
-
-動作条件:
-  - `xtb` バイナリが PATH に存在すること
-  - RDKit がインストールされていること（SMILES → 3D 変換用）
-
-インストール方法:
-  conda install -c conda-forge xtb          # 推奨（Windows対応）
-  または https://github.com/grimme-lab/xtb/releases からバイナリをダウンロード
-"""
+import logging
+import os
+import shutil
+import subprocess
+import tempfile
+import re
 from typing import Any, List, Dict, Optional, Union, Tuple
 
 import numpy as np
@@ -37,7 +27,6 @@ if os.name == 'nt':
         pass
 
 # クラッシュ検出時に2回目以降の実行をスキップするためのフラグ
-# (後方互換性のために残すが、現在はインスタンス変数 self._xtb_broken を推奨)
 _XTB_BROKEN_GLOBAL = False
 
 _XTB_DESCRIPTORS = {
@@ -56,51 +45,6 @@ _XTB_DESCRIPTORS = {
     "xtb_MullikenChargeMean":   "原子Mulliken電荷の平均値",
     "xtb_MullikenChargeStd":    "原子Mulliken電荷の標準偏差",
 }
-
-
-def _smiles_to_xyz(smiles: str, charge: int = 0) -> Optional[str]:
-    """
-    SMILES → 3D座標 (XYZ 形式文字列)。RDKit を使用。
-
-    Args:
-        smiles: 入力 SMILES
-        charge: 分子の形式電荷（3D構造生成には直接不要だが、
-                MMFF/UFF 最適化の際に電荷を考慮させるために渡す）
-    """
-    try:
-        from rdkit import Chem
-        from rdkit.Chem import AllChem
-
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            return None
-        mol = Chem.AddHs(mol)
-        result = AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
-        if result != 0:
-            AllChem.EmbedMolecule(mol, AllChem.ETKDG())
-        # MMFF最適化（荷電分子にはUFFの方が安定する場合があるが、MMFFを優先）
-        try:
-            AllChem.MMFFOptimizeMolecule(mol)
-        except Exception:
-            try:
-                AllChem.UFFOptimizeMolecule(mol)
-            except Exception:
-                pass  # 最適化失敗でも座標は得られている場合がある
-
-        conf = mol.GetConformer()
-        atoms = [mol.GetAtomWithIdx(i).GetSymbol() for i in range(mol.GetNumAtoms())]
-        positions = conf.GetPositions()
-
-        lines = [str(len(atoms)), f"Generated from SMILES: {smiles} charge={charge}"]
-        for sym, pos in zip(atoms, positions):
-            lines.append(f"{sym:2s}  {pos[0]:12.6f}  {pos[1]:12.6f}  {pos[2]:12.6f}")
-        return "\n".join(lines)
-    except ImportError:
-        logger.error("RDKit が利用できません。")
-        raise
-    except Exception as e:
-        logger.warning(f"SMILES→XYZ 変換中の予期せぬエラー ({type(e).__name__}): {e} [SMILES: {smiles[:30]}]")
-        return None
 
 
 def _parse_xtb_output(output: str) -> Dict[str, float]:
@@ -123,15 +67,12 @@ def _parse_xtb_output(output: str) -> Dict[str, float]:
 
         try:
             if "homo-lumo gap" in line_l:
-                # 形式: " | HOMO-LUMO GAP                     4.8118 eV   |"
                 if len(parts) >= 2:
-                    # 最後の要素が | なので、数値はその手前（-2）
                     try:
                         result["xtb_HomoLumoGap"] = float(parts[-2])
                     except ValueError:
                         pass
             elif "| homo" in line_l and "ev" in line_l:
-                # 形式: " | HOMO | -0.51262 | -13.9492 | eV |"
                 pipe_parts = [p.strip() for p in line.split("|") if p.strip()]
                 for pp in pipe_parts:
                     tokens = pp.split()
@@ -150,14 +91,12 @@ def _parse_xtb_output(output: str) -> Dict[str, float]:
                         except ValueError:
                             pass
             elif "total energy" in line_l and "eh" in line_l:
-                # 形式: "   :: total energy              -15.12345678 Eh"
                 if len(parts) >= 2:
                     try:
                         result["xtb_TotalEnergy"] = float(parts[-2])
                     except ValueError:
                         pass
             elif "| total" in line_l and "debye" in line_l:
-                # 形式: " | total | 0.000  0.000  1.234 Debye |"
                 pipe_parts = [p.strip() for p in line.split("|") if p.strip()]
                 for pp in pipe_parts:
                     if "debye" in pp.lower():
@@ -175,24 +114,18 @@ def _parse_xtb_output(output: str) -> Dict[str, float]:
                 in_charges_block = True
                 mulliken_charges = []
             elif in_charges_block:
-                # 形式: "  1  6  C     3.856  -0.0152     1.000     0.000"
-                #        #  Z  Sym   covCN      q        C6AA     alpha
                 if len(parts) >= 5:
                     try:
-                        # 5列目（インデックス4）が電荷 'q'
                         q = float(parts[4])
                         mulliken_charges.append(q)
                     except ValueError:
-                        # 数値に変換できない行（ヘッダーやフッター）が現れたらブロック終了
-                        if mulliken_charges: # 既に取得済みなら終了
+                        if mulliken_charges:
                              in_charges_block = False
                 elif len(parts) > 0:
-                    # 空行でないが列数が足りない場合もブロック終了
                     if mulliken_charges:
                         in_charges_block = False
 
         except Exception as e:
-            # 個別のパースエラーは警告に留める
             logger.debug(f"XTB line parse error at line {i}: {e}")
             continue
 
@@ -223,10 +156,6 @@ def _parse_xtb_output(output: str) -> Dict[str, float]:
 def _read_xyz_coords(xyz_path: str) -> Optional[Dict[str, Any]]:
     """
     XYZファイルから座標と原子番号を読み取る（ML派生特徴量用）。
-
-    Returns:
-        {"coords": np.ndarray (N,3), "atomic_numbers": list[int], "symbols": list[str]}
-        または読み取り失敗時に None。
     """
     _SYMBOL_TO_Z = {
         "H": 1, "He": 2, "Li": 3, "Be": 4, "B": 5, "C": 6, "N": 7, "O": 8,
@@ -269,27 +198,12 @@ def _read_xyz_coords(xyz_path: str) -> Optional[Dict[str, Any]]:
 class XTBAdapter(BaseChemAdapter):
     """
     XTB (GFN2-xTB) による量子化学計算記述子アダプター。
-
-    SMILES → RDKit 3D構造生成 → xtb バイナリ (subprocess) → 記述子抽出
-
-    Implements: §3.9 XTB量子化学記述子
-    引用: Bannwarth et al., JCTC 2019, DOI: 10.1021/acs.jctc.8b01176
-    API:
-        gfn (int): GFN-xTB レベル（デフォルト 2）
-        calc_type (str): "opt"(構造最適化, デフォルト) or "sp"(単点計算)
-        convergence (str): 収束基準 ("crude"/"sloppy"/"loose"/"normal"/"tight"/"vtight")
-        solvent (str): 溶媒モデル名（"none"=気相, "water", "methanol"等 → --alpb)
-        timeout (int): 1分子あたりのタイムアウト秒数（デフォルト300）
-        max_retries (int): 失敗時のリトライ回数（デフォルト3）
-    前提:
-        - `xtb` バイナリが PATH に存在すること
-        - conda install -c conda-forge xtb  でインストール可能
     """
 
     def __init__(
         self,
         gfn: int = 2,
-        calc_type: str = "opt",   # デフォルトを構造最適化に変更（要件2.1）
+        calc_type: str = "opt",
         convergence: str = "normal",
         solvent: str = "none",
         timeout: Optional[int] = None,
@@ -297,15 +211,12 @@ class XTBAdapter(BaseChemAdapter):
     ):
         from backend.utils.config import default_config
         self.gfn = gfn
-        # 科学的根拠: 構造最適化によりSMILESから機械的に生成した初期構造の
-        # 歪みが解消され、電子状態記述子の精度が向上する。
-        # GFN2-xTB の構造最適化は Bannwarth et al. JCTC 2019 で検証済み。
         self.calc_type = calc_type
         self.convergence = convergence
         self.solvent = solvent
         self.timeout = timeout if timeout is not None else default_config.xtb_timeout_per_mol
         self.max_retries = max_retries
-        self._xtb_broken = False  # グローバル変数からインスタンス変数へ変更
+        self._xtb_broken = False
 
     @property
     def name(self) -> str:
@@ -321,13 +232,7 @@ class XTBAdapter(BaseChemAdapter):
         )
 
     def is_available(self) -> bool:
-        """
-        xtb バイナリが PATH に存在するか、または tools/ 配下に同梱バイナリがあるかを確認する。
-        同梱バイナリが見つかった場合は自動的に PATH へ追加する。
-        """
         import pathlib
-
-        # まず PATH を検索
         if shutil.which("xtb") is not None:
             try:
                 from rdkit import Chem  # noqa: F401
@@ -335,7 +240,6 @@ class XTBAdapter(BaseChemAdapter):
             except ImportError:
                 return False
 
-        # PATH にない場合は tools/ 配下の同梱バイナリを探す
         here = pathlib.Path(__file__).resolve().parent
         project_root = here.parent.parent
         candidates = [
@@ -352,48 +256,118 @@ class XTBAdapter(BaseChemAdapter):
                     return True
                 except ImportError:
                     return False
-
         return False
 
-    def _build_cmd(
-        self,
-        xyz_path: str,
-        charge: int,
-        uhf: int,
-        calc_type: Optional[str] = None,
-        convergence: Optional[str] = None,
-        solvent: Optional[str] = None,
-    ) -> List[str]:
-        """xtb コマンドライン引数を構築する。"""
-        ct = calc_type or self.calc_type
-        conv = convergence or self.convergence
-        solv = solvent or self.solvent
+    def _smiles_to_xyz(self, smiles: str, charge: int = 0, multiplicity: int = 1) -> Optional[str]:
+        """
+        SMILES → 3D座標 (XYZ 形式文字列)。RDKit を使用。
+        """
+        try:
+            from rdkit import Chem
+            from rdkit.Chem import AllChem
 
-        cmd = ["xtb", xyz_path, f"--gfn{self.gfn}"]
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is None:
+                return None
+            mol = Chem.AddHs(mol)
+            
+            params = AllChem.ETKDGv3()
+            params.randomSeed = 42
+            result = AllChem.EmbedMolecule(mol, params)
+            if result != 0:
+                AllChem.EmbedMolecule(mol, AllChem.ETKDG())
+                
+            try:
+                if charge != 0 or multiplicity > 1:
+                    AllChem.UFFOptimizeMolecule(mol)
+                else:
+                    AllChem.MMFFOptimizeMolecule(mol)
+            except Exception:
+                pass
 
-        # 計算タイプ
-        if ct == "opt":
-            cmd.append("--opt")
-            # 収束基準を付加（"normal" はxtbデフォルトなので省略可だが、明示）
-            if conv and conv != "normal":
-                cmd.append(conv)
-        else:
-            cmd.append("--sp")
+            conf = mol.GetConformer()
+            atoms = [mol.GetAtomWithIdx(i).GetSymbol() for i in range(mol.GetNumAtoms())]
+            positions = conf.GetPositions()
 
-        # 電荷
-        cmd += ["--chrg", str(charge)]
+            lines = [str(len(atoms)), f"SMILES: {smiles} charge={charge} mult={multiplicity}"]
+            for sym, pos in zip(atoms, positions):
+                lines.append(f"{sym:2s}  {pos[0]:12.6f}  {pos[1]:12.6f}  {pos[2]:12.6f}")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.warning(f"SMILES→XYZ 変換失敗 ({smiles[:30]}): {e}")
+            return None
 
-        # 不対電子
-        if uhf > 0:
-            cmd += ["--uhf", str(uhf)]
+    def _run_xtb_calculation(self, smiles: str, charge: int, multiplicity: int) -> Dict[str, float]:
+        """
+        Execute xTB calculation for a single SMILES
+        """
+        import tempfile
+        import subprocess
+        import re
+        import os
+        
+        timeout = self.timeout
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xyz_path = os.path.join(tmpdir, "input.xyz")
+            
+            try:
+                xyz_content = self._smiles_to_xyz(smiles, charge, multiplicity)
+                if not xyz_content:
+                    return {}
+                    
+                with open(xyz_path, 'w') as f:
+                    f.write(xyz_content)
+                
+                cmd = ["xtb", xyz_path, "--chrg", str(charge), "--uhf", str(multiplicity-1)]
+                if self.gfn != 2:
+                    cmd.append(f"--gfn{self.gfn}")
+                if self.calc_type == "opt":
+                    cmd.append("--opt")
+                    if self.convergence != "normal":
+                        cmd.append(self.convergence)
+                
+                if self.solvent and self.solvent.lower() not in ("none", "gas", "vacuum", ""):
+                    cmd += ["--alpb", self.solvent]
 
-        # 溶媒モデル（ALPB: Analytical Linearized Poisson-Boltzmann）
-        # 科学的根拠: ALPBは暗黙溶媒モデルとしてxtb 6.4+で推奨。
-        # Ehlert et al., J. Chem. Phys. 2021
-        if solv and solv.lower() not in ("none", "gas", "vacuum", ""):
-            cmd += ["--alpb", solv]
+                kwargs_sub = {}
+                if os.name == "nt":
+                    kwargs_sub["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
-        return cmd
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    cwd=tmpdir,
+                    env={**os.environ, "OMP_NUM_THREADS": "1"},
+                    **kwargs_sub
+                )
+                
+                if result.returncode in (3221225794, -1073741502, 3221225749, -1073741515, 3221225477, -1073741819):
+                    logger.critical("XTBがシステムエラーでクラッシュしました。")
+                    self._xtb_broken = True
+                    return {}
+
+                if result.returncode != 0:
+                    logger.warning(f"xTB failed for SMILES {smiles!r}: {result.stderr[:200]}")
+                    return {}
+                
+                properties = _parse_xtb_output(result.stdout)
+                
+                # 最適化後座標の読み取り試行
+                opt_xyz_path = os.path.join(tmpdir, "xtbopt.xyz")
+                if os.path.exists(opt_xyz_path):
+                    properties["_coord_info"] = _read_xyz_coords(opt_xyz_path)
+                
+                return properties
+                
+            except subprocess.TimeoutExpired:
+                logger.error(f"xTB calculation timed out after {timeout}s for SMILES {smiles!r}")
+                return {}
+            except Exception as e:
+                logger.error(f"Unexpected error in xTB calculation for SMILES {smiles!r}: {e}")
+                return {}
 
     def compute(
         self,
@@ -402,20 +376,6 @@ class XTBAdapter(BaseChemAdapter):
         charge_config_store: Optional[Any] = None,
         **kwargs: Any,
     ) -> DescriptorResult:
-        """
-        SMILES リストから XTB 量子化学記述子を計算する。
-
-        Implements: §3.9 XTB計算フロー
-        デフォルトで構造最適化(--opt)を実行。失敗時はリトライ（収束基準を緩和）。
-
-        Args:
-            smiles_list: 入力 SMILES のリスト
-            selected_descriptors: 使用する記述子名（None = 全件）
-            charge_config_store: ChargeConfigStore インスタンス
-            **kwargs: calc_type, convergence, solvent を上書き可能
-        Returns:
-            DescriptorResult: xtb_* 列からなる DataFrame
-        """
         self._require_available()
 
         all_names = list(_XTB_DESCRIPTORS.keys())
@@ -424,186 +384,49 @@ class XTBAdapter(BaseChemAdapter):
             if selected_descriptors else all_names
         )
 
-        # kwargs からオーバーライド
-        calc_type = kwargs.get("calc_type", self.calc_type)
-        convergence = kwargs.get("convergence", self.convergence)
-        solvent = kwargs.get("solvent", self.solvent)
-
         rows: List[Dict[str, Any]] = []
         failed_indices: List[int] = []
-        optimized_coords: List[Optional[Dict[str, Any]]] = []  # 最適化後座標（ML特徴量抽出用）
+        optimized_coords: List[Optional[Dict[str, Any]]] = []
 
-        # リトライ時の収束基準フォールバック順序
-        _CONVERGENCE_FALLBACK = ["normal", "loose", "sloppy", "crude"]
+        for i, smi in enumerate(smiles_list):
+            row = {k: np.nan for k in col_names}
+            
+            if self._xtb_broken:
+                failed_indices.append(i)
+                optimized_coords.append(None)
+                rows.append(row)
+                continue
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            for i, smi in enumerate(smiles_list):
-                row = {k: np.nan for k in col_names}
+            try:
+                if charge_config_store is not None:
+                    charge = charge_config_store.resolve_charge(smi)
+                    spin   = charge_config_store.resolve_spin(smi)
+                    cfg    = charge_config_store.get_config(smi)
+                    from backend.chem.protonation import apply_protonation
+                    smi_for_xtb = apply_protonation(smi, cfg)
+                    uhf = spin - 1
+                    multiplicity = spin
+                else:
+                    from backend.chem.charge_config import _read_smiles_formal_charge
+                    charge = _read_smiles_formal_charge(smi)
+                    multiplicity = 1
+                    smi_for_xtb = smi
+
+                parsed = self._run_xtb_calculation(smi_for_xtb, charge, multiplicity)
                 
-                if self._xtb_broken:
+                if not parsed:
                     failed_indices.append(i)
                     optimized_coords.append(None)
-                    rows.append(row)
-                    continue
-
-                try:
-                    # 電荷・スピンを解決
-                    if charge_config_store is not None:
-                        charge = charge_config_store.resolve_charge(smi)
-                        spin   = charge_config_store.resolve_spin(smi)
-                        cfg    = charge_config_store.get_config(smi)
-                        from backend.chem.protonation import apply_protonation
-                        smi_for_xtb = apply_protonation(smi, cfg)
-                        uhf = spin - 1
-                    else:
-                        from backend.chem.charge_config import _read_smiles_formal_charge
-                        charge = _read_smiles_formal_charge(smi)
-                        uhf = 0
-                        smi_for_xtb = smi
-
-                    xyz = _smiles_to_xyz(smi_for_xtb, charge=charge)
-                    if xyz is None:
-                        raise ValueError(f"SMILES → XYZ 変換失敗: {smi[:30]}")
-
-                    xyz_path = os.path.join(tmpdir, f"mol_{i}.xyz")
-                    with open(xyz_path, "w") as f:
-                        f.write(xyz)
-
-                    # リトライ機構（収束基準を段階的に緩和）
-                    parsed = {}
-                    success = False
-                    current_conv = convergence
-
-                    for attempt in range(self.max_retries):
-                        cmd = self._build_cmd(
-                            xyz_path, charge, uhf,
-                            calc_type=calc_type,
-                            convergence=current_conv,
-                            solvent=solvent,
-                        )
-
-                        logger.debug(
-                            "XTB cmd (attempt %d/%d): %s",
-                            attempt + 1, self.max_retries,
-                            " ".join(cmd[:6]),
-                        )
-
-                        try:
-                            kwargs_sub = {}
-                            if os.name == "nt":
-                                kwargs_sub["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-
-                            result = subprocess.run(
-                                cmd,
-                                cwd=tmpdir,
-                                capture_output=True,
-                                text=True,
-                                encoding="utf-8",
-                                errors="replace",
-                                timeout=self.timeout,
-                                **kwargs_sub
-                            )
-                            # 0xc0000142 = -1073741502 or 3221225794, 0xc0000135 = -1073741515 or 3221225749
-                            if result.returncode in (3221225794, -1073741502, 3221225749, -1073741515, 3221225477, -1073741819):
-                                logger.critical("XTBがシステムエラーでクラッシュしました。以降の分子はスキップします。(returncode: %s)", result.returncode)
-                                self._xtb_broken = True
-                                success = False
-                                break
-
-                            if result.returncode == 0:
-                                parsed = _parse_xtb_output(result.stdout)
-                                success = True
-                                break
-                            else:
-                                logger.warning(
-                                    "XTB 非0終了 (idx=%d, attempt=%d, conv=%s): %s",
-                                    i, attempt + 1, current_conv,
-                                    result.stderr[-200:] if result.stderr else "no stderr",
-                                )
-                                # 収束失敗の場合、基準を緩和してリトライ
-                                if calc_type == "opt":
-                                    conv_idx = _CONVERGENCE_FALLBACK.index(current_conv) if current_conv in _CONVERGENCE_FALLBACK else 0
-                                    if conv_idx + 1 < len(_CONVERGENCE_FALLBACK):
-                                        current_conv = _CONVERGENCE_FALLBACK[conv_idx + 1]
-                                        logger.info(
-                                            "XTB リトライ: 収束基準を '%s' に緩和 (idx=%d)",
-                                            current_conv, i,
-                                        )
-                                        # XYZ ファイルを再書き込み（最適化途中の構造がある場合）
-                                        opt_xyz = os.path.join(tmpdir, "xtbopt.xyz")
-                                        if os.path.exists(opt_xyz):
-                                            import shutil as _shutil
-                                            _shutil.copy2(opt_xyz, xyz_path)
-                                    else:
-                                        # 全基準で失敗 → sp にフォールバック
-                                        calc_type = "sp"
-                                        current_conv = "normal"
-                                        logger.info("XTB: --opt 全基準失敗 → --sp にフォールバック (idx=%d)", i)
-                                else:
-                                    break  # sp でも失敗ならリトライ打ち切り
-
-                        except subprocess.TimeoutExpired:
-                            logger.warning(
-                                "XTB タイムアウト (%ds): attempt=%d, idx=%d, smi=%s",
-                                self.timeout, attempt + 1, i, smi[:30],
-                            )
-                            # タイムアウト時も sp にフォールバック
-                            if calc_type == "opt" and attempt < self.max_retries - 1:
-                                calc_type = "sp"
-                                logger.info("XTB: タイムアウト → --sp にフォールバック (idx=%d)", i)
-                            else:
-                                break
-
-                    if not success and not parsed:
-                        # 最終手段: sp で1回だけ実行
-                        try:
-                            cmd_sp = self._build_cmd(
-                                xyz_path, charge, uhf,
-                                calc_type="sp", convergence="normal", solvent=solvent,
-                            )
-                            kwargs_sub = {}
-                            if os.name == "nt":
-                                kwargs_sub["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-                            
-                            result_sp = subprocess.run(
-                                cmd_sp, cwd=tmpdir,
-                                capture_output=True,
-                                text=True,
-                                encoding="utf-8",
-                                errors="replace",
-                                timeout=120,
-                                **kwargs_sub
-                            )
-                            if result_sp.returncode in (3221225794, -1073741502, 3221225749, -1073741515, 3221225477, -1073741819):
-                                logger.critical("XTBがシステムエラーでクラッシュしました。以降の分子はスキップします。(returncode: %s)", result_sp.returncode)
-                                self._xtb_broken = True
-
-                            if result_sp.returncode == 0:
-                                parsed = _parse_xtb_output(result_sp.stdout)
-                            else:
-                                failed_indices.append(i)
-                        except Exception:
-                            failed_indices.append(i)
-
+                else:
                     for k in col_names:
                         if k in parsed:
                             row[k] = parsed[k]
-
-                    # 最適化後座標の読み取り試行（ML派生特徴量用）
-                    opt_xyz_path = os.path.join(tmpdir, "xtbopt.xyz")
-                    coord_info = None
-                    if os.path.exists(opt_xyz_path):
-                        try:
-                            coord_info = _read_xyz_coords(opt_xyz_path)
-                        except Exception:
-                            pass
-                    optimized_coords.append(coord_info)
-
-                except Exception as e:
-                    logger.warning("XTB 計算失敗: idx=%d err=%s", i, e)
-                    failed_indices.append(i)
-                    optimized_coords.append(None)
-                rows.append(row)
+                    optimized_coords.append(parsed.get("_coord_info"))
+            except Exception as e:
+                logger.warning("XTB 計算失敗: idx=%d err=%s", i, e)
+                failed_indices.append(i)
+                optimized_coords.append(None)
+            rows.append(row)
 
         df = pd.DataFrame(rows, columns=col_names)
         return DescriptorResult(

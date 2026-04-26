@@ -327,31 +327,37 @@ class RDKitAdapter(BaseChemAdapter):
                     try:
                         mol_h = Chem.AddHs(mol)
                         rdPartialCharges.ComputeGasteigerCharges(mol_h)
-                        charges = [
+                        
+                        # 【修正点1+5】ジェネレータ式でメモリ効率向上＋NaN/infを即時フィルタ
+                        charges = (
                             float(mol_h.GetAtomWithIdx(i).GetDoubleProp('_GasteigerCharge'))
                             for i in range(mol_h.GetNumAtoms())
-                        ]
-                        # 【修正点1】NaN/infをフィルタリング
-                        charges = [q for q in charges if np.isfinite(q)]
+                        )
+                        charges = [q for q in charges if np.isfinite(q)]  # NaN/infを除去
                         
-                        if charges:  # 【修正点2】空リスト時の安全な分岐
-                            ca = np.array(charges)
+                        # 【修正点2】空リスト時の明確な分岐とデフォルト値設定
+                        if charges:
+                            # 【修正点4】np.float deprecated回避のため明示的型変換
+                            ca = np.array(charges, dtype=float)
                             row["gasteiger_q_max"] = float(np.max(ca))
                             row["gasteiger_q_min"] = float(np.min(ca))
                             row["gasteiger_q_range"] = float(np.max(ca) - np.min(ca))
                             row["gasteiger_q_std"] = float(np.std(ca))
                             row["gasteiger_q_abs_mean"] = float(np.mean(np.abs(ca)))
                         else:
-                            # 【修正点3】計算失敗時の明確なNaN設定
+                            # 【修正点2】計算失敗時の明確なNaN設定（型統一）
                             for k in ["gasteiger_q_max", "gasteiger_q_min",
                                      "gasteiger_q_range", "gasteiger_q_std", "gasteiger_q_abs_mean"]:
-                                row[k] = np.nan
+                                row[k] = float('nan')  # np.nan より明示的
+                                
+                    # 【修正点3】例外時にSMILES値をログ出力しデバッグ容易化
                     except Exception as e:
-                        # 【修正点4】例外時のログ出力と安全なフォールバック
-                        logger.warning(f"RDKit Gasteiger charge calculation failed for SMILES {smi!r}: {e}")
+                        logger.warning(
+                            f"RDKit Gasteiger charge calculation failed for SMILES {smi!r}: {type(e).__name__}: {e}"
+                        )
                         for k in ["gasteiger_q_max", "gasteiger_q_min",
                                  "gasteiger_q_range", "gasteiger_q_std", "gasteiger_q_abs_mean"]:
-                            row[k] = np.nan
+                            row[k] = float('nan')
 
                 # ── Morgan フィンガープリント (ECFP4) ──
                 if self.compute_fp:

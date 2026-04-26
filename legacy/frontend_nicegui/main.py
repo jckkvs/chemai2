@@ -400,6 +400,21 @@ def _preflight_check(state: dict) -> list[str]:
 
 
 # ─────────────────────────────────────────────
+# アプリケーション起動時の初期化
+# ─────────────────────────────────────────────
+@app.on_startup
+def init_app():
+    """アプリケーション全体で共有するリソースの初期化"""
+    try:
+        # NotoSansJPなどのフォント読み込み確認やキャッシュ初期化
+        logger.info("ChemAI ML Studio is starting up...")
+        # ユーザーセッション状態の初期構造を定義
+        if 'analysis_state' not in app.storage.user:
+            app.storage.user['analysis_state'] = {}
+    except Exception as e:
+        logger.error(f"Startup initialization failed: {e}")
+
+# ─────────────────────────────────────────────
 # メインページ
 # ─────────────────────────────────────────────
 @ui.page("/")
@@ -573,25 +588,34 @@ async def main_page():
                     if hasattr(run_btn, 'classes'): run_btn.classes("btn-run-analysis")
 
         except ValueError as ve:
-            if "n_splits" in str(ve) or "n_samples" in str(ve):
-                ui.notify('⚠️ データが少量のため、CV設定を自動調整しました', type='warning')
-                state['cv_folds'] = min(2, len(state.get('df', [])) // 2)
+            msg = str(ve)
+            # 【精緻化】技術的エラーを日本語の具体的アドバイスに変換
+            if "n_splits" in msg or "n_samples" in msg:
+                ui.notify('⚠️ データが少なすぎます。分割数を減らすかデータを追加してください。', type='warning')
+                state['cv_folds'] = max(2, len(state.get('df', [])) // 3)
+            elif "monotonic_cst" in msg:
+                ui.notify('⚠️ 単調性制約の適用に失敗しました。特徴量名を確認してください。', type='warning')
             else:
                 logger.error(f"ValueError: {ve}")
-                ui.notify(f'解析エラー: {str(ve)}', type='negative')
+                ui.notify(f'設定エラー: {msg}', type='negative')
                 
-        except TypeError as te:
-            if "'list' object is not callable" in str(te):
-                logger.warning("UI要素の参照方法を修正しました")
-            elif "not JSON serializable" in str(te):
-                logger.warning("非シリアライズ可能オブジェクトをスキップ")
-            else:
-                logger.error(f"TypeError: {te}", exc_info=True)
-                ui.notify(f'型エラー: {str(te)}', type='negative')
-                
+        except TimeoutError:
+            # 【追加】タイムアウト通知
+            ui.notify('⏳ 解析が制限時間を超えました。タイムアウト設定を延ばすか、モデルを減らしてください。', 
+                      type='negative', timeout=10000)
+            logger.warning("Analysis timed out.")
+
         except Exception as ex:
             logger.error(f"予期せぬエラー: {ex}", exc_info=True)
-            ui.notify(f'エラー: {type(ex).__name__}: {str(ex)[:100]}', type='negative')
+            # ユーザーフレンドリーな例外表示
+            err_name = type(ex).__name__
+            friendly_msg = {
+                "MemoryError": "メモリ不足が発生しました。データ量を減らしてください。",
+                "FileNotFoundError": "必要なファイルが見つかりません。",
+                "ImportError": "ライブラリが不足しています。環境を確認してください。",
+            }.get(err_name, f"内部エラーが発生しました ({err_name})")
+            
+            ui.notify(f'❌ {friendly_msg}: {str(ex)[:80]}', type='negative', timeout=7000)
 
     # state に格納 → descriptor_plugins_ui から呼べるようにする
     state["_run_analysis"] = _run_analysis

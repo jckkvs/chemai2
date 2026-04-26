@@ -305,81 +305,9 @@ class AutoMLEngine:
         if not model_keys:
              raise ValueError("学習に使用するモデルが指定されておらず、デフォルトも取得できませんでした。")
 
-        scoring = self._get_scoring(task)
-        # cv_key 自動決定: ユーザー指定全優先、"auto"の場合はタスクに応じて自動選択
-        if self.cv_key == "auto":
-            cv_key = "stratified_kfold" if task == "classification" else "kfold"
-        else:
-            cv_key = self.cv_key
-
-        # 【修正点1】Scaffold SplitのSMILES列名解決を強化
-        if cv_key == "scaffold":
-            _chosen_smiles_col = None
-            if isinstance(smiles_col, str):
-                _chosen_smiles_col = smiles_col
-            elif isinstance(smiles_col, list) and len(smiles_col) > 0:
-                # 辞書形式 {"smiles_col": "...", "fraction_col": "..."} にも対応
-                first_item = smiles_col[0]
-                if isinstance(first_item, dict):
-                    _chosen_smiles_col = first_item.get("smiles_col")
-                else:
-                    _chosen_smiles_col = first_item
-
-            if _chosen_smiles_col and _chosen_smiles_col in df.columns:
-                try:
-                    from rdkit.Chem.Scaffolds.MurckoScaffold import MurckoScaffoldSmiles
-                    
-                    def get_scaffold(s):
-                        try:
-                            if pd.isna(s): 
-                                return "unknown"
-                            return MurckoScaffoldSmiles(str(s))
-                        except Exception:
-                            return "unknown"
-                    groups = df[_chosen_smiles_col].apply(get_scaffold).values
-                    logger.info(f"Scaffold Split groups computed from {_chosen_smiles_col}.")
-                except ImportError:
-                    # 【修正点2】RDKit未インストール時の明確なフォールバック
-                    logger.warning("RDKit is not installed. Falling back to KFold for Scaffold Split.")
-                    cv_key = "stratified_kfold" if task == "classification" else "kfold"
-                except Exception as e:
-                    logger.warning(f"Scaffold computation failed: {e}. Falling back to KFold.")
-                    cv_key = "stratified_kfold" if task == "classification" else "kfold"
-            else:
-                # 【修正点3】SMILES列が見つからない場合の処理
-                logger.warning(f"SMILES column '{_chosen_smiles_col}' not found for Scaffold Split. Falling back to KFold.")
-                cv_key = "stratified_kfold" if task == "classification" else "kfold"
-
-        # 【修正点4】GroupKFold系のグループ数バリデーションを強化
-        if cv_key in ("group_kfold", "leave_one_group_out", "scaffold") and groups is not None:
-            n_unique_groups = len(np.unique(groups))
-            if n_unique_groups < self.cv_folds:
-                if n_unique_groups >= 2:
-                    # 【修正点5】グループ数が足りない場合の自動調整
-                    logger.warning(
-                        f"{cv_key}: Group count ({n_unique_groups}) < n_splits ({self.cv_folds}). "
-                        f"Automatically adjusting n_splits to {n_unique_groups}."
-                    )
-                    self.cv_folds = n_unique_groups
-                else:
-                    # 【修正点6】グループが1つのみの場合のフォールバック
-                    logger.warning(
-                        f"{cv_key}: Only {n_unique_groups} unique group(s). "
-                        f"Falling back to standard KFold."
-                    )
-                    cv_key = "stratified_kfold" if task == "classification" else "kfold"
-                    groups = None
-        
-        # サンプル数が少ない場合は cv_folds を強制的に調整
-        n_samples_final = len(df)
-        def get_safe_n_splits(n_samples: int, requested_splits: int = 5) -> int:
-            """サンプル数に基づいて安全なCV分割数を返す"""
-            # 各foldに最低2サンプル必要
-            min_samples_per_fold = 2
-            max_splits = max(1, n_samples // min_samples_per_fold)
-            return min(requested_splits, max_splits, n_samples)
-            
-        self.cv_folds = get_safe_n_splits(n_samples_final, self.cv_folds)
+        # CV splitter 取得 (精緻化版ヘルパー使用)
+        cv = self._get_cv_splitter(df, target_col, task, smiles_col=smiles_col, groups=groups)
+        self.cv_folds = cv.n_splits if hasattr(cv, 'n_splits') else self.cv_folds
 
         model_scores: Dict[str, float] = {}
         model_details: Dict[str, Dict[str, Any]] = {}
@@ -441,13 +369,16 @@ class AutoMLEngine:
                 )
 
                 if self.monotonic_constraints_dict:
-                    try:
-                        from backend.models.monotonicity_adapter import apply_monotonicity_constraints
-                        
                         preprocessor_step = pipeline_base.named_steps["preprocess"]
                         preprocessor_step.fit(X_train)
+                        
+                        # 特徴量変換後の名前リストを取得
+                        feature_names = preprocessor_step.get_feature_names_out().tolist() if hasattr(preprocessor_step, 'get_feature_names_out') else list(X_train.columns)
 
-                        constrained_model = apply_monotonicity_constraints(
+                        # 制約適用 (精緻化版ヘルパー使用)
+                        constrained_model = self._apply_constraints_to_estimator(
+                            model_inst, self.column_meta_dict, feature_names, X_train
+                        )
                             estimator=model_inst,
                             pipeline=preprocessor_step,
                             constraints_dict=self.monotonic_constraints_dict
@@ -868,3 +799,121 @@ class AutoMLEngine:
         dup_rate = df.duplicated().mean()
         if dup_rate > 0.05:
             warnings.append(f"重複行が {dup_rate:.1%} あります。")
+    def _get_cv_splitter(
+        self,
+        df: pd.DataFrame,
+        target_col: str,
+        task: Literal["regression", "classification"],
+        smiles_col: Optional[Union[str, List[Union[str, Dict]]]] = None,
+        groups: Optional[np.ndarray] = None
+    ) -> BaseCrossValidator:
+        """
+        Get appropriate cross-validation splitter with robust boundary handling
+        """
+        from sklearn.model_selection import KFold, StratifiedKFold, GroupKFold
+        
+        cv_key = self.cv_key if self.cv_key != "auto" else (
+            "stratified_kfold" if task == "classification" else "kfold"
+        )
+        
+        n_samples = len(df)
+        if self.cv_folds > n_samples // 2:
+            adjusted_folds = max(2, n_samples // 3)
+            logger.info(
+                f"Adjusted cv_folds from {self.cv_folds} to {adjusted_folds} "
+                f"due to small dataset size (n={n_samples})"
+            )
+            effective_folds = adjusted_folds
+        else:
+            effective_folds = self.cv_folds
+        
+        if cv_key == "kfold":
+            return KFold(n_splits=effective_folds, shuffle=True, random_state=42)
+        
+        elif cv_key == "stratified_kfold":
+            y = df[target_col]
+            if task == "classification":
+                class_counts = y.value_counts()
+                min_class_size = class_counts.min()
+                
+                if min_class_size < effective_folds:
+                    logger.warning(
+                        f"StratifiedKFold not feasible: min class size ({min_class_size}) < "
+                        f"n_splits ({effective_folds}). Falling back to KFold."
+                    )
+                    return KFold(n_splits=effective_folds, shuffle=True, random_state=42)
+            
+            return StratifiedKFold(n_splits=effective_folds, shuffle=True, random_state=42)
+        
+        elif cv_key == "group_kfold" and groups is not None:
+            n_unique_groups = len(np.unique(groups))
+            if n_unique_groups < effective_folds:
+                if n_unique_groups >= 2:
+                    logger.warning(f"GroupKFold: adjusting splits to {n_unique_groups}.")
+                    return GroupKFold(n_splits=n_unique_groups)
+                else:
+                    logger.warning("GroupKFold: only 1 unique group. Falling back to KFold.")
+                    return KFold(n_splits=effective_folds, shuffle=True, random_state=42)
+            return GroupKFold(n_splits=effective_folds)
+        
+        elif cv_key == "scaffold" and smiles_col is not None:
+            # Scaffold logic handled before calling this if groups were computed
+            if groups is not None:
+                return GroupKFold(n_splits=effective_folds)
+        
+        return KFold(n_splits=effective_folds, shuffle=True, random_state=42)
+
+
+    def _apply_constraints_to_estimator(
+        self,
+        estimator: BaseEstimator,
+        column_meta: Dict[str, Any],
+        feature_names: List[str],
+        X_train: pd.DataFrame
+    ) -> BaseEstimator:
+        """
+        Apply monotonic/linearity constraints to estimator
+        """
+        from backend.models.monotonic_kernel import ConstrainedEstimatorWrapper
+        
+        constraints = {}
+        for col, meta in column_meta.items():
+            mono_val = getattr(meta, 'monotonic', 0) if hasattr(meta, 'monotonic') else (meta.get('monotonic', 0) if isinstance(meta, dict) else 0)
+            if mono_val in (1, -1):
+                if col in feature_names:
+                    constraints[col] = int(mono_val)
+                else:
+                    matched = [f for f in feature_names if col in f or f.startswith(col + "_")]
+                    if matched:
+                        logger.debug(f"Column '{col}' mapped to '{matched[0]}' after transformation")
+                        constraints[matched[0]] = int(mono_val)
+        
+        if not constraints:
+            return estimator
+        
+        if isinstance(estimator, ConstrainedEstimatorWrapper):
+            logger.warning("Estimator already wrapped with constraints. Skipping.")
+            return estimator
+        
+        est_name = type(estimator).__name__
+        supports_native = hasattr(estimator, 'set_params') and 'monotonic_cst' in estimator.get_params()
+        
+        if not supports_native:
+            logger.info(f"Estimator {est_name} does not support native constraints. Using soft wrapper.")
+            return ConstrainedEstimatorWrapper(
+                base_estimator=estimator,
+                constraints=constraints,
+                strength='soft',
+                feature_names=feature_names
+            )
+        
+        if feature_names:
+            monotonic_array = []
+            for feat in feature_names:
+                val = constraints.get(feat, 0)
+                monotonic_array.append(int(val))
+            
+            estimator.set_params(monotonic_cst=tuple(monotonic_array))
+            logger.debug(f"Applied native monotonic constraints: {monotonic_array}")
+        
+        return estimator
