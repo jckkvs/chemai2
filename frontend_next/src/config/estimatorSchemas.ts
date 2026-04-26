@@ -243,6 +243,15 @@ export const featureEngineSchemas: Record<string, any> = {
       ]),
     },
   },
+  xtb_features: {
+    name: 'GFN2-xTB Quantum Descriptors',
+    description: 'Semi-empirical quantum mechanical descriptors: Energy, HOMO/LUMO, Gap, Dipole, etc.',
+    params: {
+      charge: createNumberParam('Charge', 'Total charge of the molecule', 0, -10, 10, 1),
+      multiplicity: createNumberParam('Multiplicity', 'Spin multiplicity (1=singlet, 2=doublet, etc.)', 1, 1, 10, 1),
+      optimize: createToggleParam('Optimize', 'Perform geometry optimization before descriptor calculation', true),
+    },
+  },
 };
 
 // Helper functions

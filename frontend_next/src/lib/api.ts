@@ -129,24 +129,49 @@ export async function runPipeline(config: PipelineConfig, onStatusUpdate?: (stat
   return response.data as AnalysisResult;
 }
 
-export async function getResults(): Promise<AnalysisResult> {
-  const response = await api.get('/results');
+export async function getResults(sessionId?: string): Promise<AnalysisResult> {
+  const response = await api.get('/results', { params: sessionId ? { session_id: sessionId } : {} });
   return response.data as AnalysisResult;
 }
 
 // ── EDA Functions ─────────────────────────────────
-export async function getEDAStats(): Promise<EDAResults['stats']> {
-  const response = await api.get('/eda/stats');
-  return response.data.stats;
-}
-
-export async function getEDACorrelation(method: 'pearson' | 'spearman' | 'kendall' = 'pearson'): Promise<EDAResults['correlation']> {
-  const response = await api.get('/eda/correlation', { params: { method } });
+export async function getEDAStats(sessionId?: string): Promise<EDAResults['stats']> {
+  const response = await api.get('/eda/stats', { params: sessionId ? { session_id: sessionId } : {} });
   return response.data;
 }
 
-export async function getEDADimReduction(): Promise<EDAResults['dim_reduction']> {
-  const response = await api.get('/eda/dim_reduction');
+export async function getEDACorrelation(sessionId?: string, method: 'pearson' | 'spearman' | 'kendall' = 'pearson'): Promise<EDAResults['correlation']> {
+  const response = await api.get('/eda/correlation', { params: { method, ...(sessionId ? { session_id: sessionId } : {}) } });
+  return response.data;
+}
+
+export async function getEDADimReduction(sessionId?: string): Promise<EDAResults['dim_reduction']> {
+  const response = await api.get('/eda/dim_reduction', { params: sessionId ? { session_id: sessionId } : {} });
+  return response.data;
+}
+
+// ── MLOps / Experiment Tracking ─────────────────────────────────
+export async function listExperiments(sessionId: string): Promise<any[]> {
+  const response = await api.get('/experiments', { params: { session_id: sessionId } });
+  return response.data;
+}
+
+export async function createExperiment(sessionId: string, runData: any): Promise<any> {
+  const response = await api.post('/experiments', runData, { params: { session_id: sessionId } });
+  return response.data;
+}
+
+export async function getExperimentMetrics(sessionId: string, runId: string): Promise<any> {
+  const response = await api.get(`/experiments/${runId}/metrics`, { params: { session_id: sessionId } });
+  return response.data;
+}
+
+// ── Dynamic Feature Computation ─────────────────────────────────
+export async function computeFeaturesOnDemand(engineKey: string, smilesList: string[], config?: any): Promise<any> {
+  const response = await api.post('/features/compute', { 
+    smiles_list: smilesList, 
+    config 
+  }, { params: { engine_key: engineKey } });
   return response.data;
 }
 

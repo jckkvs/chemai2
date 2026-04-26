@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">ChemAI ML Studio</h1>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-white p-4 rounded shadow">
+            <h2 class="text-xl font-semibold mb-2">📊 EDA & Visualization</h2>
+            <a href="#" class="text-blue-600 hover:underline">Open EDA Panel</a>
+        </div>
+        <div class="bg-white p-4 rounded shadow">
+            <h2 class="text-xl font-semibold mb-2">🤖 Model Training</h2>
+            <form id="train-form" hx-post="{% url 'start_training' %}" hx-target="#train-result" hx-swap="innerHTML">
+                {% csrf_token %}
+                <input type="hidden" name="config" id="config-input">
+                <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Start Training</button>
+            </form>
+            <div id="train-result" class="mt-3"></div>
+        </div>
+        <div class="bg-white p-4 rounded shadow">
+            <h2 class="text-xl font-semibold mb-2">📤 Export</h2>
+            <button onclick="exportModel('onnx')" class="bg-green-500 text-white px-4 py-2 rounded mr-2">ONNX</button>
+            <button onclick="exportModel('pdf')" class="bg-purple-500 text-white px-4 py-2 rounded">PDF</button>
+        </div>
+    </div>
+    <div id="progress-panel" class="mt-6 bg-gray-100 p-4 rounded hidden">
+        <h3 class="text-lg font-semibold">Training Progress</h3>
+        <div id="progress-bar" class="w-full bg-gray-300 rounded h-4 mt-2">
+            <div id="progress-fill" class="bg-blue-500 h-4 rounded" style="width: 0%"></div>
+        </div>
+        <p id="progress-text" class="text-sm text-gray-600 mt-1">Waiting...</p>
+    </div>
+</div>
+
+<script>
+function exportModel(format) {
+    fetch(`/api/v1/export/${format}`, { method: 'POST', credentials: 'same-origin' })
+        .then(res => res.blob())
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `model.${format}`;
+            a.click();
+        });
+}
+
+document.addEventListener('htmx:afterRequest', function(evt) {
+    const result = JSON.parse(evt.detail.xhr.responseText);
+    if (result.task_id) {
+        document.getElementById('progress-panel').classList.remove('hidden');
+        subscribeToProgress(result.task_id);
+    }
+});
+
+function subscribeToProgress(taskId) {
+    const evtSource = new EventSource(`/progress/${taskId}/`);
+    evtSource.onmessage = function(e) {
+        const data = JSON.parse(e.data);
+        if (data.type === 'progress') {
+            document.getElementById('progress-fill').style.width = data.progress + '%';
+            document.getElementById('progress-text').textContent = data.message;
+        } else if (data.type === 'complete') {
+            evtSource.close();
+            document.getElementById('progress-text').textContent = '✅ Completed';
+            document.getElementById('progress-fill').classList.remove('bg-blue-500');
+            document.getElementById('progress-fill').classList.add('bg-green-500');
+        }
+    };
+}
+</script>
+{% endblock %}

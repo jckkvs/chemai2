@@ -1,15 +1,14 @@
-FROM node:20-alpine
+FROM node:18-alpine
 
 WORKDIR /app
 
-# package.jsonをコピー
 COPY package*.json ./
-
-# 依存関係のインストール
 RUN npm install
 
-# ソースコードをコピー
 COPY . .
+
+# Build step (optional for development, but good for structure)
+# RUN npm run build
 
 EXPOSE 3000
 

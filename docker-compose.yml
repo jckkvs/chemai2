@@ -1,25 +1,43 @@
 version: '3.8'
 
 services:
+  # ========== FastAPI Backend ==========
   fastapi:
     build:
       context: .
-      dockerfile: backend_fastapi/Dockerfile
+      dockerfile: backend/Dockerfile
+    container_name: chemai-fastapi
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app/backend
-      - ./backend_fastapi:/app/backend_fastapi
+      - ./data:/app/data
+      - ./exports:/app/exports
+      - chemai-cache:/app/.cache
     environment:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
-    command: python -m uvicorn backend_fastapi.main:app --host 0.0.0.0 --port 8000 --reload
+      - DEBUG=${DEBUG:-true}
+      - HOST=0.0.0.0
+      - PORT=8000
+      - ALLOWED_ORIGINS=http://localhost:3000,http://frontend:3000
+      - API_KEY=${API_KEY:-chemai-dev-key}
+      - LOG_LEVEL=INFO
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - chemai-network
 
-  nextjs:
+  # ========== Next.js Frontend ==========
+  frontend:
     build:
       context: ./frontend_next
       dockerfile: Dockerfile
+    container_name: chemai-frontend
     ports:
       - "3000:3000"
     volumes:
@@ -31,25 +49,13 @@ services:
       - NODE_ENV=development
     depends_on:
       - fastapi
-    command: npm run dev
     restart: unless-stopped
-
-  nicegui:
-    image: python:3.11-slim
-    ports:
-      - "8085:8085"
-    volumes:
-      - .:/app
-    working_dir: /app
-    environment:
-      - PYTHONPATH=/app
-    command: >
-      bash -c "
-      pip install -q nicegui pandas scikit-learn &&
-      python frontend_nicegui/main.py
-      "
-    restart: unless-stopped
+    networks:
+      - chemai-network
 
 volumes:
-  node_modules:
-  next_build:
+  chemai-cache:
+
+networks:
+  chemai-network:
+    driver: bridge
