@@ -24,26 +24,17 @@ from sklearn.metrics import (
 from sklearn.base import clone
 
 def _execute_prediction_pipeline(
-    estimator, X_train: np.ndarray, y_arr: np.ndarray, cv_obj
+    estimator, X_train: np.ndarray, y_arr: np.ndarray, cv_obj, **kwargs
 ) -> Dict[str, Any]:
     """
     予測値生成・指標計算の安全実行ラッパー。
-    同期呼び出しを想定（フロントエンドで run.io_bound に委譲）。
     """
     if len(y_arr) == 0:
         raise ValueError("目的変数が空です")
-    if np.ptp(y_arr) < 1e-9:
-        return {
-            "train_preds": getattr(estimator, "predict", lambda x: np.zeros(len(x)))(X_train),
-            "oof_preds": np.full_like(y_arr, np.nan, dtype=float),
-            "train_r2": float('nan'), "cv_r2": float('nan'), "gap": float('nan'),
-            "y_true": y_arr
-        }
-    if X_train.shape[0] != len(y_arr):
-        raise ValueError(f"特徴量行列と目的変数の行数が不一致: X={X_train.shape[0]}, y={len(y_arr)}")
-
+    
     from sklearn.model_selection import cross_val_predict
     try:
+        # predict_proba が必要な場合は method="predict_proba" を使うが、通常は predict
         oof_preds = cross_val_predict(
             estimator, X_train, y_arr, cv=cv_obj, n_jobs=AUTOML_N_JOBS,
             method="predict"
@@ -55,11 +46,12 @@ def _execute_prediction_pipeline(
     full_pipe.fit(X_train, y_arr)
     train_preds = full_pipe.predict(X_train)
 
+    # 基本指標
     train_r2 = r2_score(y_arr, train_preds)
     cv_r2 = r2_score(y_arr, oof_preds)
     gap = train_r2 - cv_r2
 
-    return {
+    result = {
         "train_preds": train_preds,
         "oof_preds": oof_preds,
         "train_r2": float(train_r2),
@@ -68,6 +60,48 @@ def _execute_prediction_pipeline(
         "y_true": y_arr,
         "best_pipeline": full_pipe
     }
+
+    # 【拡張点】多指標一括計算のオプション
+    if kwargs.get('multi_metric', False):
+        task = kwargs.get('task', 'regression')
+        metrics = evaluate_model(y_arr, oof_preds, task=task, **kwargs)
+        result["metrics"] = metrics
+
+    return result
+
+
+def evaluate_model(y_true, y_pred, y_proba=None, task='regression', **kwargs) -> Dict[str, Any]:
+    """
+    複数評価指標の一括計算（拡張用ユーティリティ）。
+    
+    【拡張点】guikit-learn 互換の多指標評価および化学固有指標をサポート。
+    """
+    from backend.evaluation.multi_metric import compute_metrics, compute_chemistry_specific_metrics
+    
+    # 基本指標の計算
+    metric_set = kwargs.get('metric_set', 'regression_basic' if task == 'regression' else 'classification_basic')
+    results = compute_metrics(y_true, y_pred, y_proba=y_proba, metric_set=metric_set)
+    
+    # 化学固有指標の計算
+    if kwargs.get('property_name') or kwargs.get('smiles_list'):
+        chem_metrics = compute_chemistry_specific_metrics(
+            y_true, y_pred, 
+            property_name=kwargs.get('property_name')
+        )
+        results.update(chem_metrics)
+        
+    return results
+
+
+def _get_cv_splitter(
+    self,
+    df: pd.DataFrame,
+    target_col: str,
+    task: Literal["regression", "classification"],
+    smiles_col: Optional[Union[str, List[Union[str, Dict]]]] = None,
+    groups: Optional[np.ndarray] = None
+) -> BaseCrossValidator:
+    # ... (existing code)
 
 from backend.data.type_detector import TypeDetector, DetectionResult
 from backend.data.preprocessor import Preprocessor, PreprocessConfig, build_full_pipeline

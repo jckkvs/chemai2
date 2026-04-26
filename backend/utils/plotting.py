@@ -11,6 +11,12 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 
+from backend.utils.japanese_utils import (
+    configure_matplotlib_japanese, 
+    configure_plotly_japanese, 
+    configure_reportlab_japanese
+)
+
 logger = logging.getLogger(__name__)
 
 # 【修正点1】グローバル設定の初期化フラグ
@@ -37,8 +43,12 @@ def initialize_plotting(
         _PLOTTING_INITIALIZED = True
         logger.info("Initializing Plotly with consistent settings")
     
-    if font_family is None:
-        font_family = _detect_best_japanese_font()
+    # 【拡張点】日本語フォントの自動設定
+    if font_family is None or 'jp' in font_family.lower() or 'japanese' in font_family.lower():
+        configure_matplotlib_japanese(font_family)
+        plotly_config = configure_plotly_japanese(font_family)
+        if font_family is None:
+            font_family = plotly_config['font']['family']
     
     px.defaults.template = template
     go.layout.Template.layout.font.family = font_family
@@ -56,31 +66,8 @@ def _detect_best_japanese_font() -> str:
     """
     Detect best available Japanese font with fallback chain
     """
-    import subprocess
-    import sys
-    
-    candidate_fonts = [
-        'Noto Sans JP', 'NotoSansJP', 'IPAexGothic', 'IPAexMincho',
-        'Meiryo', 'Yu Gothic', 'Hiragino Sans', 'sans-serif'
-    ]
-    
-    if sys.platform.startswith('linux'):
-        try:
-            result = subprocess.run(['fc-list', ':family'], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                installed = result.stdout.lower()
-                for font in candidate_fonts:
-                    if font.lower() in installed: return font
-        except Exception: pass
-    
-    try:
-        from matplotlib import font_manager
-        available = [f.name for f in font_manager.fontManager.ttflist]
-        for font in candidate_fonts:
-            if font in available: return font
-    except ImportError: pass
-    
-    return 'sans-serif'
+    from backend.utils.japanese_utils import detect_japanese_font
+    return detect_japanese_font()
 
 
 def create_scatter_plot(
@@ -159,6 +146,13 @@ def export_figure(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     format = format.lower().lstrip('.')
     if format == 'jpeg': format = 'jpg'
+    
+    # 【拡張点】PDF出力時の日本語フォント登録
+    if format == 'pdf':
+        try:
+            configure_reportlab_japanese(output_path)
+        except Exception as e:
+            logger.warning(f"ReportLab Japanese configuration failed: {e}")
     
     try:
         write_kwargs = {'format': format}

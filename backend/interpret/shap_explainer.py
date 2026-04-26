@@ -225,13 +225,23 @@ class ShapExplainer:
         X: np.ndarray | pd.DataFrame,
         background_data: np.ndarray | pd.DataFrame | None = None,
         batch_size: Optional[int] = None,
+        **kwargs
     ) -> np.ndarray:
         """
-        Calculate SHAP values with memory-efficient batching
+        Calculate SHAP values with memory-efficient batching.
+        
+        【拡張点】guikit-learn 互換のバッチモードおよび相関補正をサポート。
         """
         import time
         import psutil
         import gc
+        
+        # 【拡張点】メモリ効率バッチ処理のオプション（外部拡張を使用）
+        if kwargs.get('batch_mode', False):
+            from backend.interpret.shap_extensions import compute_shap_batch
+            model = getattr(explainer, "model", None)
+            if model is not None:
+                return compute_shap_batch(model, X, **kwargs).values
         
         start_time = time.time()
         process = psutil.Process()
@@ -255,25 +265,29 @@ class ShapExplainer:
                 batch_end = min(i + batch_size, n_samples)
                 batch_X = X_df.iloc[i:batch_end]
                 
-                # SHAP計算 (explainerによっては引数が異なる場合があるためラップ)
                 try:
                     batch_shap = explainer(batch_X.values)
                 except Exception:
-                    # fallback for older shap versions or specific explainers
                     batch_shap = explainer.shap_values(batch_X.values)
 
-                # shap.Explanation オブジェクトの場合は .values を取得
                 if hasattr(batch_shap, "values"):
                     batch_shap = batch_shap.values
                 
                 shap_values_list.append(batch_shap)
                 
-                current_memory = process.memory_info().rss / 1024 / 1024
                 if i % (batch_size * 5) == 0:
-                    logger.debug(f"SHAP batch {i//batch_size + 1}/{n_batches}: mem={current_memory:.1f}MB")
                     gc.collect()
             
             shap_values = np.vstack(shap_values_list).astype(np.float64)
+            
+            # 【拡張点】相関バイアス補正のオプション
+            if kwargs.get('adjust_for_correlation', False):
+                from backend.interpret.shap_extensions import adjust_shap_for_correlation
+                shap_values = adjust_shap_for_correlation(
+                    shap_values, X, 
+                    correlation_threshold=kwargs.get('correlation_threshold', 0.7)
+                ).values if isinstance(X, pd.DataFrame) else adjust_shap_for_correlation(shap_values, X)
+            
             elapsed = time.time() - start_time
             logger.info(f"SHAP calculation completed in {elapsed:.2f}s")
             return shap_values
