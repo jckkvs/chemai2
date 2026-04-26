@@ -114,25 +114,23 @@ xtb --version
 python -m pytest tests/ -v --tb=short
 ```
 
-### 電荷設定モジュール関連テスト
+### 電荷設定・統合機能テスト
 
 ```bash
-# 既存テスト + 拡張テスト
+# 電荷設定関連
 python -m pytest tests/test_charge_config.py tests/test_charge_extended.py -v
 
-# カバレッジ付き
-python -m pytest tests/test_charge_extended.py \
-  --cov=backend.chem.charge_config \
-  --cov=backend.chem.protonation \
-  --cov=backend.chem.xtb_adapter \
-  --cov=backend.chem.rdkit_adapter \
-  --cov-branch --cov-report=term-missing
+# guikit-learn 統合機能関連 (Phase 1)
+python -m pytest tests/test_japanese_utils.py tests/test_shap_extensions.py tests/test_multi_metric.py -v
 ```
 
 ### 期待結果
 
 - `test_charge_config.py`: ~30 テスト PASSED
 - `test_charge_extended.py`: 52 テスト PASSED
+- `test_japanese_utils.py`: 検出・設定テスト PASSED
+- `test_shap_extensions.py`: バッチ処理・相関補正テスト PASSED
+- `test_multi_metric.py`: 指標計算・相関分析テスト PASSED
 
 ---
 
@@ -225,7 +223,47 @@ python manage.py runserver 0.0.0.0:8000
 
 ---
 
-## 10. 環境定義ファイル一覧
+## 10. guikit-learn 互換機能
+
+ChemAI ML Studio v2.0.0 以降は、[guikit-learn](https://github.com/jckkvs/guikit-learn) の一部機能を互換レイヤーとして統合しています。
+
+### 日本語フォント・レポート出力
+
+```python
+from backend.utils.japanese_utils import configure_matplotlib_japanese, configure_plotly_japanese
+
+# 自動検出で日本語フォントを設定
+configure_matplotlib_japanese()  # matplotlib用
+plotly_config = configure_plotly_japanese()  # plotly用
+```
+
+### SHAP 拡張機能
+
+```python
+from backend.interpret.shap_extensions import compute_shap_batch, adjust_shap_for_correlation
+
+# 大規模データのバッチ処理
+shap_values = compute_shap_batch(model, X_test, batch_mode=True)
+
+# 相関バイアス補正
+shap_adjusted = adjust_shap_for_correlation(shap_values, X_test, correlation_threshold=0.7)
+```
+
+### 多指標評価
+
+```python
+from backend.evaluation.multi_metric import compute_metrics, compute_chemistry_specific_metrics
+
+# 複数指標を一括計算
+results = compute_metrics(y_true, y_pred, metric_set='regression_basic')
+
+# 化学固有指標を追加
+chem_results = compute_chemistry_specific_metrics(y_true, y_pred, property_name='logp')
+```
+
+---
+
+## 11. 環境定義ファイル一覧
 
 | ファイル | 形式 | 用途 |
 |---------|------|------|
