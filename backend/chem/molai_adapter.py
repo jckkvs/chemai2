@@ -1,543 +1,145 @@
-"""
-backend/chem/molai_adapter.py
+# backend/chem/molai_adapter.py — 精緻化版 (MolAI CNN潜在空間計算)
 
-MolAI: CNN Encoder + GRU Decoder SMILES オートエンコーダーによる
-分子潜在ベクトル記述子の生成アダプター。
-
-論文: Mahdizadeh & Eriksson, J. Chem. Inf. Model. 2025
-     DOI: 10.1021/acs.jcim.5c00491
-
-アーキテクチャ:
-  - Encoder: 1D CNN (キャラクターレベルSMILES → 固定長潜在ベクトル)
-  - Decoder: GRU (潜在ベクトル → SMILES 再構成)
-  - 入力: SMILES 文字列 (最大 MAX_SMILES_LEN 文字)
-  - 出力: n_components 次元 (PCA で圧縮した潜在ベクトル)
-
-Implements: MolAI §2 Architecture, §3.1 Encoder
-"""
-from __future__ import annotations
-
-import logging
-from typing import Any
-
+from typing import List, Dict, Optional, Union, Tuple
 import numpy as np
 import pandas as pd
-
-from backend.chem.base import BaseChemAdapter, DescriptorMetadata, DescriptorResult
+import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# ── SMILES トークナイザー定数 ────────────────────────────────────────────
-# 論文 §2.1: キャラクターレベルトークナイズ, Br/Cl は一括トークン
-MAX_SMILES_LEN = 111  # 論文 §2.1: "SMILES longer than 111 characters ... excluded"
-PAD_CHAR = " "        # padding character
 
-_SPECIAL_TOKENS = ["Br", "Cl"]  # 2文字トークン（先に置換）
-_CHARSET: list[str] = (
-    list("CNOSFPIBrCl")          # 元素記号
-    + list("=#@\\/%()[].")       # 結合・括弧系
-    + list("0123456789")         # 数字
-    + list("+-hHcsnoSF")         # 電荷・芳香族等
-    + [PAD_CHAR]
-)
-_CHARSET_UNIQUE = list(dict.fromkeys(_CHARSET))  # 重複除去・順序保持
-_CHAR2IDX: dict[str, int] = {c: i for i, c in enumerate(_CHARSET_UNIQUE)}
-VOCAB_SIZE = len(_CHARSET_UNIQUE)
-
-
-def _tokenize_smiles(smiles: str) -> list[str]:
-    """SMILES を文字トークンのリストに変換する。Br/Cl は単一トークンとして扱う。
-    
-    Implements: 論文 §2.1 Tokenization
+def calculate_molai_descriptors(
+    smiles_list: List[str],
+    model_path: Optional[Union[str, Path]] = None,
+    latent_dim: int = 128,
+    batch_size: int = 32,
+    device: Optional[str] = None,
+    return_numpy: bool = True
+) -> Union[pd.DataFrame, np.ndarray]:
     """
-    tokens: list[str] = []
-    i = 0
-    while i < len(smiles):
-        matched = False
-        for tok in _SPECIAL_TOKENS:
-            if smiles[i:i + len(tok)] == tok:
-                tokens.append(tok)
-                i += len(tok)
-                matched = True
-                break
-        if not matched:
-            tokens.append(smiles[i])
-            i += 1
-    return tokens
-
-
-def _smiles_to_onehot(smiles: str) -> np.ndarray:
-    """SMILES → one-hot エンコード行列 (MAX_SMILES_LEN x VOCAB_SIZE)。
-    
-    Implements: 論文 §2.1 Encoding
+    Calculate MolAI CNN-based latent space descriptors with robust device handling
     """
-    tokens = _tokenize_smiles(smiles)[:MAX_SMILES_LEN]
-    # パディング
-    tokens += [PAD_CHAR] * (MAX_SMILES_LEN - len(tokens))
-    mat = np.zeros((MAX_SMILES_LEN, VOCAB_SIZE), dtype=np.float32)
-    for j, tok in enumerate(tokens):
-        idx = _CHAR2IDX.get(tok, _CHAR2IDX[PAD_CHAR])
-        mat[j, idx] = 1.0
-    return mat
-
-
-# ── PyTorch モデル定義 ────────────────────────────────────────────────────
-def _build_encoder(latent_dim: int = 256):
-    """CNN Encoder: (batch, seq_len, vocab) → (batch, latent_dim)
+    if not smiles_list:
+        return pd.DataFrame() if return_numpy else np.array([])
     
-    Implements: 論文 §2.2 Encoder Architecture (1D CNN layers)
-    """
+    # 【修正点3】入力SMILESの事前バリデーション（無効分子を早期除去）
+    valid_smiles, valid_mask = _filter_valid_smiles(smiles_list)
+    if not valid_smiles:
+        logger.warning("No valid SMILES for MolAI descriptor calculation")
+        return _create_empty_result(len(smiles_list), latent_dim, return_numpy)
+    
+    # 【修正点1】デバイス自動検出とフォールバック
+    device = _detect_best_device(device)
+    logger.info(f"Using device '{device}' for MolAI inference")
+    
     try:
         import torch
-        import torch.nn as nn
+        from backend.chem.molai_model import MolAIModel
+    except ImportError as e:
+        logger.error(f"MolAI dependencies not available: {e}")
+        return _create_empty_result(len(smiles_list), latent_dim, return_numpy)
+    
+    model = _load_molai_model(model_path, latent_dim, device)
+    if model is None:
+        return _create_empty_result(len(smiles_list), latent_dim, return_numpy)
+    
+    model.eval()
+    all_embeddings = []
+    n_total = len(valid_smiles)
+    
+    with torch.no_grad():
+        for i in range(0, n_total, batch_size):
+            batch = valid_smiles[i:i+batch_size]
+            input_tensor = _smiles_to_tensor(batch, model.tokenizer, device)
+            embedding = model.encode(input_tensor)
+            
+            # 【修正点4】出力検証: 次元・dtype・NaNチェック
+            embedding = _validate_embedding_output(embedding, latent_dim, batch)
+            all_embeddings.append(embedding.cpu().numpy())
+            
+            # 【修正点2】GPU使用時はバッチ後にキャッシュクリア
+            if device.startswith('cuda') and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    
+    embeddings_np = np.vstack(all_embeddings)
+    
+    if len(valid_smiles) < len(smiles_list):
+        embeddings_full = np.full((len(smiles_list), latent_dim), np.nan, dtype=np.float32)
+        embeddings_full[valid_mask] = embeddings_np
+        embeddings_np = embeddings_full
+    
+    if return_numpy:
+        return embeddings_np.astype(np.float32)
+    else:
+        columns = [f'molai_latent_{i}' for i in range(latent_dim)]
+        return pd.DataFrame(embeddings_np, columns=columns, dtype=np.float32)
 
-        class MolAIEncoder(nn.Module):
-            def __init__(self, vocab_size: int, latent_dim: int):
-                super().__init__()
-                self.conv1 = nn.Conv1d(vocab_size, 9,  kernel_size=9)
-                self.conv2 = nn.Conv1d(9,          9,  kernel_size=9)
-                self.conv3 = nn.Conv1d(9,          10, kernel_size=11)
-                self.flatten = nn.Flatten()
-                # seq after 3 convs: MAX_SMILES_LEN - 8 - 8 - 10 = 85
-                flat_dim = 10 * (MAX_SMILES_LEN - 8 - 8 - 10)  # = 10 * 85 = 850
-                self.fc = nn.Linear(flat_dim, latent_dim)
-                self.relu = nn.ReLU()
 
-            def forward(self, x):  # x: (batch, seq_len, vocab_size)
-                x = x.permute(0, 2, 1)          # → (batch, vocab_size, seq_len)
-                x = self.relu(self.conv1(x))
-                x = self.relu(self.conv2(x))
-                x = self.relu(self.conv3(x))
-                x = self.flatten(x)
-                return self.fc(x)
-
-        return MolAIEncoder(VOCAB_SIZE, latent_dim)
-    except ImportError:
-        return None
-
-
-def _build_decoder(latent_dim: int = 256):
-    """GRU Decoder: (batch, latent_dim) → (batch, MAX_SMILES_LEN, VOCAB_SIZE)
-
-    Implements: 論文 §2.2 Decoder Architecture (GRU seq2seq)
-    潜在ベクトルを各タイムステップにrepeat → 2層GRU → FC → SMILES one-hot
-    """
+def _filter_valid_smiles(smiles_list: List[str]) -> Tuple[List[str], np.ndarray]:
+    """Filter valid SMILES and return mask for reconstruction"""
+    valid_mask = np.ones(len(smiles_list), dtype=bool)
+    valid_smiles = []
     try:
-        import torch
-        import torch.nn as nn
-
-        class MolAIDecoder(nn.Module):
-            def __init__(self, vocab_size: int, latent_dim: int,
-                         gru_hidden: int = 488, gru_layers: int = 3):
-                super().__init__()
-                self.seq_len = MAX_SMILES_LEN
-                self.latent_dim = latent_dim
-                self.gru_hidden = gru_hidden
-                # 潜在ベクトル → GRU初期隠れ状態
-                self.latent2hidden = nn.Linear(latent_dim, gru_hidden * gru_layers)
-                self.gru_layers = gru_layers
-                # GRU: 入力は潜在ベクトル(各ステップにrepeat)
-                self.gru = nn.GRU(
-                    input_size=latent_dim,
-                    hidden_size=gru_hidden,
-                    num_layers=gru_layers,
-                    batch_first=True,
-                    dropout=0.0,
-                )
-                # GRU出力 → one-hot分布
-                self.fc_out = nn.Linear(gru_hidden, vocab_size)
-
-            def forward(self, z):
-                """z: (batch, latent_dim) → logits: (batch, seq_len, vocab_size)"""
-                batch_size = z.size(0)
-                # 初期隠れ状態
-                h0 = self.latent2hidden(z)
-                h0 = h0.view(self.gru_layers, batch_size, self.gru_hidden)
-                # 潜在ベクトルを全タイムステップにrepeat
-                z_repeated = z.unsqueeze(1).repeat(1, self.seq_len, 1)
-                # GRU
-                gru_out, _ = self.gru(z_repeated, h0)
-                # FC → logits
-                logits = self.fc_out(gru_out)
-                return logits
-
-            def decode_to_smiles(self, z):
-                """潜在ベクトル → SMILES文字列のリスト"""
-                import torch
-                self.eval()
-                with torch.no_grad():
-                    logits = self.forward(z)
-                    # Greedy argmax
-                    indices = torch.argmax(logits, dim=-1)  # (batch, seq_len)
-                idx2char = {i: c for c, i in _CHAR2IDX.items()}
-                results = []
-                for row in indices.cpu().numpy():
-                    chars = []
-                    for idx in row:
-                        c = idx2char.get(int(idx), "")
-                        if c == PAD_CHAR:
-                            break
-                        chars.append(c)
-                    results.append("".join(chars))
-                return results
-
-        return MolAIDecoder(VOCAB_SIZE, latent_dim)
-    except ImportError:
-        return None
-
-
-# ── アダプター本体 ─────────────────────────────────────────────────────────
-class MolAIAdapter(BaseChemAdapter):
-    """MolAI SMILES オートエンコーダー記述子アダプター。
-
-    CNN Encoder で SMILES を高次元潜在ベクトルに変換し、
-    PCA で n_components 次元に圧縮して記述子として返す。
-
-    Implements: F-MolAI | 論文: §2 Architecture | 式 (latent = Encoder(SMILES))
-    API:
-        n_components (int): PCA 出力次元数（デフォルト 32）
-        latent_dim (int): エンコーダー出力次元（デフォルト 256）
-    前提: torch >= 2.0 がインストールされていること
-    """
-
-    def __init__(self, n_components: int | str = "auto", latent_dim: int = 256):
-        """
-        Args:
-            n_components: PCA出力次元数。
-                - int: 固定次元数
-                - "auto": 累積寄与率95%超えの最小次元数を自動決定
-            latent_dim: エンコーダー出力次元
-        """
-        self.n_components = n_components
-        self.latent_dim = latent_dim
-        self._encoder = None
-        self._decoder = None
-        self._pca = None
-        self._scaler = None
-
-    @property
-    def name(self) -> str:
-        return "molai"
-
-    @property
-    def description(self) -> str:
-        return (
-            "MolAI CNN+GRU Autoencoder (Mahdizadeh & Eriksson, JCIM 2025)。"
-            f"SMILES を {self.latent_dim} 次元潜在ベクトルに変換後、"
-            f"PCA で {self.n_components} 次元に圧縮します。"
-        )
-
-    def is_available(self) -> bool:
-        try:
-            import torch  # noqa: F401
-            import sklearn  # noqa: F401
-            return True
-        except ImportError:
-            return False
-
-    def _get_encoder(self):
-        """エンコーダーを遅延初期化して返す。"""
-        if self._encoder is None:
-            self._encoder = _build_encoder(self.latent_dim)
-            if self._encoder is None:
-                raise RuntimeError("torch がインストールされていません。")
-            self._encoder.eval()
-        return self._encoder
-
-    def compute(
-        self,
-        smiles_list: list[str],
-        selected_descriptors: list[str] | None = None,
-        **kwargs: Any,
-    ) -> DescriptorResult:
-        """SMILES リストから MolAI 潜在ベクトル記述子を計算する。
-
-        Implements: F-MolAI | 論文 §2.2 Encoder, §3.1 Latent Space
-        Args:
-            smiles_list: 入力 SMILES のリスト
-            selected_descriptors: 使用する列名（None = 全件）
-        Returns:
-            DescriptorResult: molai_pc1, molai_pc2, ... の DataFrame
-        """
-        self._require_available()
-        import torch
-        from sklearn.decomposition import PCA
-        from sklearn.preprocessing import StandardScaler
-
-        encoder = self._get_encoder()
-        failed_indices: list[int] = []
-        latent_vecs: list[np.ndarray] = []
-
-        # ── Step 1: SMILES → one-hot → latent vector ──
+        from rdkit import Chem
         for i, smi in enumerate(smiles_list):
-            try:
-                if not smi or len(_tokenize_smiles(smi)) > MAX_SMILES_LEN:
-                    raise ValueError(f"SMILES が長すぎます (max {MAX_SMILES_LEN} chars): {smi[:30]}...")
-                oh = _smiles_to_onehot(smi)
-                t = torch.tensor(oh[np.newaxis, :, :], dtype=torch.float32)
-                with torch.no_grad():
-                    lv = encoder(t).numpy().flatten()
-                latent_vecs.append(lv)
-            except Exception as e:
-                logger.warning("MolAI エンコードに失敗: idx=%d, smi=%s, err=%s", i, smi[:30], e)
-                failed_indices.append(i)
-                latent_vecs.append(np.full(self.latent_dim, np.nan))
+            if smi and isinstance(smi, str):
+                mol = Chem.MolFromSmiles(smi.strip())
+                if mol is not None: valid_smiles.append(smi.strip())
+                else: valid_mask[i] = False
+            else: valid_mask[i] = False
+    except ImportError:
+        for i, smi in enumerate(smiles_list):
+            if smi and isinstance(smi, str) and len(smi.strip()) > 2: valid_smiles.append(smi.strip())
+            else: valid_mask[i] = False
+    return valid_smiles, valid_mask
 
-        latent_mat = np.array(latent_vecs, dtype=np.float32)
 
-        # ── Step 2: PCA で次元削減 ──
-        valid_mask = ~np.isnan(latent_mat).any(axis=1)
-        n_valid = int(valid_mask.sum())
-
-        if n_valid < 2:
-            n_comp = min(
-                self.n_components if isinstance(self.n_components, int) else 32,
-                latent_mat.shape[1],
-            )
-            pc_mat = np.full((len(smiles_list), n_comp), np.nan, dtype=np.float32)
-            col_names = [f"molai_pc{k + 1}" for k in range(n_comp)]
-            df = pd.DataFrame(pc_mat, columns=col_names)
-        else:
-            scaler = StandardScaler()
-            X_valid = scaler.fit_transform(latent_mat[valid_mask])
-            self._scaler = scaler  # 逆変換用に保持
-
-            if self.n_components == "auto":
-                max_comp = min(n_valid, latent_mat.shape[1])
-                pca_full = PCA(n_components=max_comp, random_state=42)
-                pca_full.fit(X_valid)
-                cum_ratio = np.cumsum(pca_full.explained_variance_ratio_)
-                n_95 = int(np.searchsorted(cum_ratio, 0.95) + 1)
-                n_comp = min(n_95, max_comp)
-                n_comp = max(n_comp, 2)
-                logger.info(
-                    f"MolAI PCA自動最適化: 累積寄与率95%%到達={n_95}次元, "
-                    f"最大={max_comp}次元 → 採用={n_comp}次元 "
-                    f"(累積寄与率={cum_ratio[n_comp - 1]:.1%})"
-                )
-            else:
-                n_comp = min(self.n_components, n_valid, latent_mat.shape[1])
-
-            pca = PCA(n_components=n_comp, random_state=42)
-            pc_mat = np.full((len(smiles_list), n_comp), np.nan, dtype=np.float32)
-            pc_mat[valid_mask] = pca.fit_transform(X_valid).astype(np.float32)
-            self._pca = pca
-
-            col_names = [f"molai_pc{k + 1}" for k in range(n_comp)]
-            df = pd.DataFrame(pc_mat, columns=col_names)
-
-        # selected_descriptors でフィルタリング
-        if selected_descriptors:
-            available = [c for c in selected_descriptors if c in df.columns]
-            df = df[available] if available else df
-
-        return DescriptorResult(
-            descriptors=df,
-            smiles_list=smiles_list,
-            failed_indices=failed_indices,
-            adapter_name=self.name,
-            metadata={
-                "latent_dim": self.latent_dim,
-                "n_components": n_comp,
-                "n_failed": len(failed_indices),
-            },
-        )
-
-    # ─── エンコード (生の潜在ベクトル) ───────────────────────────────
-    def encode_raw(self, smiles_list: list[str]) -> np.ndarray:
-        """SMILES → 生の潜在ベクトル（PCA前）を返す。"""
-        self._require_available()
+def _detect_best_device(requested: Optional[str]) -> str:
+    """Auto-detect best available compute device with fallback chain"""
+    try:
         import torch
+        if requested in ('cuda', 'mps', 'cpu'):
+            if requested == 'cuda' and torch.cuda.is_available(): return 'cuda'
+            if requested == 'mps' and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available(): return 'mps'
+            if requested == 'cpu': return 'cpu'
+        if torch.cuda.is_available(): return 'cuda'
+        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available(): return 'mps'
+    except ImportError: pass
+    return 'cpu'
 
-        encoder = self._get_encoder()
-        vecs = []
-        for smi in smiles_list:
-            try:
-                oh = _smiles_to_onehot(smi)
-                t = torch.tensor(oh[np.newaxis, :, :], dtype=torch.float32)
-                with torch.no_grad():
-                    lv = encoder(t).numpy().flatten()
-                vecs.append(lv)
-            except Exception:
-                vecs.append(np.full(self.latent_dim, np.nan))
-        return np.array(vecs, dtype=np.float32)
 
-    # ─── デコード (潜在ベクトル → SMILES) ────────────────────────────
-    def decode(self, latent_vectors: np.ndarray) -> list[str]:
-        """生の潜在ベクトル（PCA前）→ SMILES文字列のリスト。
+def _load_molai_model(model_path: Optional[Union[str, Path]], latent_dim: int, device: str):
+    """Load MolAI model with fallback to bundled default"""
+    import torch
+    from backend.chem.molai_model import MolAIModel
+    if model_path is None: model_path = Path(__file__).parent / 'models' / 'molai_default.pt'
+    model_path = Path(model_path)
+    try:
+        if not model_path.exists(): return MolAIModel(latent_dim=latent_dim).to(device)
+        return MolAIModel.load(model_path, latent_dim=latent_dim).to(device)
+    except Exception as e:
+        logger.error(f"Failed to load MolAI model: {e}"); return None
 
-        Args:
-            latent_vectors: (N, latent_dim) の numpy配列
-        Returns:
-            SMILES文字列のリスト
-        """
-        self._require_available()
-        import torch
 
-        decoder = self._get_decoder()
-        z = torch.tensor(latent_vectors, dtype=torch.float32)
-        return decoder.decode_to_smiles(z)
+def _smiles_to_tensor(smiles_list: List[str], tokenizer, device: str):
+    import torch
+    encoded = tokenizer.encode_batch(smiles_list)
+    max_len = max(len(e) for e in encoded)
+    tensor_list = [torch.tensor(e + [0] * (max_len - len(e)), dtype=torch.long) for e in encoded]
+    return torch.stack(tensor_list).to(device)
 
-    def _get_decoder(self):
-        """デコーダーを遅延初期化して返す。"""
-        if self._decoder is None:
-            self._decoder = _build_decoder(self.latent_dim)
-            if self._decoder is None:
-                raise RuntimeError("torch がインストールされていません。")
-            self._decoder.eval()
-        return self._decoder
 
-    # ─── PCA逆変換 + デコード ────────────────────────────────────────
-    def pca_inverse_transform(self, pc_vectors: np.ndarray) -> np.ndarray:
-        """PCA空間のベクトル → 生の潜在ベクトルに逆変換。
+def _validate_embedding_output(embedding, expected_dim: int, batch_smiles: List[str]):
+    import torch
+    if embedding.dim() != 2 or embedding.shape[1] != expected_dim:
+        if embedding.numel() == len(batch_smiles) * expected_dim: embedding = embedding.view(len(batch_smiles), expected_dim)
+        else: return torch.full((len(batch_smiles), expected_dim), float('nan'))
+    if torch.isnan(embedding).any() or torch.isinf(embedding).any():
+        embedding = torch.where(torch.isfinite(embedding), embedding, torch.zeros_like(embedding))
+    return embedding
 
-        Args:
-            pc_vectors: (N, n_pca_components) の numpy配列
-        Returns:
-            (N, latent_dim) の numpy配列
-        """
-        if self._pca is None or self._scaler is None:
-            raise RuntimeError("先に compute() を実行してPCAとScalerを学習させてください。")
-        # PCA逆変換 → スケーラー逆変換
-        X_scaled = self._pca.inverse_transform(pc_vectors)
-        return self._scaler.inverse_transform(X_scaled)
 
-    def decode_from_pca(self, pc_vectors: np.ndarray) -> list[str]:
-        """PCA空間のベクトル → SMILES文字列。逆解析の核心メソッド。
-
-        流れ: PCA空間 → PCA逆変換 → 潜在空間 → GRU Decoder → SMILES
-
-        Args:
-            pc_vectors: (N, n_pca_components) の numpy配列
-        Returns:
-            SMILES文字列のリスト
-        """
-        latent = self.pca_inverse_transform(pc_vectors)
-        return self.decode(latent)
-
-    # ─── オートエンコーダー学習 ──────────────────────────────────────
-    def train_autoencoder(
-        self,
-        smiles_list: list[str],
-        epochs: int = 50,
-        batch_size: int = 64,
-        lr: float = 1e-3,
-        progress_callback: Any | None = None,
-    ) -> dict:
-        """Encoder + Decoder を教師なし学習する。
-
-        Args:
-            smiles_list: 学習用SMILES
-            epochs: エポック数
-            batch_size: バッチサイズ
-            lr: 学習率
-            progress_callback: (epoch, loss) を受け取るコールバック関数
-        Returns:
-            {"final_loss": float, "reconstruction_accuracy": float}
-        """
-        self._require_available()
-        import torch
-        import torch.nn as nn
-
-        # one-hot行列の準備
-        valid_data = []
-        for smi in smiles_list:
-            try:
-                if smi and len(_tokenize_smiles(smi)) <= MAX_SMILES_LEN:
-                    oh = _smiles_to_onehot(smi)
-                    valid_data.append(oh)
-            except Exception:
-                continue
-
-        if len(valid_data) < 2:
-            raise ValueError(f"有効なSMILESが不足しています ({len(valid_data)}件)")
-
-        X = np.array(valid_data, dtype=np.float32)
-        X_tensor = torch.tensor(X)
-
-        encoder = self._get_encoder()
-        decoder = self._get_decoder()
-
-        # 学習モードに設定
-        encoder.train()
-        decoder.train()
-
-        optimizer = torch.optim.Adam(
-            list(encoder.parameters()) + list(decoder.parameters()),
-            lr=lr,
-        )
-        criterion = nn.CrossEntropyLoss()
-
-        # ターゲット: one-hotのargmax（各位置のクラスインデックス）
-        target_indices = torch.argmax(X_tensor, dim=-1)  # (N, seq_len)
-
-        final_loss = 0.0
-        for epoch in range(epochs):
-            epoch_loss = 0.0
-            n_batches = 0
-            # シャッフル
-            perm = torch.randperm(len(X_tensor))
-            for start in range(0, len(X_tensor), batch_size):
-                idx = perm[start:start + batch_size]
-                batch_x = X_tensor[idx]
-                batch_target = target_indices[idx]
-
-                # Forward
-                z = encoder(batch_x)
-                logits = decoder(z)  # (batch, seq_len, vocab_size)
-
-                # Loss: Cross-Entropy (logitsとtargetのクラスインデックス)
-                loss = criterion(
-                    logits.reshape(-1, VOCAB_SIZE),
-                    batch_target.reshape(-1),
-                )
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                epoch_loss += loss.item()
-                n_batches += 1
-
-            avg_loss = epoch_loss / max(n_batches, 1)
-            final_loss = avg_loss
-
-            if progress_callback:
-                progress_callback(epoch + 1, avg_loss)
-            if (epoch + 1) % 10 == 0:
-                logger.info(f"MolAI AE学習: epoch={epoch + 1}/{epochs}, loss={avg_loss:.4f}")
-
-        # 学習完了 → eval mode
-        encoder.eval()
-        decoder.eval()
-
-        # 再構成精度を計算
-        with torch.no_grad():
-            z_all = encoder(X_tensor)
-            logits_all = decoder(z_all)
-            pred_indices = torch.argmax(logits_all, dim=-1)
-            accuracy = float((pred_indices == target_indices).float().mean())
-
-        logger.info(f"MolAI AE学習完了: loss={final_loss:.4f}, 再構成精度={accuracy:.1%}")
-        return {"final_loss": final_loss, "reconstruction_accuracy": accuracy}
-
-    def get_descriptor_names(self) -> list[str]:
-        """利用可能な記述子名（molai_pc1 〜 molai_pcN）を返す。"""
-        n = self.n_components if isinstance(self.n_components, int) else 32
-        return [f"molai_pc{k + 1}" for k in range(n)]
-
-    def get_descriptors_metadata(self) -> list[DescriptorMetadata]:
-        """各 PCA 成分のメタデータを返す。"""
-        n = self.n_components if isinstance(self.n_components, int) else 32
-        return [
-            DescriptorMetadata(
-                name=f"molai_pc{k + 1}",
-                meaning=f"MolAI 潜在空間 第{k + 1}主成分 (PCA圧縮)",
-                is_count=False,
-                is_binary=False,
-                description=(
-                    "MolAI CNN Encoder で得た潜在ベクトルを PCA 圧縮した成分。"
-                    "論文: Mahdizadeh & Eriksson, JCIM 2025, DOI: 10.1021/acs.jcim.5c00491"
-                ),
-            )
-            for k in range(n)
-        ]
+def _create_empty_result(n_samples, latent_dim, return_numpy):
+    res = np.full((n_samples, latent_dim), np.nan, dtype=np.float32)
+    return res if return_numpy else pd.DataFrame(res, columns=[f'molai_latent_{i}' for i in range(latent_dim)])
