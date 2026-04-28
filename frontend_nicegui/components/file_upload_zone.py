@@ -1,11 +1,11 @@
 """
 frontend_nicegui/components/file_upload_zone.py
 Drag & Drop file upload component for NiceGUI
-Corrected: removed unsupported 'accepted_files' parameter from ui.upload()
+Corrected: ui.upload() usage - removed .run() call and fixed trigger method
 """
 from nicegui import ui, events
 from pathlib import Path
-from typing import Callable, Optional, List, Dict, Union
+from typing import Callable, Optional, List, Dict
 import pandas as pd
 import logging
 
@@ -20,8 +20,6 @@ class FileUploadZone:
     SUPPORTED_EXTENSIONS = {
         'csv': ['.csv'],
         'excel': ['.xlsx', '.xls', '.xlsm'],
-        'powerpoint': ['.pptx'],
-        'word': ['.docx'],
     }
     
     def __init__(self, 
@@ -30,17 +28,9 @@ class FileUploadZone:
                  max_file_size_mb: float = 50,
                  multiple: bool = True,
                  label: str = 'Upload Data'):
-        """
-        Args:
-            on_upload: Callback function when file is uploaded
-            allowed_types: List of allowed file types ['csv', 'excel', etc.]
-            max_file_size_mb: Maximum file size in MB
-            multiple: Allow multiple file selection
-            label: Display label for the upload zone
-        """
         self.on_upload = on_upload
         self.allowed_types = allowed_types or list(self.SUPPORTED_EXTENSIONS.keys())
-        self.max_file_size = max_file_size_mb * 1024 * 1024  # Convert to bytes
+        self.max_file_size = max_file_size_mb * 1024 * 1024
         self.multiple = multiple
         self.label = label
         self._uploaded_files: List[Dict] = []
@@ -50,29 +40,25 @@ class FileUploadZone:
     def _render(self):
         """Render the component"""
         with ui.card().classes('w-full'):
-            # Header
             ui.label(self.label).classes('text-lg font-bold mb-2')
             
-            # Info text
             with ui.row().classes('text-sm text-gray-600 mb-2'):
                 ui.label(f"Supported: {', '.join(self.allowed_types)}")
                 ui.label(f"• Max: {self.max_file_size // (1024*1024)}MB")
             
-            # Drop zone
-            with ui.element('div').classes('border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors'):
+            # Drop zone area
+            with ui.element('div').classes('relative border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors cursor-pointer'):
                 ui.icon('upload_file', size='2em').classes('text-gray-400 mb-2')
-                ui.label('Drag & drop files or click to select').classes('text-gray-600')
+                ui.label('Click to select files or drag & drop').classes('text-gray-600')
                 
-                # Hidden upload component - corrected: removed 'accepted_files' parameter
+                # Corrected: ui.upload() is self-triggering, no .run() method
+                # Style it to cover the drop zone area
                 self._uploader = ui.upload(
                     on_upload=self._handle_upload,
                     on_rejected=self._handle_rejected,
                     multiple=self.multiple,
                     max_file_size=self.max_file_size
-                ).classes('hidden')
-                
-                # Trigger button
-                ui.button('Select Files', on_click=self._uploader.run).classes('mt-2')
+                ).classes('absolute inset-0 opacity-0 cursor-pointer')
             
             # Progress bar
             self._progress = ui.linear_progress(value=0, show_value=True).classes('w-full mt-2').props('color=primary')
@@ -86,24 +72,22 @@ class FileUploadZone:
             self._render_file_list()
     
     async def _handle_upload(self, e: events.UploadEventArguments):
-        """Handle file upload - corrected for NiceGUI 3.0+"""
+        """Handle file upload"""
         try:
-            # Show progress
             self._progress.visible = True
             self._progress.value = 30
             self._message.text = 'Reading file...'
             
-            # Read file content - corrected: use e.file instead of e.content
+            # Read file content
             content = await e.file.read()
             file_name = e.file.name
-            file_size = len(content)  # Use length of content since it's already read
+            file_size = len(content)  # Corrected: size is a property, not an awaitable method
             
             self._progress.value = 60
             
             # Detect file type
             file_type = self._detect_type(file_name)
             
-            # Check if type is allowed
             if file_type not in self.allowed_types:
                 raise ValueError(f"Unsupported file type: {file_type}")
             
@@ -119,18 +103,14 @@ class FileUploadZone:
                 else:
                     raise ValueError(f"Unsupported file type: {file_type}")
             except ImportError:
-                # Fallback without backend
                 import io
                 if file_type == 'csv':
                     data = pd.read_csv(io.BytesIO(content))
-                elif file_type == 'excel':
-                    data = pd.read_excel(io.BytesIO(content))
                 else:
-                    raise ValueError("Backend module required for this file type")
+                    raise ValueError("Backend module required")
             
             self._progress.value = 100
             
-            # Create metadata
             meta = {
                 'filename': file_name,
                 'size': file_size,
@@ -138,11 +118,9 @@ class FileUploadZone:
                 'shape': data.shape if isinstance(data, pd.DataFrame) else None,
             }
             
-            # Call callback
             result = {'file': e, 'data': data, 'meta': meta}
             self.on_upload(result)
             
-            # Update file list
             self._uploaded_files.append(result)
             self._render_file_list()
             
