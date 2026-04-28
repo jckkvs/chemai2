@@ -56,6 +56,14 @@
 - **shapiq**: SRI 分解による特徴量相互作用
 - 伝統的手法: Feature Importance / Permutation Importance / PDP
 
+### ✅ NiceGUI完全機能実装（v1.0）
+
+- **📊 Visualization タブ**: PCA / t-SNE / UMAP による次元削減・インタラクティブプロット
+- **📈 AutoML結果表示**: SHAP特徴量重要度、モデル保存（joblib）、PDF/Word/Jupyter レポート出力
+- **💬 LLM アシスタント**: 外部チャット向けプロンプト生成（セキュア）+ ローカルLLM（Ollama）対応
+- **🧹 データクリーニング**: 自動問題検出 + LLM生成修正提案コード表示
+- **🔧 LLM設定UI**: モード選択（prompt_only/local/api）、API設定、温度・トークン数カスタマイズ
+
 ---
 
 ## 📂 ディレクトリ構成
@@ -233,14 +241,14 @@ python frontend_nicegui/main.py
 
 | 版 | コマンド | ポート | 特徴 |
 |---|---------|-------|------|
-| **NiceGUI** ⭐ | `python frontend_nicegui/main.py` | **8085** | Pure Python UI、2クリック解析 |
+| **NiceGUI** ⭐ | `python frontend_nicegui/main.py` | **8080** | Pure Python UI、完全機能対応 |
 | Streamlit | `streamlit run frontend_streamlit/app.py` | 8501 | データ分析向け |
 | Django | `python frontend_django/manage.py runserver` | 8000 | REST API、ユーザー認証 |
 
 ```powershell
-# NiceGUI 版（推奨）
+# NiceGUI 版（推奨・最新機能対応）
 python frontend_nicegui/main.py
-# → http://localhost:8085
+# → http://localhost:8080
 
 # Streamlit 版
 cd frontend_streamlit
@@ -250,8 +258,8 @@ streamlit run app.py
 
 > [!TIP]
 > 各フロントエンドの詳細は以下を参照:
-> - [NiceGUI 版 README](frontend_nicegui/README.md) — 起動・設定・デプロイガイド
-> - [バックエンド README](backend/README.md) — API ドキュメント
+> - [NiceGUI 版 README](frontend_nicegui/README.md) — 起動・設定・デプロイガイド・トラブルシューティング
+> - [バックエンド README](backend/README.md) — API ドキュメント・データフロー・デプロイメント
 
 ---
 
@@ -301,3 +309,49 @@ python examples/descriptor_calculation_example.py
 
 > [!NOTE]
 > 詳しい再現手順は [REPRODUCE.md](REPRODUCE.md) を参照してください。
+
+---
+
+## 🐳 Docker & 本番デプロイメント
+
+### クイックスタート
+
+```bash
+# 開発環境
+docker-compose up
+
+# 本番環境（SSL/TLS対応）
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+**設定ファイル**:
+- `.env.example` → `.env` にコピーして環境変数を設定
+- `infra/nginx/prod.conf` — nginx リバースプロキシ設定（SSL/TLS、セキュリティヘッダー対応）
+- `certs/` — SSL証明書の配置場所
+
+詳細は [デプロイメントガイド](backend/README.md#デプロイメント) を参照。
+
+---
+
+## 📚 ドキュメント
+
+| ドキュメント | 対象者 | 内容 |
+|------------|--------|------|
+| **[frontend_nicegui/README.md](frontend_nicegui/README.md)** | 利用者 | 各タブの使い方、LLM設定、トラブルシューティング |
+| **[backend/README.md](backend/README.md)** | 開発者 | API仕様、モジュール構成、データフロー、拡張方法 |
+| [environment.yml](environment.yml) | 環境構築者 | Conda環境定義 |
+| [requirements.txt](requirements.txt) | 環境構築者 | pip 依存パッケージ |
+
+---
+
+## 🤝 貢献・バグ報告
+
+バグ報告や機能リクエストは GitHub Issues で。
+
+詳細は [CONTRIBUTING_GUIDE.md](CONTRIBUTING_GUIDE.md) を参照してください。
+
+---
+
+## 📄 ライセンス
+
+MIT License - [LICENSE](LICENSE)
