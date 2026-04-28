@@ -95,16 +95,6 @@ def evaluate_model(y_true, y_pred, y_proba=None, task='regression', **kwargs) ->
     return results
 
 
-def _get_cv_splitter(
-    self,
-    df: pd.DataFrame,
-    target_col: str,
-    task: Literal["regression", "classification"],
-    smiles_col: Optional[Union[str, List[Union[str, Dict]]]] = None,
-    groups: Optional[np.ndarray] = None
-) -> BaseCrossValidator:
-    # ... (existing code)
-
 from backend.data.type_detector import TypeDetector, DetectionResult
 from backend.data.preprocessor import Preprocessor, PreprocessConfig, build_full_pipeline
 from backend.models.factory import get_model, get_default_automl_models
@@ -112,6 +102,8 @@ from backend.models.cv_manager import CVConfig, run_cross_validation
 from backend.chem.rdkit_adapter import RDKitAdapter
 from backend.chem.smiles_transformer import SmilesDescriptorTransformer
 from backend.utils.config import RANDOM_STATE, AUTOML_CV_FOLDS, AUTOML_N_JOBS
+from sklearn.model_selection import BaseCrossValidator
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -405,9 +397,10 @@ class AutoMLEngine:
                 )
 
                 if self.monotonic_constraints_dict:
+                    try:
                         preprocessor_step = pipeline_base.named_steps["preprocess"]
                         preprocessor_step.fit(X_train)
-                        
+
                         # 特徴量変換後の名前リストを取得
                         feature_names = preprocessor_step.get_feature_names_out().tolist() if hasattr(preprocessor_step, 'get_feature_names_out') else list(X_train.columns)
 

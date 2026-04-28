@@ -133,7 +133,6 @@ class XTBRunner:
                 )
                 
                 if proc_result.returncode in (3221225794, -1073741502, 3221225749, -1073741515, 3221225477, -1073741819):
-                    global _XTB_RUNNER_BROKEN
                     _XTB_RUNNER_BROKEN = True
                     warnings_list.append(f"XTBがシステムエラーでクラッシュしました。(returncode: {proc_result.returncode}) 以降の分子はスキップします。")
                     return False, {}, warnings_list
