@@ -84,9 +84,11 @@ class AutoMLPage:
                         self._max_trials = ui.number(value=20, min=5, max=100, step=5)
 
                 ui.label('使用するモデル').classes('mt-4 font-bold')
-                self._models = ui.checkbox_group(
-                    options=[('random_forest', 'Random Forest'), ('lightgbm', 'LightGBM'), ('xgboost', 'XGBoost')],
-                    value=['random_forest', 'lightgbm']
+                self._models = ui.select(
+                    options={'rf': 'Random Forest', 'lgbm': 'LightGBM', 'xgb': 'XGBoost'},
+                    value=['rf', 'lgbm'],
+                    multiple=True,
+                    label='モデル選択'
                 ).classes('w-full')
 
             # 実行ボタン
@@ -192,6 +194,7 @@ class AutoMLPage:
             engine = AutoMLEngine(
                 task="auto",
                 cv_folds=int(self._cv_folds.value),
+                model_keys=self._models.value,
                 progress_callback=progress_callback
             )
 
