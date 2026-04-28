@@ -82,10 +82,10 @@ class DataUploadPage:
 
                 with self._file_list:
                     with ui.row().classes('w-full items-center p-2 bg-gray-50 rounded mb-2'):
-                        ui.icon('description').classes('text-gray-500')
+                        ui.icon('description', size='sm').classes('text-gray-500')
                         ui.label(f"{meta.get('filename', 'unknown')}").classes('flex-1')
                         ui.label(f"{meta.get('shape', (0, 0))[0]}行 × {meta.get('shape', (0, 0))[1]}列").classes('text-sm text-gray-500')
-                        ui.icon('check').classes('text-green-500')
+                        ui.icon('check', size='sm').classes('text-green-500')
 
                 ui.notify(f'✓ {meta.get("filename", "unknown")} を読み込みました', type='positive')
             else:

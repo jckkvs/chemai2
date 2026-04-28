@@ -1,63 +1,66 @@
 """
 frontend_nicegui/pages/llm_assistant_tab.py
-LLMアシスタント・プロンプト生成画面
+LLMアシスタント画面
 """
 from nicegui import ui
-from backend.llm.prompt_templates import create_external_prompt
-from backend.config.llm_settings import LLMConfig
-from frontend_nicegui.components.llm_config_dialog import LLMConfigDialog
+from typing import Optional, Dict
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class LLMAssistantPage:
-    def __init__(self, llm_config: LLMConfig, llm_dialog: LLMConfigDialog):
+    """LLMアシスタントページ"""
+    
+    def __init__(self, llm_config, llm_dialog):
         self.llm_config = llm_config
         self.llm_dialog = llm_dialog
-        self.prompt_area = None
-
+    
     def render(self):
-        with ui.column().classes('w-full p-4'):
-            with ui.row().classes('w-full justify-between items-center mb-4'):
-                ui.label('LLMアシスタント').classes('text-2xl font-bold')
-                # 設定へのリンク（目立たない配置）
-                self.llm_dialog.create_trigger_button(ui.row(), label='⚙️ 設定')
-
+        """ページを描画"""
+        with ui.column().classes('w-full max-w-4xl mx-auto p-4'):
+            ui.label('✨ LLM アシスタント').classes('text-2xl font-bold mb-4')
+            
             # 外部チャット用プロンプト生成
-            with ui.card().classes('w-full mb-4'):
-                with ui.row().classes('items-center mb-2'):
-                    ui.icon('security', color='primary')
-                    ui.label('🔐 セキュア環境向け: 外部高精度LLM用プロンプト生成').classes('font-bold text-lg')
+            with ui.card().classes('w-full'):
+                ui.label('🔐 セキュア環境向け: 外部高精度LLM用プロンプト生成').classes('font-bold')
+                ui.label('ローカルで実行できない場合、このプロンプトをコピーして外部チャットで使用').classes('text-sm text-gray-600 mb-2')
                 
-                ui.label('ローカルで実行できない場合や、より強力なモデル（ChatGPT, Claude等）を使いたい場合、このプロンプトをコピーして外部チャットで使用してください。').classes('text-sm text-gray-600 mb-4')
+                self._prompt_area = ui.textarea().props('readonly outlined autogrow').classes('w-full h-48 font-mono text-sm')
                 
-                self.prompt_area = ui.textarea(label='生成されたプロンプト').props('readonly outlined autogrow').classes('w-full font-mono text-xs mb-4')
-                
-                with ui.row().classes('gap-2'):
-                    ui.button('分析方針のプロンプトを生成', on_click=lambda: self._generate_prompt("analysis_planning")).props('elevated')
-                    ui.button('データクリーニングのプロンプトを生成', on_click=lambda: self._generate_prompt("data_cleaning")).props('outline')
-                    ui.button('📋 コピー', on_click=self._copy_prompt).props('flat').bind_enabled_from(self.prompt_area, 'value')
-
-            # LLMチャット（将来的な実装用プレースホルダ）
-            with ui.card().classes('w-full opacity-50'):
-                ui.label('🤖 インライン・チャット（開発中）').classes('font-bold mb-2')
-                ui.label('ローカルLLMまたはAPI経由で直接対話が可能になります。').classes('text-xs')
-
-    def _generate_prompt(self, step: str):
+                with ui.row():
+                    ui.button('プロンプト生成', on_click=self._generate_external_prompt)
+                    ui.button('コピー', on_click=lambda: ui.clipboard.write(self._prompt_area.value))
+            
+            # 設定へのリンク
+            with ui.row().classes('justify-end mt-2'):
+                self.llm_dialog.create_trigger_button(ui.row(), label='⚙️ 設定')
+    
+    def _generate_external_prompt(self):
         """外部チャット用プロンプトを生成"""
-        # 本来は現在のセッション情報やデータ要約を渡す
-        data_summary = "現在読み込まれているデータの統計情報..." 
-        
-        user_goal = "化学データの物性予測と自動解析"
-        user_question = "このデータから最適な分析方針を提案してください" if step == "analysis_planning" else "データのクリーニング方法を提案してください"
-        
-        prompt = create_external_prompt(
-            user_goal=user_goal,
-            data_summary=data_summary,
-            user_question=user_question,
-            current_step=step
-        )
-        self.prompt_area.value = prompt
-        ui.notify('プロンプトを生成しました。コピーして外部チャットで使用してください', type='positive')
+        prompt = """# ChemAI Data Analysis Assistant
 
-    def _copy_prompt(self):
-        if self.prompt_area.value:
-            ui.clipboard.write(self.prompt_area.value)
-            ui.notify('プロンプトをクリップボードにコピーしました', icon='content_copy')
+あなたは化学データ分析の専門家アシスタントです。
+以下のコンテキストとデータに基づいて、分析支援を行ってください。
+
+## セッション情報
+- アプリ: ChemAI ML Studio
+- ユーザーの分析目的: 化学データの自動解析
+- 現在のステップ: data_upload
+
+## 分析対象データ
+データ読み込み済み
+
+## 現在の問題・質問
+このデータから最適な分析方針を提案してください
+
+## 期待する回答形式
+Markdown形式で、見出しを使って構造化
+
+## 制約事項
+- 化学的妥当性を最優先
+- 数値計算は単位・有効数字に注意
+- コードを提示する場合は、必ず説明を付与
+"""
+        self._prompt_area.value = prompt
+        ui.notify('プロンプトを生成しました。コピーして外部チャットで使用してください')
