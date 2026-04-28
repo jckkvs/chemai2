@@ -12,8 +12,9 @@ logger = logging.getLogger(__name__)
 class DataUploadPage:
     """データアップロードページ"""
 
-    def __init__(self, llm_config):
+    def __init__(self, llm_config, automl_page=None):
         self.llm_config = llm_config
+        self.automl_page = automl_page
         self.uploaded_data: Optional[pd.DataFrame] = None
         self.quality_report: Optional[Dict] = None
 
@@ -102,13 +103,19 @@ class DataUploadPage:
         if self.uploaded_data is None:
             ui.notify('データが読み込まれていません', type='warning')
             return
-
-        try:
-            from frontend_nicegui.main import navigate_to_automl
-            navigate_to_automl(self.uploaded_data)
-        except ImportError:
-            # main.pyに関数がない場合のフォールバック
-            ui.notify('AutoML機能は準備中です', type='info')
-        except Exception as e:
-            logger.error(f"遷移エラー: {e}")
-            ui.notify('AutoMLページへの遷移に失敗しました', type='negative')
+        
+        # 1. データを渡す
+        if self.automl_page:
+            self.automl_page.load_data(self.uploaded_data)
+        
+        # 2. JavaScriptでタブを切り替える
+        ui.run_javascript('''
+            const tabs = document.querySelectorAll('[role="tab"]');
+            tabs.forEach(tab => {
+                if (tab.textContent.includes('AutoML') && !tab.textContent.includes('Future')) {
+                    tab.click();
+                }
+            });
+        ''')
+        
+        ui.notify('AutoMLタブへ移動しました。', type='info')

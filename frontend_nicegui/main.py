@@ -1,14 +1,11 @@
 """
 frontend_nicegui/main.py
-タブ切り替えロジック修正版 - インポートパス自動設定付き
+全てのUIをページ関数内に移動した修正版
 """
 import sys
 from pathlib import Path
 
-# ============================================================================
-#  インポートパスの自動設定 (重要)
-# ============================================================================
-# プロジェクトルート (chemai2/) を sys.path に追加
+# プロジェクトルートを sys.path に追加
 project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -18,57 +15,32 @@ import pandas as pd
 from typing import Optional, Dict
 import logging
 
-# 設定
-from backend.config.llm_settings import LLMConfig
-
-# UIコンポーネント
-from frontend_nicegui.components.llm_config_dialog import LLMConfigDialog
-
-# ページ
-from frontend_nicegui.pages.data_upload_tab import DataUploadPage
-from frontend_nicegui.pages.llm_assistant_tab import LLMAssistantPage
-from frontend_nicegui.pages.automl_page import AutoMLPage
-
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-#  グローバル状態
-# ============================================================================
-llm_config = LLMConfig.load().get_effective_config()
-llm_dialog = LLMConfigDialog(config=llm_config, on_config_change=lambda c: c.save())
-
-# ページインスタンス
-data_page = DataUploadPage(llm_config=llm_config)
-assistant_page = LLMAssistantPage(llm_config=llm_config, llm_dialog=llm_dialog)
-automl_page = AutoMLPage()
-
-# タブ制御用変数
-active_tab_container = {'value': None}
-tabs_container = {'value': None}
-
-# ============================================================================
-#  遷移関数
-# ============================================================================
-def navigate_to_automl(data: pd.DataFrame):
-    """AutoMLページへ遷移する関数"""
-    if data is not None:
-        automl_page.load_data(data)
-    
-    tabs = tabs_container['value']
-    if tabs is not None:
-        # AutoMLタブを検索して切り替え
-        for tab in tabs._tabs.values():
-            if 'AutoML' in tab.text and '(Future)' not in tab.text:
-                tabs.value = tab
-                break
-
-# ============================================================================
-#  UIレイアウト
+#  ページ関数内で初期化
 # ============================================================================
 @ui.page('/')
 def main_page():
-    """メインページ"""
+    """メインページ - 全ての初期化をここで行う"""
     
+    # 設定の読み込み
+    from backend.config.llm_settings import LLMConfig
+    from frontend_nicegui.components.llm_config_dialog import LLMConfigDialog
+    from frontend_nicegui.pages.data_upload_tab import DataUploadPage
+    from frontend_nicegui.pages.llm_assistant_tab import LLMAssistantPage
+    from frontend_nicegui.pages.automl_page import AutoMLPage
+    
+    llm_config = LLMConfig.load().get_effective_config()
+    llm_dialog = LLMConfigDialog(config=llm_config, on_config_change=lambda c: c.save())
+    
+    # ページインスタンス
+    # 相互連携のため automl_page を先に作り、data_page に渡す
+    automl_page = AutoMLPage()
+    data_page = DataUploadPage(llm_config=llm_config, automl_page=automl_page)
+    assistant_page = LLMAssistantPage(llm_config=llm_config, llm_dialog=llm_dialog)
+    
+    # ヘッダー
     with ui.header().classes('bg-white shadow-sm'):
         with ui.row().classes('w-full justify-between items-center px-4'):
             ui.label('ChemAI MI Studio').classes('text-xl font-bold text-primary')
@@ -77,14 +49,13 @@ def main_page():
                 llm_dialog.create_trigger_button(ui.row(), label='⚙️', icon='settings')
     
     # タブの作成
-    with ui.tabs().classes('w-full bg-white shadow-sm') as t:
-        tabs_container['value'] = t
+    with ui.tabs().classes('w-full bg-white shadow-sm') as tabs:
         data_tab = ui.tab('Data Upload & Cleaning', icon='cloud_upload')
         llm_tab = ui.tab('LLM Assistant', icon='auto_awesome')
         auto_ml_tab = ui.tab('AutoML', icon='model_training')
         viz_tab = ui.tab('Visualization (Future)', icon='insights')
     
-    with ui.tab_panels(t, value=data_tab).classes('w-full max-w-7xl mx-auto mt-4'):
+    with ui.tab_panels(tabs, value=data_tab).classes('w-full max-w-7xl mx-auto mt-4'):
         with ui.tab_panel(data_tab):
             data_page.render()
         with ui.tab_panel(llm_tab):
@@ -106,7 +77,7 @@ def main_page():
 # ============================================================================
 if __name__ in {"__main__", "__mp_main__"}:
     ui.run(
-        title='ChemAI MI Studio',
+        title='ChemAI ML Studio',
         host='0.0.0.0',
         port=8080,
         reload=False,
