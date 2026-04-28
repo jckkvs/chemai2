@@ -1,6 +1,6 @@
 """
 frontend_nicegui/pages/automl_page.py
-既存のAutoMLEngineと統合した完全版
+既存のAutoMLEngineと統合した完全版 - visibleプロパティ修正済み
 """
 from nicegui import ui, events
 import pandas as pd
@@ -56,13 +56,17 @@ class AutoMLPage:
                 self._no_data_msg.classes('text-orange-600 p-4 bg-orange-50 rounded')
 
             # 目的変数選択
-            with ui.card().classes('w-full mb-4').visible(False) as self._target_card:
+            self._target_card = ui.card().classes('w-full mb-4')
+            self._target_card.visible = False
+            with self._target_card:
                 ui.label('🎯 目的変数を選択').classes('font-bold text-lg mb-2')
                 self._target_select = ui.select(options=[], label='目的変数（予測対象）', with_input=True).classes('w-full')
                 ui.label('ヒント: 数値列なら回帰分析、カテゴリ列なら分類分析が自動選択されます').classes('text-xs text-gray-500 mt-1')
 
             # AutoML設定
-            with ui.card().classes('w-full mb-4').visible(False) as self._config_card:
+            self._config_card = ui.card().classes('w-full mb-4')
+            self._config_card.visible = False
+            with self._config_card:
                 ui.label('⚙️ AutoML設定').classes('font-bold text-lg mb-2')
                 with ui.row().classes('w-full gap-4'):
                     with ui.column():
@@ -87,14 +91,16 @@ class AutoMLPage:
                 self._cancel_btn = ui.button('⏹ キャンセル', on_click=self._cancel_execution, color='negative').props('outline').disable()
 
             # 進捗表示
-            self._progress_card = ui.card().classes('w-full mt-4').visible(False)
+            self._progress_card = ui.card().classes('w-full mt-4')
+            self._progress_card.visible = False
             with self._progress_card:
                 ui.label('⏳ AutoML実行中...').classes('font-bold text-lg')
                 self._progress_bar = ui.linear_progress(value=0, show_value=True)
                 self._progress_log = ui.log().classes('w-full h-64 font-mono text-xs')
 
             # 結果表示
-            self._result_card = ui.card().classes('w-full mt-4').visible(False)
+            self._result_card = ui.card().classes('w-full mt-4')
+            self._result_card.visible = False
             with self._result_card:
                 with ui.row().classes('w-full items-center'):
                     ui.label('✅ 解析完了').classes('font-bold text-lg text-green-600')
@@ -162,11 +168,9 @@ class AutoMLPage:
     async def _execute_automl_pipeline(self):
         """AutoMLパイプラインを実行 - 既存のAutoMLEngineを使用"""
         try:
-            # 既存のAutoMLEngineをインポート
             from backend.models.automl import AutoMLEngine
             
             def progress_callback(step: int, total: int, message: str):
-                # 進捗を0-1の範囲に変換
                 value = min(1.0, step / total)
                 self._progress_bar.value = value
                 self._progress_log.push(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
@@ -174,14 +178,12 @@ class AutoMLPage:
             progress_callback(1, 6, "AutoMLを開始します...")
             await asyncio.sleep(0.1)
 
-            # AutoMLEngineを初期化
             engine = AutoMLEngine(
                 task="auto",
                 cv_folds=int(self._cv_folds.value),
                 progress_callback=progress_callback
             )
 
-            # 非同期スレッドで実行
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(
                     engine.run,
@@ -190,7 +192,6 @@ class AutoMLPage:
                 )
                 result = await asyncio.get_event_loop().run_in_executor(None, future.result)
 
-            # 結果をUIに表示
             self.last_results = {
                 'best_model': result.best_model_key,
                 'best_cv_score': result.best_score,
@@ -259,7 +260,6 @@ class AutoMLPage:
             ui.notify('保存するモデルがありません', type='warning')
             return
         path = 'models/automl_model.pkl'
-        # 実際の保存ロジックはAutoMLEngineに依存
         ui.notify(f'モデル保存機能は開発中です: {path}', type='info')
 
     def _export_report(self):

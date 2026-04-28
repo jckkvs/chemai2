@@ -1,6 +1,6 @@
 """
 frontend_nicegui/pages/data_upload_tab.py
-AutoML連携修正版
+AutoML連携修正版 - visibleプロパティ修正済み
 """
 from nicegui import ui, events
 import pandas as pd
@@ -8,6 +8,7 @@ from typing import Optional, Dict, List
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 class DataUploadPage:
     """データアップロードページ"""
@@ -38,14 +39,16 @@ class DataUploadPage:
                     label='化学データ（CSV/Excel）をアップロード'
                 )
 
-            self._quality_card = ui.card().classes('w-full mb-4').visible(False)
+            # 修正: visibleはプロパティとして設定
+            self._quality_card = ui.card().classes('w-full mb-4')
+            self._quality_card.visible = False
+            
             with self._quality_card:
                 ui.label('データ品質評価').classes('font-bold text-lg mb-2')
                 self._quality_label = ui.label()
 
                 with ui.row().classes('mt-4 gap-4'):
                     ui.button('🔧 LLM支援でクリーニング', on_click=self._run_cleaning, color='primary').props('outline')
-                    # AutoML遷移ボタン
                     ui.button('📊 このデータで解析へ', on_click=self._navigate_to_automl, color='primary').props('size=lg')
 
             with ui.card().classes('w-full'):
@@ -108,7 +111,7 @@ class DataUploadPage:
         if self.automl_page:
             self.automl_page.load_data(self.uploaded_data)
         
-        # 2. JavaScriptでタブを切り替える
+        # 2. JavaScriptでAutoMLタブをクリック
         ui.run_javascript('''
             const tabs = document.querySelectorAll('[role="tab"]');
             tabs.forEach(tab => {
@@ -117,5 +120,4 @@ class DataUploadPage:
                 }
             });
         ''')
-        
-        ui.notify('AutoMLタブへ移動しました。', type='info')
+        ui.notify('AutoMLタブへ移動しました', type='info')
