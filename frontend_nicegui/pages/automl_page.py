@@ -270,22 +270,232 @@ class AutoMLPage:
         self._cancel_btn.disable()
 
     def _visualize_results(self):
-        if self.last_results is None:
+        """AutoML結果の可視化 - SHAP + 特徴量重要度"""
+        if self.last_results is None or self.current_data is None:
             ui.notify('結果がありません', type='warning')
             return
-        ui.notify('可視化機能は開発中です', type='info')
+
+        try:
+            import plotly.graph_objects as go
+            import plotly.express as px
+            from backend.interpret.shap_explainer import ShapExplainer, ShapConfig
+
+            self._progress_card.visible = True
+            self._progress_bar.value = 20
+
+            # 最良モデルを取得
+            best_model = self.last_results.get('best_model')
+            X_test = self.last_results.get('X_test')
+
+            if best_model is None or X_test is None:
+                ui.notify('モデル情報が不足しています', type='warning')
+                return
+
+            numeric_cols = self.current_data.select_dtypes(include=['number']).columns.tolist()
+            X_test_numeric = X_test[numeric_cols] if numeric_cols else X_test
+
+            self._progress_bar.value = 40
+
+            # SHAP値を計算
+            try:
+                config = ShapConfig(max_display=10)
+                explainer = ShapExplainer(config)
+                shap_result = explainer.explain(best_model, X_test_numeric.iloc[:min(100, len(X_test_numeric))])
+
+                self._progress_bar.value = 60
+
+                # 特徴量重要度を計算
+                feature_importance = shap_result.feature_importance().head(10)
+
+                self._progress_bar.value = 70
+
+                # Plotlyで可視化
+                fig = px.bar(
+                    feature_importance,
+                    x='importance',
+                    y='feature',
+                    orientation='h',
+                    title='📊 SHAP値による特徴量重要度',
+                    labels={'importance': '平均SHAP値の絶対値', 'feature': '特徴量'},
+                    height=500,
+                    color='importance',
+                    color_continuous_scale='Viridis'
+                )
+                fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+
+                self._progress_bar.value = 80
+
+                # 結果を表示
+                self._importance_container.clear()
+                with self._importance_container:
+                    ui.html(fig.to_html(include_plotlyjs='cdn', config={'responsive': True}))
+
+                ui.notify('SHAP解釈グラフを生成しました', type='positive')
+
+            except ImportError:
+                ui.notify('⚠️ SHAPライブラリが未インストールです。特徴量重要度のみ表示します', type='warning')
+                # フォールバック: モデルのfeature_importances を表示
+                if hasattr(best_model, 'feature_importances_'):
+                    importances = best_model.feature_importances_
+                    feature_importance = pd.DataFrame({
+                        'feature': numeric_cols,
+                        'importance': importances
+                    }).sort_values('importance', ascending=False).head(10)
+
+                    fig = px.bar(
+                        feature_importance,
+                        x='importance',
+                        y='feature',
+                        orientation='h',
+                        title='📊 モデル特徴量重要度',
+                        height=500
+                    )
+                    self._importance_container.clear()
+                    with self._importance_container:
+                        ui.html(fig.to_html(include_plotlyjs='cdn', config={'responsive': True}))
+
+            self._progress_bar.value = 100
+
+        except Exception as e:
+            logger.error(f"可視化エラー: {e}", exc_info=True)
+            ui.notify(f'エラー: {str(e)}', type='negative')
+        finally:
+            self._progress_card.visible = False
 
     def _save_model(self):
+        """AutoMLの最良モデルを保存"""
         if self.last_results is None:
             ui.notify('保存するモデルがありません', type='warning')
             return
-        path = 'models/automl_model.pkl'
-        ui.notify(f'モデル保存機能は開発中です: {path}', type='info')
+
+        try:
+            import joblib
+            from pathlib import Path
+
+            self._progress_card.visible = True
+            self._progress_bar.value = 30
+
+            # モデル保存ディレクトリを作成
+            model_dir = Path('models')
+            model_dir.mkdir(exist_ok=True)
+
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            model_path = model_dir / f'automl_model_{timestamp}.pkl'
+
+            # 最良モデルを保存
+            best_model = self.last_results.get('best_model')
+            if best_model is None:
+                ui.notify('モデルが見つかりません', type='warning')
+                return
+
+            joblib.dump(best_model, model_path)
+            self._progress_bar.value = 70
+
+            # メタデータを保存
+            metadata = {
+                'timestamp': timestamp,
+                'best_score': self.last_results.get('best_score', 0),
+                'model_type': type(best_model).__name__,
+                'data_shape': str(self.current_data.shape) if self.current_data is not None else None,
+                'target_column': self.target_column,
+            }
+
+            metadata_path = model_dir / f'automl_metadata_{timestamp}.json'
+            import json
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+            self._progress_bar.value = 100
+
+            ui.notify(f'✓ モデルを保存しました: {model_path}', type='positive')
+
+            # ダウンロードリンクを表示
+            with ui.dialog() as dialog:
+                with ui.card():
+                    ui.label('📦 モデル保存完了').classes('text-lg font-bold')
+                    ui.label(f'モデルファイル: {model_path}').classes('text-sm font-mono')
+                    ui.label(f'メタデータ: {metadata_path}').classes('text-sm font-mono')
+                    ui.label(f'最良スコア: {metadata["best_score"]:.4f}').classes('text-sm')
+                    with ui.row():
+                        ui.button('閉じる', on_click=dialog.close)
+
+            dialog.open()
+
+        except Exception as e:
+            logger.error(f"モデル保存エラー: {e}", exc_info=True)
+            ui.notify(f'エラー: {str(e)}', type='negative')
+        finally:
+            self._progress_card.visible = False
 
     def _export_report(self):
-        if self.last_results is None:
+        """AutoML結果をPDFレポートで出力"""
+        if self.last_results is None or self.current_data is None:
             ui.notify('出力する結果がありません', type='warning')
             return
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        path = f'reports/automl_report_{timestamp}.json'
-        ui.notify(f'レポート出力機能は開発中です: {path}', type='info')
+
+        try:
+            from pathlib import Path
+            from backend.export.pdf_exporter import PDFExporter
+
+            self._progress_card.visible = True
+            self._progress_bar.value = 20
+
+            # レポート出力ディレクトリを作成
+            report_dir = Path('reports')
+            report_dir.mkdir(exist_ok=True)
+
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_filename = f'automl_report_{timestamp}.pdf'
+
+            self._progress_bar.value = 40
+
+            # PDF生成データを準備
+            report_data = {
+                'title': 'ChemAI AutoML 解析レポート',
+                'timestamp': timestamp,
+                'data_shape': self.current_data.shape,
+                'target_column': self.target_column,
+                'best_score': self.last_results.get('best_score', 0),
+                'best_model': type(self.last_results.get('best_model')).__name__,
+                'cv_folds': self.last_results.get('cv_folds', 5),
+                'results_summary': [
+                    {
+                        'model': result.get('model'),
+                        'score': result.get('score', 0),
+                        'time': result.get('time', 0)
+                    }
+                    for result in self.last_results.get('all_results', [])[:5]  # Top 5
+                ]
+            }
+
+            self._progress_bar.value = 60
+
+            # PDFExporter を使用
+            exporter = PDFExporter(output_dir=str(report_dir))
+            pdf_path = exporter.export(report_data, report_filename)
+
+            self._progress_bar.value = 90
+
+            ui.notify(f'✓ レポートを出力しました: {pdf_path}', type='positive')
+
+            # 完了ダイアログ
+            with ui.dialog() as dialog:
+                with ui.card():
+                    ui.label('📄 レポート出力完了').classes('text-lg font-bold')
+                    ui.label(f'ファイル: {pdf_path}').classes('text-sm font-mono')
+                    with ui.row().classes('mt-4'):
+                        ui.button('閉じる', on_click=dialog.close)
+
+            dialog.open()
+
+            self._progress_bar.value = 100
+
+        except ImportError:
+            ui.notify('⚠️ PDFエクスポート機能が利用できません（reportlab未インストール）', type='warning')
+
+        except Exception as e:
+            logger.error(f"レポート出力エラー: {e}", exc_info=True)
+            ui.notify(f'エラー: {str(e)}', type='negative')
+
+        finally:
+            self._progress_card.visible = False

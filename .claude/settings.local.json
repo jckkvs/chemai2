@@ -16,7 +16,8 @@
       "Bash(python3 -c \"from nicegui import ui; help\\(ui.markdown\\)\")",
       "Bash(python3 -c \"from nicegui.elements.mixins.content_element import ContentElement; print\\([m for m in dir\\(ContentElement\\) if 'content' in m.lower\\(\\) or 'set' in m.lower\\(\\)]\\)\")",
       "Bash(python3 -c \"from nicegui import ui; c = ui.chip\\('test'\\); print\\([m for m in dir\\(c\\) if not m.startswith\\('__'\\)]\\)\")",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }
