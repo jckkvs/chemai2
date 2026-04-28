@@ -1,6 +1,7 @@
 """
 frontend_nicegui/components/llm_config_dialog.py
 LLM設定ダイアログ（目立たない配置：設定メニュー内など）
+修正版: ui.radio の options 形式を修正
 """
 from nicegui import ui
 from typing import Optional, Callable
@@ -39,12 +40,13 @@ class LLMConfigDialog:
                 
                 # 動作モード選択
                 ui.label('動作モード').classes('font-bold text-sm mt-2')
+                # 修正: options を辞書形式に変更（NiceGUIのui.radio仕様）
                 self._mode_select = ui.radio(
-                    options=[
-                        ('prompt_only', 'プロンプトのみ生成（セキュア推奨）'),
-                        ('local', 'ローカルLLMを使用'),
-                        ('api', '外部APIを使用')
-                    ],
+                    options={
+                        'prompt_only': 'プロンプトのみ生成（セキュア推奨）',
+                        'local': 'ローカルLLMを使用',
+                        'api': '外部APIを使用'
+                    },
                     value='prompt_only',
                     on_change=self._on_mode_change
                 ).props('dense')
