@@ -17,11 +17,12 @@ logger = logging.getLogger(__name__)
 class AutoMLPage:
     """AutoML解析ページ - 既存のAutoMLEngineを使用"""
 
-    def __init__(self):
+    def __init__(self, viz_page=None):
         self.current_data: Optional[pd.DataFrame] = None
         self.target_column: Optional[str] = None
         self.automl_instance = None
         self.last_results: Optional[Dict] = None
+        self.viz_page = viz_page
 
     def render(self):
         """AutoMLページを描画"""
@@ -128,6 +129,10 @@ class AutoMLPage:
     def load_data(self, data: pd.DataFrame):
         """データをロードしてUIを更新"""
         self.current_data = data
+
+        # 可視化ページにもデータを渡す
+        if self.viz_page:
+            self.viz_page.load_data(data)
 
         self._row_count.text = f"{len(data):,}"
         self._col_count.text = f"{len(data.columns)}"

@@ -101,16 +101,16 @@ class LLMBenchmarkUI:
         """Run benchmark for selected model"""
         if self.is_running:
             return
-        
+
         model = self.model_select.value
         if not model:
             ui.notify("Please select a model first", type='warning')
             return
-        
+
         self.is_running = True
-        self.result_area.classes('hidden')
+        self.result_area.visible = False
         ui.notify(f"Starting benchmark for {model}... (this may take 1-3 minutes)", type='info')
-        
+
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 resp = await client.post(
@@ -122,9 +122,9 @@ class LLMBenchmarkUI:
                 )
                 resp.raise_for_status()
                 self.results = resp.json()
-            
+
             # Display results
-            self.result_area.classes('')  # Show
+            self.result_area.visible = True
             self.speed_label.text = f"⚡ Speed: {self.results['speed_tps']:.1f} tokens/sec"
             self.memory_label.text = f"💾 Memory: {self.results['memory_gb']:.2f} GB peak"
             self.quality_label.text = f"🎯 Estimated Quality: {self.results.get('quality_score', 0.0):.2f}/1.0"
@@ -154,9 +154,10 @@ class LLMBenchmarkUI:
             
             self.cached_list.clear()
             cached = data.get('cached_results', [])
-            
+
             if not cached:
-                self.cached_list.add(ui.label('No cached benchmarks yet.').classes('text-gray-500'))
+                with self.cached_list:
+                    ui.label('No cached benchmarks yet.').classes('text-gray-500')
             else:
                 for result in cached:
                     with ui.row().classes('items-center gap-2'):
@@ -172,7 +173,8 @@ class LLMBenchmarkUI:
                     
         except Exception as e:
             self.cached_list.clear()
-            self.cached_list.add(ui.label(f"Failed to load cache: {e}").classes('text-red-500'))
+            with self.cached_list:
+                ui.label(f"Failed to load cache: {e}").classes('text-red-500')
     
     async def _load_profiles(self):
         """Load pre-surveyed hardware profiles for reference"""
@@ -196,7 +198,8 @@ class LLMBenchmarkUI:
             
         except Exception as e:
             self.profile_list.clear()
-            self.profile_list.add(ui.label(f"Failed to load profiles: {e}").classes('text-red-500'))
+            with self.profile_list:
+                ui.label(f"Failed to load profiles: {e}").classes('text-red-500')
     
     async def _apply_recommendation(self):
         """Apply benchmark-recommended model settings"""

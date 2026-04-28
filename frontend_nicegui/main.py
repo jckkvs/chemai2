@@ -38,8 +38,11 @@ def main_page():
     llm_dialog = LLMConfigDialog(config=llm_config, on_config_change=lambda c: c.save())
 
     # ページインスタンスの作成と連携
-    automl_page = AutoMLPage()
-    data_page = DataUploadPage(llm_config=llm_config, automl_page=automl_page)
+    from frontend_nicegui.pages.visualization_tab import VisualizationPage
+
+    viz_page = VisualizationPage()
+    automl_page = AutoMLPage(viz_page=viz_page)
+    data_page = DataUploadPage(llm_config=llm_config, automl_page=automl_page, viz_page=viz_page)
     assistant_page = LLMAssistantPage(llm_config=llm_config, llm_dialog=llm_dialog)
     
     with ui.header().classes('bg-white shadow-sm'):
@@ -54,7 +57,7 @@ def main_page():
         data_tab = ui.tab('Data Upload & Cleaning', icon='cloud_upload')
         llm_tab = ui.tab('LLM Assistant', icon='auto_awesome')
         auto_ml_tab = ui.tab('AutoML', icon='model_training')
-        viz_tab = ui.tab('Visualization (Future)', icon='insights')
+        viz_tab = ui.tab('Visualization', icon='insights')
     
     with ui.tab_panels(t, value=data_tab).classes('w-full max-w-7xl mx-auto mt-4'):
         with ui.tab_panel(data_tab):
@@ -64,9 +67,7 @@ def main_page():
         with ui.tab_panel(auto_ml_tab):
             automl_page.render()
         with ui.tab_panel(viz_tab):
-            with ui.card().classes('w-full'):
-                ui.label('📊 可視化機能').classes('text-xl font-bold')
-                ui.label('可視化機能は開発中です').classes('text-center text-gray-500 p-8')
+            viz_page.render()
     
     with ui.footer().classes('bg-gray-100'):
         with ui.row().classes('w-full justify-center py-2'):

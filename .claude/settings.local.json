@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(pip show *)",
+      "Bash(python -c \"import nicegui; print\\(nicegui.__version__\\)\")",
+      "Bash(python *)",
+      "Bash(python3 -c \"from nicegui import ui; help\\(ui.chip\\)\")",
+      "Bash(python3 -c \"from nicegui import ui; help\\(ui.badge\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('total:', d.get\\('totals', {}\\).get\\('percent_covered', 'N/A'\\)\\)\")",
+      "Bash(python3 -c \"from nicegui import ui; help\\(ui.log\\)\")",
+      "Bash(python3 -c \"from nicegui import ui; help\\(ui.aggrid\\)\")",
+      "Bash(grep -v \"PASSWORD}\\\\\\\\|SECRET}\\\\|_KEY}\")",
+      "Bash(python3 -c \"from nicegui import ui; help\\(ui.column.add\\)\")",
+      "Bash(python3 -c \"from nicegui import ui; c = ui.column\\(\\); print\\(dir\\(c\\)\\)\")",
+      "Bash(python3 -c \"from nicegui import ui; help\\(ui.markdown\\)\")",
+      "Bash(python3 -c \"from nicegui.elements.mixins.content_element import ContentElement; print\\([m for m in dir\\(ContentElement\\) if 'content' in m.lower\\(\\) or 'set' in m.lower\\(\\)]\\)\")",
+      "Bash(python3 -c \"from nicegui import ui; c = ui.chip\\('test'\\); print\\([m for m in dir\\(c\\) if not m.startswith\\('__'\\)]\\)\")",
+      "Bash(git add *)"
+    ]
+  }
+}

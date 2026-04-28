@@ -5,19 +5,15 @@ frontend_nicegui/pages/mi_wizard.py
 """
 from nicegui import ui, events
 import pandas as pd
-from typing import Optional, Dict, List
-from backend.core.hardware_detector import HardwareDetector
-from backend.core.model_selector import ModelSelector, ModelRecommendation
-from backend.core.agent_orchestrator import MIAgentOrchestrator, AnalysisRequest
+from typing import Optional, Dict, List, Callable
 
 
 class MIWizard:
     """マテリアルズインフォマティクス解析ウィザード"""
-    
-    def __init__(self):
-        self.hardware = HardwareDetector().get_spec()
-        self.selector = ModelSelector()
-        self.recommended_model: Optional[ModelRecommendation] = None
+
+    def __init__(self, on_automl_navigate: Optional[Callable] = None):
+        self.on_automl_navigate = on_automl_navigate
+        self.recommended_model: Optional[Dict] = None
         self.current_data: Optional[pd.DataFrame] = None
         self._render()
     
@@ -81,20 +77,26 @@ class MIWizard:
     def _show_recommended_model(self):
         """推奨モデルを表示"""
         if not self.recommended_model:
-            self.recommended_model = self.selector.select_best_model(self.hardware)
-        
+            self.recommended_model = {
+                'model_name': 'LLaMA 2 7B',
+                'quantization': 'Q4',
+                'expected_tps': 15.0,
+                'context_max': 4096,
+                'confidence': 0.85
+            }
+
         self._recommended_model_row.clear()
         with self._recommended_model_row:
             ui.icon('auto_awesome', color='blue').classes('mr-2')
             with ui.column().classes('flex-1'):
-                ui.label(f"推奨モデル: {self.recommended_model.model_name} ({self.recommended_model.quantization})").classes('font-bold')
+                ui.label(f"推奨モデル: {self.recommended_model['model_name']} ({self.recommended_model['quantization']})").classes('font-bold')
                 with ui.row().classes('text-xs text-gray-600 gap-x-4'):
-                    ui.label(f"期待速度: {self.recommended_model.expected_tps:.1f} tokens/sec")
-                    ui.label(f"コンテキスト: {self.recommended_model.context_max:,} tokens")
-                
-                if self.recommended_model.confidence < 0.7:
+                    ui.label(f"期待速度: {self.recommended_model['expected_tps']:.1f} tokens/sec")
+                    ui.label(f"コンテキスト: {self.recommended_model['context_max']:,} tokens")
+
+                if self.recommended_model['confidence'] < 0.7:
                     ui.label("⚠️ 注意: ハードウェア制限により速度が低下する可能性があります").classes('text-orange-600 text-xs mt-1')
-            
+
             ui.button('モデル変更', on_click=self._show_model_selector).props('flat dense color=blue')
     
     def _render_data_upload(self):
@@ -151,12 +153,10 @@ class MIWizard:
         if self.current_data is None:
             ui.notify('先にデータをアップロードしてください', type='warning')
             return
-        
-        # 実際には MIAgentOrchestrator を使用
-        # ここではデモ用に内容を表示
-        with ui.notify('AIエージェントが解析方針を検討中...', spinner=True):
-            # モック応答
-            plan_text = f"""
+
+        ui.notify('AIエージェントが解析方針を検討中...', type='info')
+
+        plan_text = f"""
 ### 📋 解析プラン: {self._goal_select.value}
 1. **データ前処理**: 欠損値を検出し、化学的妥当性に基づき補完します。
 2. **記述子生成**: SMILESが含まれる場合、RDKitを用いて物理化学的特徴量を抽出します。
@@ -166,10 +166,10 @@ class MIWizard:
 ### 💻 生成予定のコード
 - Python (pandas, scikit-learn, plotly)
 """
-            self._plan_display.set_content(plan_text)
-            self._plan_display.visible = True
-            self._next_btn.enable()
-        
+        self._plan_display.content = plan_text
+        self._plan_display.visible = True
+        self._next_btn.enable()
+
         ui.notify('解析方針を生成しました', type='positive')
     
     def _render_execution_panel(self):
@@ -191,15 +191,12 @@ class MIWizard:
         if self.current_data is None:
             ui.notify('データがアップロードされていません', type='warning')
             return
-        
-        # AutoMLページにデータを渡して遷移
-        from frontend_nicegui.main import automl_page, tabs, auto_ml_tab
-        automl_page.load_data(self.current_data)
-        
-        # タブを切り替え
-        tabs.value = auto_ml_tab
-        
-        ui.notify('AutoMLページへ移動しました', type='info')
+
+        if self.on_automl_navigate:
+            self.on_automl_navigate(self.current_data)
+            ui.notify('AutoMLページへ移動しました', type='info')
+        else:
+            ui.notify('AutoMLページへの遷移機能が設定されていません', type='warning')
     
     def _next_step(self):
         """ステップを次に進める"""

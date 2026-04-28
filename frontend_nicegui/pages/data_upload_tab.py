@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 class DataUploadPage:
     """データアップロードページ"""
 
-    def __init__(self, llm_config, automl_page=None):
+    def __init__(self, llm_config, automl_page=None, viz_page=None):
         self.llm_config = llm_config
         self.automl_page = automl_page
+        self.viz_page = viz_page
         self.uploaded_data: Optional[pd.DataFrame] = None
         self.quality_report: Optional[Dict] = None
 
@@ -106,11 +107,13 @@ class DataUploadPage:
         if self.uploaded_data is None:
             ui.notify('データが読み込まれていません', type='warning')
             return
-        
+
         # 1. データを渡す
         if self.automl_page:
             self.automl_page.load_data(self.uploaded_data)
-        
+        if self.viz_page:
+            self.viz_page.load_data(self.uploaded_data)
+
         # 2. JavaScriptでAutoMLタブをクリック
         ui.run_javascript('''
             const tabs = document.querySelectorAll('[role="tab"]');

@@ -415,10 +415,6 @@ class AutoMLEngine:
                         constrained_model = self._apply_constraints_to_estimator(
                             model_inst, self.column_meta_dict, feature_names, X_train
                         )
-                            estimator=model_inst,
-                            pipeline=preprocessor_step,
-                            constraints_dict=self.monotonic_constraints_dict
-                        )
                         # パイプラインの最終step (model) を置換
                         pipeline_base.steps[-1] = ("model", constrained_model)
 
@@ -431,7 +427,7 @@ class AutoMLEngine:
                 pipeline = pipeline_base  # smiles_varsなしでCV実行
                 X_for_cv = X_train        # 変換済みDF
                 cv_config = CVConfig(
-                    cv_key=cv_key,
+                    cv_key=self.cv_key,
                     n_splits=self.cv_folds,
                     extra_params=cv_extra_params
                 )
