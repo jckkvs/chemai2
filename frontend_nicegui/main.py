@@ -1,7 +1,18 @@
 """
 frontend_nicegui/main.py
-タブ切り替えロジック修正版
+タブ切り替えロジック修正版 - インポートパス自動設定付き
 """
+import sys
+from pathlib import Path
+
+# ============================================================================
+#  インポートパスの自動設定 (重要)
+# ============================================================================
+# プロジェクトルート (chemai2/) を sys.path に追加
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from nicegui import ui, app
 import pandas as pd
 from typing import Optional, Dict
@@ -35,10 +46,9 @@ automl_page = AutoMLPage()
 active_tab_container = {'value': None}
 tabs_container = {'value': None}
 
-# アプリケーション状態
-app.storage.general['uploaded_data'] = None
-
-
+# ============================================================================
+#  遷移関数
+# ============================================================================
 def navigate_to_automl(data: pd.DataFrame):
     """AutoMLページへ遷移する関数"""
     if data is not None:
@@ -48,10 +58,9 @@ def navigate_to_automl(data: pd.DataFrame):
     if tabs is not None:
         # AutoMLタブを検索して切り替え
         for tab in tabs._tabs.values():
-            if 'AutoML' in tab.text:
+            if 'AutoML' in tab.text and '(Future)' not in tab.text:
                 tabs.value = tab
                 break
-
 
 # ============================================================================
 #  UIレイアウト
@@ -92,6 +101,9 @@ def main_page():
             ui.label('ChemAI MI Studio - Materials Informatics Platform').classes('text-xs text-gray-600')
 
 
+# ============================================================================
+#  アプリケーション起動
+# ============================================================================
 if __name__ in {"__main__", "__mp_main__"}:
     ui.run(
         title='ChemAI MI Studio',
