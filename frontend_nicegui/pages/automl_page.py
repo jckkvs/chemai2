@@ -23,6 +23,8 @@ class AutoMLPage:
         self.automl_instance = None
         self.last_results: Optional[Dict] = None
         self.viz_page = viz_page
+        self._run_btn = None  # ボタンは render() で初期化
+        self._cancel_btn = None
 
     def render(self):
         """AutoMLページを描画"""
@@ -158,7 +160,8 @@ class AutoMLPage:
 
         self._target_card.visible = True
         self._config_card.visible = True
-        self._run_btn.enable()
+        if self._run_btn is not None:
+            self._run_btn.enable()
         ui.notify(f'データを読み込みました: {len(data)}行 × {len(data.columns)}列', type='positive')
 
     def _run_automl(self):
@@ -173,8 +176,10 @@ class AutoMLPage:
         self.target_column = self._target_select.value
         self._progress_card.visible = True
         self._result_card.visible = False
-        self._run_btn.disable()
-        self._cancel_btn.enable()
+        if self._run_btn is not None:
+            self._run_btn.disable()
+        if self._cancel_btn is not None:
+            self._cancel_btn.enable()
         self._progress_log.clear()
 
         import asyncio
