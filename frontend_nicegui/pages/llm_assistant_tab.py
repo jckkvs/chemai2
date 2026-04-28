@@ -27,13 +27,13 @@ class LLMAssistantPage:
             with ui.card().classes('w-full mb-4'):
                 ui.label('🔄 LLM実行モード').classes('font-bold mb-2')
                 with ui.row().classes('w-full gap-4'):
-                    self._mode_radio = ui.radio(
+                    self._mode_select = ui.select(
                         options={
-                            'external': '外部高精度LLM向けプロンプト生成（セキュア）',
-                            'local': 'ローカルLLMで実行（Ollama）',
+                            'external': '🔐 外部高精度LLM向けプロンプト生成（セキュア）',
+                            'local': '💬 ローカルLLMで実行（Ollama）',
                         },
                         value='external'
-                    ).props('dense')
+                    ).classes('flex-1')
 
                     with ui.column().classes('ml-auto text-right'):
                         ui.label('LLM設定').classes('text-xs text-gray-500')
@@ -72,12 +72,12 @@ class LLMAssistantPage:
                 # ステータス
                 self._status_label = ui.label('').classes('text-xs text-gray-500 mt-2')
 
-            # モード変更イベント
-            self._mode_radio.on_change(self._on_mode_changed)
+            # モード変更イベント（selectのvalue_changeイベント）
+            self._mode_select.on_value_change(self._on_mode_changed)
 
-    def _on_mode_changed(self):
+    def _on_mode_changed(self, event):
         """LLM実行モード変更"""
-        mode = self._mode_radio.value
+        mode = self._mode_select.value
         self._external_panel.visible = (mode == 'external')
         self._local_panel.visible = (mode == 'local')
 
