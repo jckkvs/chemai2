@@ -1,7 +1,7 @@
 """
 frontend_nicegui/components/llm_config_dialog.py
 LLM設定ダイアログ（目立たない配置：設定メニュー内など）
-修正版: ui.radio の options 形式を修正
+修正版: ui.slider の label 引数削除
 """
 from nicegui import ui
 from typing import Optional, Callable
@@ -40,7 +40,7 @@ class LLMConfigDialog:
                 
                 # 動作モード選択
                 ui.label('動作モード').classes('font-bold text-sm mt-2')
-                # 修正: options を辞書形式に変更（NiceGUIのui.radio仕様）
+                # options を辞書形式に変更（NiceGUIのui.radio仕様）
                 self._mode_select = ui.radio(
                     options={
                         'prompt_only': 'プロンプトのみ生成（セキュア推奨）',
@@ -62,7 +62,10 @@ class LLMConfigDialog:
                 
                 # 詳細設定
                 with ui.expansion('詳細設定', icon='settings').props('dense'):
-                    self._temperature = ui.slider(min=0, max=1, step=0.1, value=0.1, label='Temperature')
+                    # 修正: ui.slider に label 引数はないため、別途ラベルを追加
+                    ui.label('Temperature').classes('text-xs text-gray-500')
+                    self._temperature = ui.slider(min=0, max=1, step=0.1, value=0.1).props('dense')
+                    
                     self._max_tokens = ui.number('Max Tokens', value=2000, min=100, max=8000)
                     self._enable_exec = ui.switch('LLM生成コードの自動実行', value=False)
                 
