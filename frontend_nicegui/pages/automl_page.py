@@ -1,6 +1,6 @@
 """
 frontend_nicegui/pages/automl_page.py
-既存のAutoMLEngineと統合した完全版 - visibleプロパティ修正済み
+既存のAutoMLEngineと統合した完全版 - ui.table() 修正済み
 """
 from nicegui import ui, events
 import pandas as pd
@@ -50,7 +50,8 @@ class AutoMLPage:
                         self._memory_usage = ui.label('-')
 
                 ui.label('プレビュー（先頭10行）').classes('mt-4 font-bold')
-                self._data_table = ui.table().classes('w-full h-64')
+                # 修正: ui.table() には columns, rows 引数が必要
+                self._data_table = ui.table(columns=[], rows=[]).classes('w-full h-64')
                 self._data_table.visible = False
 
                 self._no_data_msg = ui.label('⚠️ データが読み込まれていません。「Data Upload」タブからデータをアップロードしてください。')
@@ -111,7 +112,8 @@ class AutoMLPage:
                     ui.label('✅ 解析完了').classes('font-bold text-lg text-green-600')
                     ui.space()
                     self._best_model_label = ui.label('').classes('text-sm text-gray-600')
-                self._results_table = ui.table().classes('w-full')
+                # 修正: ui.table() には columns, rows 引数が必要
+                self._results_table = ui.table(columns=[], rows=[]).classes('w-full')
 
                 with ui.expansion('📊 特徴量重要度', icon='analytics').classes('w-full mt-4'):
                     self._importance_container = ui.column().classes('w-full')
@@ -129,10 +131,11 @@ class AutoMLPage:
         self._col_count.text = f"{len(data.columns)}"
         self._memory_usage.text = f"{data.memory_usage(deep=True).sum() / 1024**2:.2f} MB"
 
-        self._data_table.options = {
-            'columns': [{'field': col, 'headerName': col} for col in data.columns],
-            'rowData': data.head(10).to_dict('records')
-        }
+        # 修正: tableのcolumns/rowsを設定
+        columns = [{'name': col, 'label': col, 'field': col} for col in data.columns]
+        rows = data.head(10).to_dict('records')
+        self._data_table.columns = columns
+        self._data_table.rows = rows
         self._data_table.visible = True
         self._no_data_msg.visible = False
 
@@ -241,17 +244,16 @@ class AutoMLPage:
                 'best': '✓' if model_name == results['best_model'] else ''
             })
 
-        self._results_table.options = {
-            'columns': [
-                {'field': 'model', 'headerName': 'モデル'},
-                {'field': 'cv_mean', 'headerName': 'CV平均'},
-                {'field': 'cv_std', 'headerName': 'CV標準偏差'},
-                {'field': 'test_score', 'headerName': 'テストスコア'},
-                {'field': 'time', 'headerName': '訓練時間'},
-                {'field': 'best', 'headerName': '最良'},
-            ],
-            'rowData': rows
-        }
+        columns = [
+            {'name': 'model', 'label': 'モデル', 'field': 'model'},
+            {'name': 'cv_mean', 'label': 'CV平均', 'field': 'cv_mean'},
+            {'name': 'cv_std', 'label': 'CV標準偏差', 'field': 'cv_std'},
+            {'name': 'test_score', 'label': 'テストスコア', 'field': 'test_score'},
+            {'name': 'time', 'label': '訓練時間', 'field': 'time'},
+            {'name': 'best', 'label': '最良', 'field': 'best'},
+        ]
+        self._results_table.columns = columns
+        self._results_table.rows = rows
         self._progress_log.push(f"✅ 完了 - 総時間: {results['total_time']:.2f}秒")
 
     def _cancel_execution(self):
