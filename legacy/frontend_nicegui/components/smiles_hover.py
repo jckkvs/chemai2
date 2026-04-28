@@ -142,18 +142,21 @@ def render_smiles_table(
     ui.html(html_table)
 
     # ホバー用JavaScriptは run_javascript で個別に追加（scriptタグエラー回避）
+    # setTimeout でテーブル描画を待ってから実行
     ui.run_javascript(f"""
-document.querySelectorAll('.smi-cell').forEach(cell => {{
-  const popup = cell.querySelector('.smi-popup');
-  if (!popup) return;
-  cell.addEventListener('mousemove', e => {{
-    let x = e.clientX + 16, y = e.clientY - 10;
-    if (x + {img_size + 40} > window.innerWidth) x = e.clientX - {img_size + 40};
-    if (y + {img_size + 60} > window.innerHeight) y = e.clientY - {img_size + 60};
-    popup.style.left = x + 'px';
-    popup.style.top = y + 'px';
+setTimeout(() => {{
+  document.querySelectorAll('.smi-cell').forEach(cell => {{
+    const popup = cell.querySelector('.smi-popup');
+    if (!popup) return;
+    cell.addEventListener('mousemove', e => {{
+      let x = e.clientX + 16, y = e.clientY - 10;
+      if (x + {img_size + 40} > window.innerWidth) x = e.clientX - {img_size + 40};
+      if (y + {img_size + 60} > window.innerHeight) y = e.clientY - {img_size + 60};
+      popup.style.left = x + 'px';
+      popup.style.top = y + 'px';
+    }});
   }});
-}});
+}}, 100);
 """)
 
 
