@@ -1,0 +1,21 @@
+# chemai2 LLM拡張機能用 追加依存パッケージ
+# 既存 requirements.txt に追記、またはオプションインストールとして提供
+
+# ドキュメント読み込み
+python-pptx>=0.6.21
+python-docx>=0.8.11
+
+# LLM連携（オプション）
+# ローカルLLM用
+transformers>=4.35.0
+accelerate>=0.24.0
+bitsandbytes>=0.41.0; sys_platform != "darwin"  # Apple Silicon非対応
+
+# APIクライアント
+openai>=1.0.0
+anthropic>=0.5.0
+httpx>=0.25.0
+
+# コード実行サンドボックス（セキュリティ）
+restrictedpython>=6.0
+docker>=6.1.0  # sandbox_mode=True時

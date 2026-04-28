@@ -20,7 +20,10 @@ import logging
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nicegui import ui, app
+import asyncio
 from backend.utils.compatibility import CompatibilityManager
+from frontend_nicegui.components.llm_assistant import LLMAssistantUI
+from frontend_nicegui.components.llm_benchmark import LLMBenchmarkUI
 
 # 起動時互換性チェック（既存機能に影響を与えない非侵襲的実装）
 _compat = CompatibilityManager()
@@ -831,6 +834,10 @@ async def main_page():
             tab_models = ui.tab("models").classes("hidden")
             tab_computation = ui.tab("computation").classes("hidden")
             tab_quantum = ui.tab("quantum").classes("hidden")
+            
+            # 🆕 LLM関連タブ
+            ui.tab('llm_chat', label='🤖 LLMアシスタント', icon='psychology')
+            ui.tab('llm_bench', label='🔬 ベンチマーク', icon='speed')
 
         with ui.tab_panels(main_tabs, value="data").classes("full-width q-pa-md bg-transparent") as panels:
             
@@ -886,6 +893,15 @@ async def main_page():
             with ui.tab_panel("quantum"):
                 from frontend_nicegui.components.quantum_feature_explorer import render_quantum_feature_explorer
                 render_quantum_feature_explorer(state)
+
+            # --- LLM Panels ---
+            with ui.tab_panel("llm_chat"):
+                llm_chat = LLMAssistantUI()
+                llm_chat.render()
+            
+            with ui.tab_panel("llm_bench"):
+                llm_bench = LLMBenchmarkUI()
+                llm_bench.render()
 
     # ── タブ遷移コールバック登録 ──
     state["_switch_to_inverse"] = lambda: main_tabs.set_value("inverse")
@@ -1453,3 +1469,36 @@ def debug_page():
             ui.label(f"  {key}: {value}").classes('text-gray-300 font-mono')
     
     ui.button('🔄 リロード', on_click=lambda: ui.navigate.to('/debug')).props('outline color=cyan')
+
+
+# ── アプリ起動時の非同期初期化処理追加 ──
+
+async def _check_llm_startup():
+    """Check LLM initialization status on app start"""
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            # Check LLM status via backend API
+            resp = await client.get("http://localhost:8000/api/v1/llm/status")
+            if resp.status_code == 200:
+                status = resp.json()
+                if status.get("state") == "ready":
+                    ui.notify("✅ LLM Assistant ready", type="positive")
+                elif status.get("state") == "uninitialized":
+                    ui.notify("💡 LLM Assistant: Click Initialize to start", type="info")
+            else:
+                ui.notify("⚠️ LLM API not reachable", type="warning")
+    except Exception:
+        # Silently fail if backend is offline, or notify if needed
+        pass
+
+app.on_startup(_check_llm_startup)
+
+# ── 実行 ──
+if __name__ in {"__main__", "__mp_main__"}:
+    ui.run(
+        title="ChemAI ML Studio",
+        port=8085,
+        storage_secret="chemai_secret_key_2026",
+        dark=True,
+    )

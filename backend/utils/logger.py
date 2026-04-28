@@ -89,3 +89,7 @@ class StructuredFormatter(logging.Formatter):
                 'message': str(record.exc_info[1]) if record.exc_info[1] else None,
             }
         return json.dumps(log_entry, ensure_ascii=False, default=str)
+
+
+# Global logger instance
+logger = setup_logger()

@@ -1,0 +1,724 @@
+{
+  "meta": {
+    "version": "2026.01.15",
+    "last_updated": "2026-01-15",
+    "description": "Hardware compatibility dictionary for local LLM inference in chemai2",
+    "quantization_reference": {
+      "Q4_K_M": "4-bit K-quant, ~95% quality, sweet spot for most users [[10]]",
+      "Q6_K": "6-bit K-quant, ~99% quality, higher VRAM usage",
+      "Q8_0": "8-bit, ~99.5% quality, near FP16 accuracy",
+      "FP16": "Full precision, 2 bytes/param, highest quality but largest footprint"
+    },
+    "vram_formula": "Total = Weights(Params×Bytes/Param) + KV_Cache(2×Layers×KV_Heads×Head_Dim×Seq_Len×Batch×Precision) + Overhead(1-1.5GB) [[10]]"
+  },
+  
+  "hardware_profiles": [
+    {
+      "id": "cpu_only_16gb",
+      "name": "CPU Only - 16GB RAM",
+      "requirements": {
+        "gpu": null,
+        "ram_min_gb": 16,
+        "cpu_flags": ["avx2"],
+        "os": ["linux", "windows", "darwin"]
+      },
+      "compatible_models": [
+        {
+          "model": "Qwen3.5-4B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 0,
+          "ram_needed_gb": 3.2,
+          "expected_tps": 2.5,
+          "context_max": 8192,
+          "notes": "CPU推論、低速だが動作可能"
+        },
+        {
+          "model": "Gemma3-4B",
+          "quantization": "Q4_K_M", 
+          "vram_needed_gb": 0,
+          "ram_needed_gb": 3.0,
+          "expected_tps": 3.0,
+          "context_max": 8192,
+          "notes": "軽量モデル、化学タスクに最適化"
+        }
+      ],
+      "recommended_model": "Qwen3.5-4B-Q4_K_M",
+      "tier": "cpu_only"
+    },
+    
+    {
+      "id": "cpu_only_32gb",
+      "name": "CPU Only - 32GB RAM",
+      "requirements": {
+        "gpu": null,
+        "ram_min_gb": 32,
+        "cpu_flags": ["avx2"],
+        "os": ["linux", "windows", "darwin"]
+      },
+      "compatible_models": [
+        {
+          "model": "Qwen3.5-9B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 0,
+          "ram_needed_gb": 6.5,
+          "expected_tps": 1.8,
+          "context_max": 8192,
+          "notes": "CPU推論、化学データ解析に十分な性能"
+        },
+        {
+          "model": "Llama3.3-8B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 0,
+          "ram_needed_gb": 5.8,
+          "expected_tps": 2.0,
+          "context_max": 8192,
+          "notes": "汎用タスクに強い"
+        },
+        {
+          "model": "Qwen3.5-14B",
+          "quantization": "Q3_K_M",
+          "vram_needed_gb": 0,
+          "ram_needed_gb": 8.5,
+          "expected_tps": 1.2,
+          "context_max": 4096,
+          "notes": "Q3量化で32GBに収まるが品質低下に注意"
+        }
+      ],
+      "recommended_model": "Qwen3.5-9B-Q4_K_M",
+      "tier": "cpu_only"
+    },
+    
+    {
+      "id": "rtx_3060_12gb",
+      "name": "NVIDIA RTX 3060 - 12GB VRAM",
+      "requirements": {
+        "gpu": {"vendor": "nvidia", "vram_min_gb": 12, "min_cc": "8.6"},
+        "ram_min_gb": 16,
+        "os": ["linux", "windows"]
+      },
+      "compatible_models": [
+        {
+          "model": "Qwen3.5-9B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 6.2,
+          "ram_needed_gb": 2.0,
+          "expected_tps": 45,
+          "context_max": 32768,
+          "notes": "VRAM余裕あり、長文コンテキスト可能 [[79]]"
+        },
+        {
+          "model": "Gemma3-12B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 8.5,
+          "ram_needed_gb": 2.0,
+          "expected_tps": 32,
+          "context_max": 8192,
+          "notes": "Google製、化学記述子生成に優れる"
+        },
+        {
+          "model": "Qwen3.5-14B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 9.8,
+          "ram_needed_gb": 2.0,
+          "expected_tps": 28,
+          "context_max": 8192,
+          "notes": "14Bクラスでは最高性能"
+        }
+      ],
+      "recommended_model": "Qwen3.5-9B-Q4_K_M",
+      "tier": "entry_gpu"
+    },
+    
+    {
+      "id": "rtx_4060ti_16gb",
+      "name": "NVIDIA RTX 4060 Ti - 16GB VRAM",
+      "requirements": {
+        "gpu": {"vendor": "nvidia", "vram_min_gb": 16, "min_cc": "8.9"},
+        "ram_min_gb": 16,
+        "os": ["linux", "windows"]
+      },
+      "compatible_models": [
+        {
+          "model": "Qwen3.5-14B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 9.8,
+          "ram_needed_gb": 2.0,
+          "expected_tps": 35,
+          "context_max": 32768,
+          "notes": "16GB VRAMに最適化"
+        },
+        {
+          "model": "Qwen3.5-22B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 14.5,
+          "ram_needed_gb": 2.0,
+          "expected_tps": 18,
+          "context_max": 8192,
+          "notes": "22Bクラス、化学推論に強力"
+        },
+        {
+          "model": "Llama3.3-8B",
+          "quantization": "Q8_0",
+          "vram_needed_gb": 9.5,
+          "ram_needed_gb": 2.0,
+          "expected_tps": 52,
+          "context_max": 32768,
+          "notes": "Q8量化で高品質・高速"
+        }
+      ],
+      "recommended_model": "Qwen3.5-14B-Q4_K_M",
+      "tier": "entry_gpu"
+    },
+    
+    {
+      "id": "rtx_5080_16gb",
+      "name": "NVIDIA RTX 5080 - 16GB VRAM (ユーザー環境)",
+      "requirements": {
+        "gpu": {"vendor": "nvidia", "vram_min_gb": 16, "min_cc": "10.0", "name_contains": ["RTX 5080"]},
+        "ram_min_gb": 32,
+        "os": ["linux", "windows"]
+      },
+      "compatible_models": [
+        {
+          "model": "Qwen3.5-32B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 20.5,
+          "ram_needed_gb": 4.0,
+          "expected_tps": 12,
+          "context_max": 8192,
+          "notes": "一部レイヤーをRAMにオフロード、実用的速度 [[83]]"
+        },
+        {
+          "model": "Qwen3.5-22B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 14.5,
+          "ram_needed_gb": 2.0,
+          "expected_tps": 28,
+          "context_max": 32768,
+          "notes": "VRAM内に完全収容、最速推論"
+        },
+        {
+          "model": "Gemma3-27B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 17.8,
+          "ram_needed_gb": 3.0,
+          "expected_tps": 15,
+          "context_max": 8192,
+          "notes": "Google最新、マルチモーダル対応"
+        },
+        {
+          "model": "Llama3.3-70B",
+          "quantization": "Q3_K_M",
+          "vram_needed_gb": 26.5,
+          "ram_needed_gb": 8.0,
+          "expected_tps": 4,
+          "context_max": 4096,
+          "notes": "大規模モデル、オフロード多めだが動作可能 [[53]]"
+        }
+      ],
+      "recommended_model": "Qwen3.5-22B-Q4_K_M",
+      "tier": "mid_gpu",
+      "user_profile": true
+    },
+    
+    {
+      "id": "rtx_4090_24gb",
+      "name": "NVIDIA RTX 4090 - 24GB VRAM",
+      "requirements": {
+        "gpu": {"vendor": "nvidia", "vram_min_gb": 24, "min_cc": "8.9"},
+        "ram_min_gb": 32,
+        "os": ["linux", "windows"]
+      },
+      "compatible_models": [
+        {
+          "model": "Qwen3.5-32B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 20.5,
+          "ram_needed_gb": 2.0,
+          "expected_tps": 35,
+          "context_max": 32768,
+          "notes": "VRAM内完全収容、高速推論"
+        },
+        {
+          "model": "Qwen3.5-35B-A3B-MoE",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 22.0,
+          "ram_needed_gb": 2.0,
+          "expected_tps": 42,
+          "context_max": 16384,
+          "notes": "MoEアーキテクチャ、35B総パラメータだが3B活性、高速 [[45]]"
+        },
+        {
+          "model": "Llama3.3-70B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 42.5,
+          "ram_needed_gb": 8.0,
+          "expected_tps": 8,
+          "context_max": 8192,
+          "notes": "一部オフロード、実用的速度で70B推論可能"
+        }
+      ],
+      "recommended_model": "Qwen3.5-35B-A3B-MoE-Q4_K_M",
+      "tier": "high_gpu"
+    },
+    
+    {
+      "id": "rtx_5090_32gb",
+      "name": "NVIDIA RTX 5090 - 32GB VRAM",
+      "requirements": {
+        "gpu": {"vendor": "nvidia", "vram_min_gb": 32, "min_cc": "10.0"},
+        "ram_min_gb": 32,
+        "os": ["linux", "windows"]
+      },
+      "compatible_models": [
+        {
+          "model": "Qwen3.5-35B-A3B-MoE",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 22.0,
+          "ram_needed_gb": 2.0,
+          "expected_tps": 78,
+          "context_max": 32768,
+          "notes": "VRAM余裕、長文コンテキスト・高速推論 [[81]]"
+        },
+        {
+          "model": "Qwen3.5-72B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 44.5,
+          "ram_needed_gb": 10.0,
+          "expected_tps": 18,
+          "context_max": 8192,
+          "notes": "72Bクラス、一部オフロードだが実用的"
+        },
+        {
+          "model": "Llama4-Scout-109B-MoE",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 65.0,
+          "ram_needed_gb": 15.0,
+          "expected_tps": 6,
+          "context_max": 8192,
+          "notes": "大規模MoE、2GPU推奨だが単体でも動作 [[10]]"
+        },
+        {
+          "model": "DeepSeek-V3-67B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 40.2,
+          "ram_needed_gb": 8.0,
+          "expected_tps": 22,
+          "context_max": 16384,
+          "notes": "中国製最新、化学推論ベンチマーク上位"
+        }
+      ],
+      "recommended_model": "Qwen3.5-35B-A3B-MoE-Q4_K_M",
+      "tier": "high_gpu"
+    },
+    
+    {
+      "id": "2x_rtx_4090_48gb",
+      "name": "2× NVIDIA RTX 4090 - 48GB Total VRAM",
+      "requirements": {
+        "gpu": {"vendor": "nvidia", "vram_min_gb": 24, "count_min": 2, "min_cc": "8.9"},
+        "ram_min_gb": 64,
+        "os": ["linux", "windows"],
+        "notes": "PCIe接続、NVLink非対応コンシューマー環境"
+      },
+      "compatible_models": [
+        {
+          "model": "Llama3.3-70B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 42.5,
+          "ram_needed_gb": 4.0,
+          "expected_tps": 28,
+          "context_max": 32768,
+          "notes": "2GPUで完全収容、高速推論"
+        },
+        {
+          "model": "Qwen3.5-72B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 44.5,
+          "ram_needed_gb": 4.0,
+          "expected_tps": 25,
+          "context_max": 32768,
+          "notes": "72Bクラス、2GPUで最適化"
+        },
+        {
+          "model": "Llama4-Scout-109B-MoE",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 65.0,
+          "ram_needed_gb": 8.0,
+          "expected_tps": 12,
+          "context_max": 16384,
+          "notes": "MoEモデル、2GPUで実用的速度"
+        }
+      ],
+      "recommended_model": "Llama3.3-70B-Q4_K_M",
+      "tier": "multi_gpu"
+    },
+    
+    {
+      "id": "2x_rtx_5090_64gb",
+      "name": "2× NVIDIA RTX 5090 - 64GB Total VRAM",
+      "requirements": {
+        "gpu": {"vendor": "nvidia", "vram_min_gb": 32, "count_min": 2, "min_cc": "10.0"},
+        "ram_min_gb": 64,
+        "os": ["linux", "windows"]
+      },
+      "compatible_models": [
+        {
+          "model": "Llama4-Scout-109B-MoE",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 65.0,
+          "ram_needed_gb": 4.0,
+          "expected_tps": 35,
+          "context_max": 32768,
+          "notes": "2GPUで完全収容、最新大規模モデル推論可能"
+        },
+        {
+          "model": "Qwen3.5-72B",
+          "quantization": "Q6_K",
+          "vram_needed_gb": 52.0,
+          "ram_needed_gb": 4.0,
+          "expected_tps": 42,
+          "context_max": 32768,
+          "notes": "Q6量化で高品質・高速"
+        },
+        {
+          "model": "Nemotron3-Super-120B-MoE",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 72.0,
+          "ram_needed_gb": 8.0,
+          "expected_tps": 15,
+          "context_max": 16384,
+          "notes": "NVIDIA製、化学・材料特化ファインチューニング版あり"
+        }
+      ],
+      "recommended_model": "Llama4-Scout-109B-MoE-Q4_K_M",
+      "tier": "multi_gpu"
+    },
+    
+    {
+      "id": "apple_m4_max_64gb",
+      "name": "Apple M4 Max - 64GB Unified Memory",
+      "requirements": {
+        "gpu": {"vendor": "apple", "unified_memory": true, "vram_min_gb": 48},
+        "ram_min_gb": 64,
+        "os": ["darwin"],
+        "cpu_arch": "arm64"
+      },
+      "compatible_models": [
+        {
+          "model": "Qwen3.5-35B-A3B-MoE",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 22.0,
+          "ram_needed_gb": 0,
+          "expected_tps": 28,
+          "context_max": 32768,
+          "notes": "統一メモリ、MLXフレームワークで最適化"
+        },
+        {
+          "model": "Llama4-Scout-109B-MoE",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 65.0,
+          "ram_needed_gb": 0,
+          "expected_tps": 18,
+          "context_max": 16384,
+          "notes": "64GB統一メモリで完全収容、MacBook Proで動作 [[10]]"
+        },
+        {
+          "model": "Gemma3-27B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 17.8,
+          "ram_needed_gb": 0,
+          "expected_tps": 32,
+          "context_max": 32768,
+          "notes": "Apple Silicon最適化版"
+        }
+      ],
+      "recommended_model": "Qwen3.5-35B-A3B-MoE-Q4_K_M",
+      "tier": "apple_silicon"
+    },
+    
+    {
+      "id": "apple_m3_ultra_128gb",
+      "name": "Apple M3 Ultra - 128GB Unified Memory",
+      "requirements": {
+        "gpu": {"vendor": "apple", "unified_memory": true, "vram_min_gb": 96},
+        "ram_min_gb": 128,
+        "os": ["darwin"],
+        "cpu_arch": "arm64"
+      },
+      "compatible_models": [
+        {
+          "model": "Llama4-Scout-109B-MoE",
+          "quantization": "Q6_K",
+          "vram_needed_gb": 78.0,
+          "ram_needed_gb": 0,
+          "expected_tps": 24,
+          "context_max": 32768,
+          "notes": "Q6量化で高品質、128GB統一メモリで余裕"
+        },
+        {
+          "model": "Qwen3.5-72B",
+          "quantization": "Q6_K",
+          "vram_needed_gb": 52.0,
+          "ram_needed_gb": 0,
+          "expected_tps": 35,
+          "context_max": 65536,
+          "notes": "長文コンテキスト処理に最適"
+        },
+        {
+          "model": "Kimi-K2-32B",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 20.5,
+          "ram_needed_gb": 0,
+          "expected_tps": 45,
+          "context_max": 131072,
+          "notes": "128Kコンテキスト、論文解析に強力"
+        }
+      ],
+      "recommended_model": "Llama4-Scout-109B-MoE-Q6_K",
+      "tier": "apple_silicon"
+    },
+    
+    {
+      "id": "a100_80gb",
+      "name": "NVIDIA A100 - 80GB VRAM (Datacenter)",
+      "requirements": {
+        "gpu": {"vendor": "nvidia", "vram_min_gb": 80, "min_cc": "8.0", "datacenter": true},
+        "ram_min_gb": 128,
+        "os": ["linux"]
+      },
+      "compatible_models": [
+        {
+          "model": "Qwen3.5-72B",
+          "quantization": "FP16",
+          "vram_needed_gb": 144.0,
+          "ram_needed_gb": 16.0,
+          "expected_tps": 45,
+          "context_max": 32768,
+          "notes": "FP16完全精度、研究用途に最適"
+        },
+        {
+          "model": "Llama3.3-70B",
+          "quantization": "FP16",
+          "vram_needed_gb": 140.0,
+          "ram_needed_gb": 16.0,
+          "expected_tps": 52,
+          "context_max": 32768,
+          "notes": "データセンター環境での高精度推論"
+        },
+        {
+          "model": "Nemotron3-Super-120B-MoE",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 72.0,
+          "ram_needed_gb": 8.0,
+          "expected_tps": 85,
+          "context_max": 32768,
+          "notes": "MoEモデル、A100で完全収容・高速"
+        }
+      ],
+      "recommended_model": "Nemotron3-Super-120B-MoE-Q4_K_M",
+      "tier": "datacenter"
+    },
+    
+    {
+      "id": "h100_80gb",
+      "name": "NVIDIA H100 - 80GB VRAM (Datacenter)",
+      "requirements": {
+        "gpu": {"vendor": "nvidia", "vram_min_gb": 80, "min_cc": "9.0", "datacenter": true},
+        "ram_min_gb": 256,
+        "os": ["linux"]
+      },
+      "compatible_models": [
+        {
+          "model": "Qwen3.5-72B",
+          "quantization": "FP8",
+          "vram_needed_gb": 72.0,
+          "ram_needed_gb": 16.0,
+          "expected_tps": 125,
+          "context_max": 65536,
+          "notes": "FP8量化、H100 Tensor Coreで最速推論 [[60]]"
+        },
+        {
+          "model": "Llama4-Scout-109B-MoE",
+          "quantization": "Q4_K_M",
+          "vram_needed_gb": 65.0,
+          "ram_needed_gb": 8.0,
+          "expected_tps": 145,
+          "context_max": 32768,
+          "notes": "MoEモデル、H100で超高速推論"
+        },
+        {
+          "model": "DeepSeek-V3-671B",
+          "quantization": "Q2_K",
+          "vram_needed_gb": 230.0,
+          "ram_needed_gb": 64.0,
+          "expected_tps": 8,
+          "context_max": 8192,
+          "notes": "超大規模モデル、3×H100推奨だが単体でも動作可能 [[71]]"
+        }
+      ],
+      "recommended_model": "Qwen3.5-72B-FP8",
+      "tier": "datacenter"
+    }
+  ],
+  
+  "model_catalog": {
+    "Qwen3.5-4B": {
+      "params": 4.0,
+      "architecture": "dense",
+      "context_max": 32768,
+      "strengths": ["chemical_formula", "smiles_parsing", "lightweight_inference"],
+      "huggingface_repo": "Qwen/Qwen3.5-4B-Instruct",
+      "gguf_variants": ["Q4_K_M", "Q6_K", "Q8_0"]
+    },
+    "Qwen3.5-9B": {
+      "params": 9.0,
+      "architecture": "dense",
+      "context_max": 32768,
+      "strengths": ["property_prediction", "reaction_planning", "balanced_performance"],
+      "huggingface_repo": "Qwen/Qwen3.5-9B-Instruct",
+      "gguf_variants": ["Q4_K_M", "Q6_K", "Q8_0"]
+    },
+    "Qwen3.5-22B": {
+      "params": 22.0,
+      "architecture": "dense",
+      "context_max": 32768,
+      "strengths": ["complex_reasoning", "multi_step_synthesis", "high_accuracy"],
+      "huggingface_repo": "Qwen/Qwen3.5-22B-Instruct",
+      "gguf_variants": ["Q4_K_M", "Q6_K"]
+    },
+    "Qwen3.5-32B": {
+      "params": 32.0,
+      "architecture": "dense",
+      "context_max": 32768,
+      "strengths": ["materials_design", "quantum_chem_estimation", "research_grade"],
+      "huggingface_repo": "Qwen/Qwen3.5-32B-Instruct",
+      "gguf_variants": ["Q4_K_M", "Q6_K"]
+    },
+    "Qwen3.5-35B-A3B-MoE": {
+      "params": 35.0,
+      "active_params": 3.0,
+      "architecture": "moe",
+      "experts": 8,
+      "context_max": 32768,
+      "strengths": ["fast_inference", "chemical_reasoning", "memory_efficient"],
+      "huggingface_repo": "Qwen/Qwen3.5-35B-A3B-Instruct",
+      "gguf_variants": ["Q4_K_M", "Q6_K"],
+      "notes": "MoE: 総35Bだが推論時3Bのみ活性化、高速かつ高品質 [[45]]"
+    },
+    "Qwen3.5-72B": {
+      "params": 72.0,
+      "architecture": "dense",
+      "context_max": 32768,
+      "strengths": ["state_of_art", "complex_analysis", "publication_quality"],
+      "huggingface_repo": "Qwen/Qwen3.5-72B-Instruct",
+      "gguf_variants": ["Q4_K_M", "Q6_K"]
+    },
+    "Llama3.3-8B": {
+      "params": 8.0,
+      "architecture": "dense",
+      "context_max": 32768,
+      "strengths": ["general_knowledge", "instruction_following", "broad_compatibility"],
+      "huggingface_repo": "meta-llama/Llama-3.3-8B-Instruct",
+      "gguf_variants": ["Q4_K_M", "Q6_K", "Q8_0"]
+    },
+    "Llama3.3-70B": {
+      "params": 70.0,
+      "architecture": "dense",
+      "context_max": 32768,
+      "strengths": ["reasoning", "code_generation", "scientific_analysis"],
+      "huggingface_repo": "meta-llama/Llama-3.3-70B-Instruct",
+      "gguf_variants": ["Q3_K_M", "Q4_K_M", "Q6_K"]
+    },
+    "Llama4-Scout-109B-MoE": {
+      "params": 109.0,
+      "active_params": 17.0,
+      "architecture": "moe",
+      "experts": 16,
+      "context_max": 32768,
+      "strengths": ["frontier_performance", "multi_domain", "research_cutting_edge"],
+      "huggingface_repo": "meta-llama/Llama-4-Scout-109B-MoE-Instruct",
+      "gguf_variants": ["Q4_K_M"]
+    },
+    "Gemma3-4B": {
+      "params": 4.0,
+      "architecture": "dense",
+      "context_max": 8192,
+      "strengths": ["lightweight", "mobile_deployment", "fast_response"],
+      "huggingface_repo": "google/gemma-3-4b-it",
+      "gguf_variants": ["Q4_K_M", "Q6_K"]
+    },
+    "Gemma3-12B": {
+      "params": 12.0,
+      "architecture": "dense",
+      "context_max": 32768,
+      "strengths": ["balanced", "multimodal_ready", "google_ecosystem"],
+      "huggingface_repo": "google/gemma-3-12b-it",
+      "gguf_variants": ["Q4_K_M", "Q6_K"]
+    },
+    "Gemma3-27B": {
+      "params": 27.0,
+      "architecture": "dense",
+      "context_max": 32768,
+      "strengths": ["high_accuracy", "multimodal", "research_grade"],
+      "huggingface_repo": "google/gemma-3-27b-it",
+      "gguf_variants": ["Q4_K_M", "Q6_K"],
+      "notes": "27Bクラス、画像・テキスト統合処理 possible [[75]]"
+    },
+    "DeepSeek-V3-67B": {
+      "params": 67.0,
+      "architecture": "dense",
+      "context_max": 32768,
+      "strengths": ["chinese_chem_db", "patent_analysis", "high_reasoning"],
+      "huggingface_repo": "deepseek-ai/DeepSeek-V3-67B-Instruct",
+      "gguf_variants": ["Q4_K_M"]
+    },
+    "Nemotron3-Super-120B-MoE": {
+      "params": 120.0,
+      "active_params": 12.0,
+      "architecture": "moe",
+      "experts": 32,
+      "context_max": 32768,
+      "strengths": ["nvidia_optimized", "materials_focus", "enterprise_grade"],
+      "huggingface_repo": "nvidia/Nemotron-3-Super-120B-MoE-Instruct",
+      "gguf_variants": ["Q4_K_M"]
+    }
+  },
+  
+  "quantization_reference": {
+    "Q2_K": {"bytes_per_param": 0.31, "quality_retention": 0.85, "use_case": "minimal_hardware"},
+    "Q3_K_M": {"bytes_per_param": 0.43, "quality_retention": 0.90, "use_case": "cpu_inference"},
+    "Q4_K_M": {"bytes_per_param": 0.55, "quality_retention": 0.95, "use_case": "sweet_spot"},
+    "Q5_K_M": {"bytes_per_param": 0.69, "quality_retention": 0.98, "use_case": "quality_priority"},
+    "Q6_K": {"bytes_per_param": 0.81, "quality_retention": 0.99, "use_case": "near_fp16"},
+    "Q8_0": {"bytes_per_param": 1.06, "quality_retention": 0.995, "use_case": "max_quality"},
+    "FP16": {"bytes_per_param": 2.0, "quality_retention": 1.0, "use_case": "research_precision"}
+  },
+  
+  "inference_engines": {
+    "llama.cpp": {
+      "formats": ["GGUF"],
+      "backends": ["CPU", "CUDA", "Metal", "Vulkan", "ROCm", "OpenVINO"],
+      "strengths": ["portability", "hybrid_cpu_gpu", "no_calibration"],
+      "best_for": ["personal_laptop", "apple_silicon", "edge_devices"]
+    },
+    "vLLM": {
+      "formats": ["GPTQ", "AWQ", "FP8"],
+      "backends": ["CUDA", "ROCm", "TPU"],
+      "strengths": ["paged_attention", "continuous_batching", "high_throughput"],
+      "best_for": ["production_api", "multi_user", "datacenter"]
+    },
+    "SGLang": {
+      "formats": ["GPTQ", "AWQ", "GGUF"],
+      "backends": ["CUDA", "ROCm"],
+      "strengths": ["radix_attention", "structured_output", "low_latency"],
+      "best_for": ["multi_turn_chat", "rag_prefix_sharing", "agent_workflows"]
+    },
+    "MLX": {
+      "formats": ["GGUF", "Safetensors"],
+      "backends": ["Apple_Silicon"],
+      "strengths": ["unified_memory", "metal_optimized", "simple_api"],
+      "best_for": ["macbook_pro", "apple_desktop", "local_mac_development"]
+    }
+  }
+}

@@ -7,7 +7,15 @@ SMILES検証・標準化のエッジケース処理を強化したユーティ�
 from typing import List, Optional, Literal, Union
 import logging
 from rdkit import Chem
-from rdkit.Chem import AllChem, SaltRemover, rdMolStandardize
+from rdkit.Chem import AllChem, SaltRemover
+try:
+    from rdkit.Chem import rdMolStandardize
+except ImportError:
+    try:
+        from rdkit.Chem.MolStandardize import rdMolStandardize
+    except ImportError:
+        rdMolStandardize = None
+        logger.warning("rdMolStandardize not available. Standardize features may be limited.")
 
 logger = logging.getLogger(__name__)
 

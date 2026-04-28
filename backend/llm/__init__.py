@@ -15,6 +15,10 @@ from backend.llm.provider import LLMProvider, StubLLMProvider
 from backend.llm.generator import LLMDescriptorGenerator
 from backend.llm.registry import LLMProviderRegistry
 from backend.llm.reviewer import LLMCodeReviewer, CodeReviewResult
+from backend.llm.manager import LLMManager, LLMState
+from backend.llm.hardware_detector import detect_hardware, HardwareProfile
+from backend.llm.model_selector import select_optimal_model, LLMModelConfig
+from backend.llm.benchmark_runner import BenchmarkRunner
 
 _registry = LLMProviderRegistry()
 _registry.register("stub", StubLLMProvider)
@@ -37,6 +41,11 @@ def register_llm_provider(name: str, cls: type) -> None:
     _registry.register(name, cls)
 
 
+def get_llm_manager() -> LLMManager:
+    """LLMマネージャーのシングルトンインスタンスを取得する。"""
+    return LLMManager()
+
+
 __all__ = [
     "LLMProvider",
     "StubLLMProvider",
@@ -44,6 +53,14 @@ __all__ = [
     "LLMProviderRegistry",
     "LLMCodeReviewer",
     "CodeReviewResult",
+    "LLMManager",
+    "LLMState",
+    "HardwareProfile",
+    "LLMModelConfig",
+    "BenchmarkRunner",
     "get_llm_provider",
     "register_llm_provider",
+    "get_llm_manager",
+    "detect_hardware",
+    "select_optimal_model",
 ]

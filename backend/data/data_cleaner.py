@@ -1,414 +1,372 @@
 """
 backend/data/data_cleaner.py
-
-インタラクティブなデータクリーニング操作を提供するモジュール。
-EDAタブから直接呼び出される純粋関数群で構成。
-
-Implements: F-CLEAN-001〜006
+LLMを活用したデータ整形・クリーニング支援
+- 誤字修正
+- セル結合の展開
+- 列名の正規化
+- 整形用Pythonコードの自動生成
 """
-from __future__ import annotations
-
-import logging
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Optional, Sequence
-
-import numpy as np
+import re
+import json
 import pandas as pd
+import numpy as np
+from typing import Optional, Dict, List, Tuple, Callable
+from dataclasses import dataclass, asdict
+import logging
 
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
-# データクラス: 操作ログ
-# ============================================================
-
 @dataclass
-class CleaningAction:
-    """1回のクリーニング操作のログレコード。
-
-    Attributes:
-        action_type: 操作種別 (例: "drop_columns", "drop_missing_rows")
-        description: 人間向けの操作説明
-        rows_before: 操作前の行数
-        rows_after: 操作後の行数
-        cols_before: 操作前の列数
-        cols_after: 操作後の列数
-        details: 追加情報 (除外した列名リスト等)
-        timestamp: 操作実行時刻 (ISO 8601)
-    """
-    action_type: str
+class CleaningSuggestion:
+    """クリーニング提案のデータクラス"""
+    issue_type: str
     description: str
-    rows_before: int
-    rows_after: int
-    cols_before: int
-    cols_after: int
-    details: dict = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
-
-    @property
-    def rows_removed(self) -> int:
-        """除去された行数。"""
-        return self.rows_before - self.rows_after
-
-    @property
-    def cols_removed(self) -> int:
-        """除去された列数。"""
-        return self.cols_before - self.cols_after
+    suggested_code: str
+    confidence: float  # 0.0 ~ 1.0
+    auto_applicable: bool = False
 
 
-# ============================================================
-# クリーニング関数群
-# ============================================================
-
-def drop_columns(
-    df: pd.DataFrame,
-    columns: Sequence[str],
-) -> tuple[pd.DataFrame, CleaningAction]:
-    """指定列をDataFrameから除外する。
-
-    Args:
-        df: 入力DataFrame
-        columns: 除外する列名のリスト
-
-    Returns:
-        (クリーニング後のDataFrame, CleaningAction)
-
-    Raises:
-        ValueError: columns が空の場合
+class DataCleanerLLM:
     """
-    if not columns:
-        raise ValueError("除外する列が指定されていません。")
-
-    existing = [c for c in columns if c in df.columns]
-    if not existing:
-        raise ValueError(
-            f"指定された列がDataFrameに存在しません: {columns}"
-        )
-
-    rows_before, cols_before = df.shape
-    result = df.drop(columns=existing)
-
-    action = CleaningAction(
-        action_type="drop_columns",
-        description=f"{len(existing)}列を除外: {', '.join(existing[:5])}"
-                    + (f" 他{len(existing)-5}列" if len(existing) > 5 else ""),
-        rows_before=rows_before,
-        rows_after=len(result),
-        cols_before=cols_before,
-        cols_after=result.shape[1],
-        details={"dropped_columns": existing},
-    )
-    logger.info("drop_columns: %d列を除外", len(existing))
-    return result, action
-
-
-def drop_rows_with_missing(
-    df: pd.DataFrame,
-    threshold: float = 0.5,
-    subset: Optional[Sequence[str]] = None,
-) -> tuple[pd.DataFrame, CleaningAction]:
-    """欠損率が閾値を超える行を削除する。
-
-    各行の欠損率（= 欠損セル数 / 全列数）が threshold 以上の行を除去。
-
-    Args:
-        df: 入力DataFrame
-        threshold: 欠損率の閾値 (0.0〜1.0)。0.0で欠損が1つでもあれば削除。
-        subset: チェック対象列。Noneの場合は全列。
-
-    Returns:
-        (クリーニング後のDataFrame, CleaningAction)
-
-    Raises:
-        ValueError: threshold が 0〜1 の範囲外の場合
+    LLM機能を活用したデータクリーニング支援クラス
+    ローカルLLM / 外部API / プロンプト出力 の3モード対応
     """
-    if not (0.0 <= threshold <= 1.0):
-        raise ValueError(f"threshold は 0.0〜1.0 の範囲で指定してください: {threshold}")
+    
+    def __init__(self, mode: str = 'prompt_only', 
+                 api_endpoint: Optional[str] = None,
+                 api_key: Optional[str] = None,
+                 model_name: str = 'local'):
+        """
+        Args:
+            mode: 'local' | 'api' | 'prompt_only'
+                - local: ローカルLLMで直接実行
+                - api: 外部API経由で実行
+                - prompt_only: 実行せず、プロンプトのみ生成（セキュア環境向け）
+            api_endpoint: APIエンドポイント（mode='api'時）
+            api_key: APIキー（mode='api'時）
+            model_name: 使用するモデル名
+        """
+        self.mode = mode
+        self.api_endpoint = api_endpoint
+        self.api_key = api_key
+        self.model_name = model_name
+        self._cleaning_history: List[Dict] = []
+    
+    def analyze_data_issues(self, df: pd.DataFrame, 
+                           sample_rows: int = 20) -> List[CleaningSuggestion]:
+        """
+        データの問題点を分析し、LLM支援でクリーニング提案を生成
+        """
+        suggestions = []
+        
+        # 1. 列名の整形提案
+        suggestions.extend(self._suggest_column_cleaning(df))
+        
+        # 2. 欠損値処理提案
+        suggestions.extend(self._suggest_missing_value_handling(df))
+        
+        # 3. 型変換提案
+        suggestions.extend(self._suggest_type_conversion(df))
+        
+        # 4. 誤字・表記ゆれ検出提案（簡易ルールベース＋LLM補完）
+        suggestions.extend(self._suggest_typo_correction(df, sample_rows))
+        
+        # 5. 結合セル展開提案
+        suggestions.extend(self._suggest_merged_cell_handling(df))
+        
+        # 各提案にLLMによるコード生成を追加（mode依存）
+        for suggestion in suggestions:
+            if self.mode != 'prompt_only':
+                suggestion.suggested_code = self._generate_cleaning_code(
+                    suggestion, df.head(sample_rows)
+                )
+        
+        return suggestions
+    
+    def _suggest_column_cleaning(self, df: pd.DataFrame) -> List[CleaningSuggestion]:
+        """列名の整形提案"""
+        suggestions = []
+        
+        # 空白・特殊文字を含む列名
+        problematic_cols = [col for col in df.columns 
+                          if pd.isna(col) or str(col).strip() == '' or re.search(r'[\s\(\)\[\]\/\\]', str(col))]
+        
+        if problematic_cols:
+            code_lines = ["# 列名の正規化", "df.columns = df.columns.astype(str).str.strip()", 
+                         "df.columns = df.columns.str.replace(r'[\\s\\(\\)\\[\\]\\/\\\\]+', '_', regex=True)",
+                         "df.columns = [col if col else f'Column_{i}' for i, col in enumerate(df.columns)]"]
+            
+            suggestions.append(CleaningSuggestion(
+                issue_type='column_name',
+                description=f'列名に空白・特殊文字が含まれています: {problematic_cols[:5]}',
+                suggested_code='\n'.join(code_lines),
+                confidence=0.95,
+                auto_applicable=True
+            ))
+        
+        # 日本語列名の英語化提案（オプション）
+        jp_cols = [col for col in df.columns if re.search(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]', str(col))]
+        if jp_cols:
+            suggestions.append(CleaningSuggestion(
+                issue_type='column_name_jp',
+                description=f'日本語列名を検出: {jp_cols[:5]}。英語名への変換を提案可能',
+                suggested_code=self._generate_jp_to_en_mapping_code(jp_cols),
+                confidence=0.7,
+                auto_applicable=False
+            ))
+        
+        return suggestions
+    
+    def _suggest_missing_value_handling(self, df: pd.DataFrame) -> List[CleaningSuggestion]:
+        """欠損値処理提案"""
+        suggestions = []
+        missing_stats = df.isnull().sum()
+        
+        # 高頻度欠損列
+        high_missing = missing_stats[missing_stats > len(df) * 0.3]
+        if not high_missing.empty:
+            suggestions.append(CleaningSuggestion(
+                issue_type='missing_high',
+                description=f'欠損率30%超の列: {list(high_missing.index)}。削除を検討',
+                suggested_code=f"df = df.drop(columns={list(high_missing.index)})",
+                confidence=0.8,
+                auto_applicable=True
+            ))
+        
+        # 数値列の欠損：中央値補完提案
+        num_missing = missing_stats[df.select_dtypes(include=[np.number]).columns]
+        if num_missing.any():
+            code_lines = ["# 数値列の欠損値を中央値で補完", 
+                         "for col in df.select_dtypes(include=[np.number]).columns:",
+                         "    if df[col].isnull().any():",
+                         "        df[col] = df[col].fillna(df[col].median())"]
+            suggestions.append(CleaningSuggestion(
+                issue_type='missing_numeric',
+                description=f'数値列に欠損: {list(num_missing[num_missing>0].index)}',
+                suggested_code='\n'.join(code_lines),
+                confidence=0.85,
+                auto_applicable=True
+            ))
+        
+        return suggestions
+    
+    def _suggest_type_conversion(self, df: pd.DataFrame) -> List[CleaningSuggestion]:
+        """データ型変換提案"""
+        suggestions = []
+        
+        # 数値として扱いたい文字列列の検出
+        for col in df.select_dtypes(include=['object']).columns:
+            sample = df[col].dropna().head(100)
+            if sample.empty: continue
+            # 数値っぽい文字列（通貨記号・カンマ除去で数値になる）
+            if sample.astype(str).str.replace(r'[¥$,，\s]', '', regex=True).str.match(r'^-?\d+\.?\d*$').all():
+                suggestions.append(CleaningSuggestion(
+                    issue_type='type_conversion',
+                    description=f'列 "{col}" は数値に変換可能（通貨記号・カンマを含む）',
+                    suggested_code=f"df['{col}'] = pd.to_numeric(df['{col}'].astype(str).str.replace(r'[¥$,，]', '', regex=True), errors='coerce')",
+                    confidence=0.9,
+                    auto_applicable=True
+                ))
+        
+        # 日付列の検出
+        date_patterns = [r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', r'\d{1,2}/\d{1,2}/\d{4}']
+        for col in df.select_dtypes(include=['object']).columns:
+            sample = df[col].dropna().head(50)
+            if sample.astype(str).str.match('|'.join(date_patterns)).any():
+                suggestions.append(CleaningSuggestion(
+                    issue_type='date_conversion',
+                    description=f'列 "{col}" に日付形式の値を検出',
+                    suggested_code=f"df['{col}'] = pd.to_datetime(df['{col}'], errors='coerce')",
+                    confidence=0.75,
+                    auto_applicable=True
+                ))
+        
+        return suggestions
+    
+    def _suggest_typo_correction(self, df: pd.DataFrame, 
+                                sample_rows: int) -> List[CleaningSuggestion]:
+        """誤字・表記ゆれ検出提案（簡易ルール＋LLM補完）"""
+        suggestions = []
+        
+        # カテゴリカル列の類似値検出
+        for col in df.select_dtypes(include=['object']).columns:
+            if df[col].nunique() < 100:  # 高カーディナリティはスキップ
+                values = df[col].dropna().unique()
+                # 簡易類似度チェック（編集距離）
+                similar_pairs = []
+                for i, v1 in enumerate(values[:50]):  # 計算量削減
+                    for v2 in values[i+1:50]:
+                        if self._edit_distance(str(v1), str(v2)) <= 2 and len(str(v1)) > 3:
+                            similar_pairs.append((v1, v2))
+                
+                if similar_pairs:
+                    suggestions.append(CleaningSuggestion(
+                        issue_type='typo',
+                        description=f'列 "{col}" に類似する表記: {similar_pairs[:3]}',
+                        suggested_code=self._generate_typo_fix_code(col, similar_pairs[:5]),
+                        confidence=0.6,
+                        auto_applicable=False  # 要確認
+                    ))
+        
+        return suggestions
+    
+    def _suggest_merged_cell_handling(self, df: pd.DataFrame) -> List[CleaningSuggestion]:
+        """結合セル展開提案"""
+        suggestions = []
+        
+        # 前方に同じ値が連続する列（結合セルの可能性）
+        for col in df.columns:
+            if df[col].notna().sum() < len(df) * 0.5:  # 欠損が多い列
+                # 前方填充で値が増えるかチェック
+                filled = df[col].ffill()
+                if filled.notna().sum() > df[col].notna().sum() * 1.5:
+                    suggestions.append(CleaningSuggestion(
+                        issue_type='merged_cells',
+                        description=f'列 "{col}" に結合セルの疑い（前方填充で値が増加）',
+                        suggested_code=f"# 結合セルの展開（前方填充）\ndf['{col}'] = df['{col}'].ffill()",
+                        confidence=0.7,
+                        auto_applicable=True
+                    ))
+        
+        return suggestions
+    
+    def _generate_cleaning_code(self, suggestion: CleaningSuggestion, 
+                               sample_df: pd.DataFrame) -> str:
+        """LLMを使用してクリーニングコードを生成（mode依存）"""
+        if self.mode == 'prompt_only':
+            # codeは空のまま、プロンプト生成用に維持
+            return suggestion.suggested_code
+        
+        # TODO: 実際のLLM呼び出し実装
+        # ここでは簡易的に元コードを返す
+        return suggestion.suggested_code
+    
+    def _generate_jp_to_en_mapping_code(self, jp_columns: List[str]) -> str:
+        """日本語列名→英語列名のマッピングコード生成"""
+        # 簡易マッピング例（実際はLLMで生成）
+        mapping = {
+            '売上': 'sales', '数量': 'quantity', '日付': 'date',
+            '商品名': 'product_name', '顧客ID': 'customer_id'
+        }
+        code_lines = ["# 日本語列名→英語列名マッピング", "column_mapping = {"]
+        for col in jp_columns:
+            en_name = mapping.get(col, col)
+            code_lines.append(f"    '{col}': '{en_name}',")
+        code_lines.append("}\ndf = df.rename(columns=column_mapping)")
+        return '\n'.join(code_lines)
+    
+    def _generate_typo_fix_code(self, column: str, 
+                               similar_pairs: List[Tuple[str, str]]) -> str:
+        """表記ゆれ修正コード生成"""
+        code_lines = [f"# 列 '{column}' の表記ゆれ修正"]
+        for v1, v2 in similar_pairs:
+            code_lines.append(f"# '{v1}' / '{v2}' → どちらに統一しますか？")
+            code_lines.append(f"# df['{column}'] = df['{column}'].replace('{v2}', '{v1}')")
+        return '\n'.join(code_lines)
+    
+    def _edit_distance(self, s1: str, s2: str) -> int:
+        """簡易編集距離計算"""
+        if len(s1) < len(s2):
+            s1, s2 = s2, s1
+        if len(s2) == 0:
+            return len(s1)
+        
+        previous_row = list(range(len(s2) + 1))
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+        return previous_row[-1]
+    
+    def generate_external_prompt(self, df: pd.DataFrame, 
+                                issue_description: str) -> str:
+        """
+        外部チャット用プロンプトを生成
+        セキュア環境で高精度LLMを使いたい場合に、このプロンプトをコピーして使用
+        """
+        sample = df.head(10).to_csv(index=False)
+        
+        prompt = f"""# ChemAI Data Cleaning Assistant
 
-    rows_before, cols_before = df.shape
+あなたは化学データ分析の専門家です。以下のデータの問題点を指摘し、
+pandasを使用してクリーニングするPythonコードを生成してください。
 
-    if subset is not None:
-        check_cols = [c for c in subset if c in df.columns]
-    else:
-        check_cols = list(df.columns)
+## データの概要
+- 行数: {len(df)}, 列数: {len(df.columns)}
+- 問題の説明: {issue_description}
 
-    if not check_cols:
-        # チェック対象列がない場合は変更なし
-        action = CleaningAction(
-            action_type="drop_missing_rows",
-            description="チェック対象列がないため操作なし",
-            rows_before=rows_before,
-            rows_after=rows_before,
-            cols_before=cols_before,
-            cols_after=cols_before,
-        )
-        return df.copy(), action
+## データサンプル（先頭10行）
+```csv
+{sample}
+```
 
-    n_check = len(check_cols)
-    missing_per_row = df[check_cols].isna().sum(axis=1)
+## 出力形式
+1. 検出された問題点のリスト
+2. 各問題に対する修正コード（pandas使用）
+3. 修正後のデータ確認コード
 
-    if threshold == 0.0:
-        # 欠損が1つでもあれば削除
-        mask = missing_per_row == 0
-    else:
-        missing_rate_per_row = missing_per_row / n_check
-        mask = missing_rate_per_row < threshold
+## 制約事項
+- 化学データ（物性値、実験条件、分子記述子等）を扱っている可能性を考慮
+- 数値の単位変換や有効数字には注意
+- 欠損値処理は分析目的に応じて提案（削除/補完/フラグ追加）
+- コードにはコメントを必ず付与
 
-    result = df.loc[mask].reset_index(drop=True)
-    n_removed = rows_before - len(result)
+## 出力例
+### 問題点
+1. 列"温度_℃"に文字列"室温"が混在
 
-    action = CleaningAction(
-        action_type="drop_missing_rows",
-        description=f"欠損率≥{threshold:.0%}の行を{n_removed}行削除",
-        rows_before=rows_before,
-        rows_after=len(result),
-        cols_before=cols_before,
-        cols_after=result.shape[1],
-        details={"threshold": threshold, "rows_removed": n_removed, "subset": check_cols},
-    )
-    logger.info("drop_rows_with_missing: %d行を削除 (閾値=%.2f)", n_removed, threshold)
-    return result, action
+### 修正コード
+```python
+# 温度列のクリーニング
+def parse_temperature(val):
+    if pd.isna(val):
+        return np.nan
+    if isinstance(val, str) and '室温' in val:
+        return 25.0  # 室温を25℃と仮定
+    return pd.to_numeric(val, errors='coerce')
 
+df['温度_℃'] = df['温度_℃'].apply(parse_temperature)
+```
 
-def remove_constant_columns(
-    df: pd.DataFrame,
-) -> tuple[pd.DataFrame, CleaningAction]:
-    """ユニーク値が1以下の定数列を除去する。
-
-    Args:
-        df: 入力DataFrame
-
-    Returns:
-        (クリーニング後のDataFrame, CleaningAction)
-    """
-    rows_before, cols_before = df.shape
-
-    const_cols = [c for c in df.columns if df[c].nunique(dropna=True) <= 1]
-
-    if not const_cols:
-        action = CleaningAction(
-            action_type="remove_constant_columns",
-            description="定数列は見つかりませんでした",
-            rows_before=rows_before,
-            rows_after=rows_before,
-            cols_before=cols_before,
-            cols_after=cols_before,
-            details={"constant_columns": []},
-        )
-        return df.copy(), action
-
-    result = df.drop(columns=const_cols)
-
-    action = CleaningAction(
-        action_type="remove_constant_columns",
-        description=f"定数列を{len(const_cols)}列除去: {', '.join(const_cols[:5])}"
-                    + (f" 他{len(const_cols)-5}列" if len(const_cols) > 5 else ""),
-        rows_before=rows_before,
-        rows_after=len(result),
-        cols_before=cols_before,
-        cols_after=result.shape[1],
-        details={"constant_columns": const_cols},
-    )
-    logger.info("remove_constant_columns: %d列を除去", len(const_cols))
-    return result, action
-
-
-def clip_outliers(
-    df: pd.DataFrame,
-    iqr_multiplier: float = 1.5,
-    columns: Optional[Sequence[str]] = None,
-) -> tuple[pd.DataFrame, CleaningAction]:
-    """IQR法で外れ値をクリッピングする。
-
-    Q1 - iqr_multiplier*IQR 〜 Q3 + iqr_multiplier*IQR の範囲にclipする。
-
-    Args:
-        df: 入力DataFrame
-        iqr_multiplier: IQRの倍率 (デフォルト: 1.5)
-        columns: 対象列。Noneの場合は全数値列。
-
-    Returns:
-        (クリーニング後のDataFrame, CleaningAction)
-
-    Raises:
-        ValueError: iqr_multiplier が正でない場合
-    """
-    if iqr_multiplier <= 0:
-        raise ValueError(f"iqr_multiplier は正の数を指定してください: {iqr_multiplier}")
-
-    rows_before, cols_before = df.shape
-    result = df.copy()
-
-    if columns is not None:
-        target_cols = [c for c in columns if c in result.columns]
-    else:
-        target_cols = list(result.select_dtypes(include="number").columns)
-
-    total_clipped = 0
-    clipped_details: dict[str, int] = {}
-
-    for col in target_cols:
-        series = result[col]
-        if not pd.api.types.is_numeric_dtype(series):
-            continue
-
-        q1 = series.quantile(0.25)
-        q3 = series.quantile(0.75)
-        iqr = q3 - q1
-
-        if iqr == 0:
-            continue
-
-        lower = q1 - iqr_multiplier * iqr
-        upper = q3 + iqr_multiplier * iqr
-
-        n_before = ((series < lower) | (series > upper)).sum()
-        if n_before > 0:
-            result[col] = series.clip(lower=lower, upper=upper)
-            clipped_details[col] = int(n_before)
-            total_clipped += int(n_before)
-
-    action = CleaningAction(
-        action_type="clip_outliers",
-        description=f"IQR×{iqr_multiplier}で{total_clipped}値をクリッピング"
-                    f"（{len(clipped_details)}列が対象）",
-        rows_before=rows_before,
-        rows_after=len(result),
-        cols_before=cols_before,
-        cols_after=result.shape[1],
-        details={
-            "iqr_multiplier": iqr_multiplier,
-            "total_clipped": total_clipped,
-            "clipped_per_column": clipped_details,
-        },
-    )
-    logger.info("clip_outliers: %d値をクリッピング (IQR×%.1f)", total_clipped, iqr_multiplier)
-    return result, action
-
-
-def remove_duplicates(
-    df: pd.DataFrame,
-    subset: Optional[Sequence[str]] = None,
-    keep: str = "first",
-) -> tuple[pd.DataFrame, CleaningAction]:
-    """重複行を除去する。
-
-    Args:
-        df: 入力DataFrame
-        subset: 重複判定に使用する列。Noneの場合は全列。
-        keep: 保持する重複行 ("first", "last", False)
-
-    Returns:
-        (クリーニング後のDataFrame, CleaningAction)
-    """
-    rows_before, cols_before = df.shape
-
-    result = df.drop_duplicates(subset=subset, keep=keep).reset_index(drop=True)
-    n_removed = rows_before - len(result)
-
-    action = CleaningAction(
-        action_type="remove_duplicates",
-        description=f"重複行を{n_removed}行除去",
-        rows_before=rows_before,
-        rows_after=len(result),
-        cols_before=cols_before,
-        cols_after=result.shape[1],
-        details={"rows_removed": n_removed, "keep": keep},
-    )
-    logger.info("remove_duplicates: %d行を除去", n_removed)
-    return result, action
-
-
-# ============================================================
-# プレビュー・診断ヘルパー
-# ============================================================
-
-def preview_missing_impact(
-    df: pd.DataFrame,
-    threshold: float = 0.5,
-    subset: Optional[Sequence[str]] = None,
-) -> int:
-    """欠損行削除の影響行数をプレビューする（実際には削除しない）。
-
-    Args:
-        df: 入力DataFrame
-        threshold: 欠損率の閾値 (0.0〜1.0)
-        subset: チェック対象列
-
-    Returns:
-        削除される行数
-    """
-    if subset is not None:
-        check_cols = [c for c in subset if c in df.columns]
-    else:
-        check_cols = list(df.columns)
-
-    if not check_cols:
-        return 0
-
-    n_check = len(check_cols)
-    missing_per_row = df[check_cols].isna().sum(axis=1)
-
-    if threshold == 0.0:
-        return int((missing_per_row > 0).sum())
-
-    missing_rate = missing_per_row / n_check
-    return int((missing_rate >= threshold).sum())
-
-
-def preview_outlier_impact(
-    df: pd.DataFrame,
-    iqr_multiplier: float = 1.5,
-    columns: Optional[Sequence[str]] = None,
-) -> dict[str, int]:
-    """外れ値クリッピングの影響値数をプレビューする。
-
-    Returns:
-        列名 -> クリップされる値の数 の辞書
-    """
-    if columns is not None:
-        target_cols = [c for c in columns if c in df.columns]
-    else:
-        target_cols = list(df.select_dtypes(include="number").columns)
-
-    result: dict[str, int] = {}
-    for col in target_cols:
-        series = df[col]
-        if not pd.api.types.is_numeric_dtype(series):
-            continue
-        q1 = series.quantile(0.25)
-        q3 = series.quantile(0.75)
-        iqr = q3 - q1
-        if iqr == 0:
-            continue
-        lower = q1 - iqr_multiplier * iqr
-        upper = q3 + iqr_multiplier * iqr
-        n_outliers = int(((series < lower) | (series > upper)).sum())
-        if n_outliers > 0:
-            result[col] = n_outliers
-
-    return result
-
-
-def get_cleaning_summary(df: pd.DataFrame) -> dict:
-    """現在のDataFrameのクリーニング候補をサマリーで返す。
-
-    Returns:
-        dict with keys: n_const_cols, const_cols, n_dup_rows,
-                        n_all_missing_cols, all_missing_cols,
-                        total_missing_rate
-    """
-    const_cols = [c for c in df.columns if df[c].nunique(dropna=True) <= 1]
-    all_missing_cols = [c for c in df.columns if df[c].isna().all()]
-    n_dup = int(df.duplicated().sum())
-    total_missing = float(df.isna().mean().mean())
-
-    return {
-        "n_const_cols": len(const_cols),
-        "const_cols": const_cols,
-        "n_dup_rows": n_dup,
-        "n_all_missing_cols": len(all_missing_cols),
-        "all_missing_cols": all_missing_cols,
-        "total_missing_rate": total_missing,
-    }
+### 確認コード
+```python
+print(df['温度_℃'].describe())
+print(df['温度_℃'].isnull().sum())
+```
+"""
+        return prompt
+    
+    def apply_cleaning(self, df: pd.DataFrame, 
+                      suggestions: List[CleaningSuggestion],
+                      auto_apply: bool = True) -> Tuple[pd.DataFrame, Dict]:
+        """
+        提案されたクリーニングを適用
+        auto_apply=True: confidenceが高い提案を自動適用
+        auto_apply=False: 全提案をレビュー後、手動で選択適用
+        """
+        result_df = df.copy()
+        applied = []
+        skipped = []
+        
+        for suggestion in suggestions:
+            if auto_apply and suggestion.auto_applicable and suggestion.confidence >= 0.8:
+                try:
+                    # コードを実行（簡易eval - 実際はより安全な方法で）
+                    # 本番では exec/eval は避け、AST解析やサンドボックス環境を推奨
+                    local_vars = {'df': result_df, 'pd': pd, 'np': np}
+                    exec(suggestion.suggested_code, {"__builtins__": {}}, local_vars)
+                    result_df = local_vars['df']
+                    applied.append(asdict(suggestion))
+                    logger.info(f"クリーニング適用: {suggestion.issue_type}")
+                except Exception as e:
+                    logger.warning(f"クリーニング適用失敗: {suggestion.issue_type}, error={e}")
+                    skipped.append({**asdict(suggestion), 'error': str(e)})
+            else:
+                skipped.append(asdict(suggestion))
+        
+        return result_df, {'applied': applied, 'skipped': skipped}
