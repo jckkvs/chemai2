@@ -31,13 +31,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-#  グローバル状態
+#  グローバル状態 (遅延初期化用)
 # ============================================================================
-llm_config = LLMConfig.load().get_effective_config()
-llm_dialog = LLMConfigDialog(config=llm_config, on_config_change=lambda c: c.save())
-data_page = DataUploadPage(llm_config=llm_config)
-assistant_page = LLMAssistantPage(llm_config=llm_config, llm_dialog=llm_dialog)
-automl_page = AutoMLPage()
+_llm_config = None
+_llm_dialog = None
+_data_page = None
+_assistant_page = None
+_automl_page = None
+
+def get_ui_components():
+    global _llm_config, _llm_dialog, _data_page, _assistant_page, _automl_page
+    if _llm_config is None:
+        _llm_config = LLMConfig.load().get_effective_config()
+        _llm_dialog = LLMConfigDialog(config=_llm_config, on_config_change=lambda c: c.save())
+        _data_page = DataUploadPage(llm_config=_llm_config)
+        _assistant_page = LLMAssistantPage(llm_config=_llm_config, llm_dialog=_llm_dialog)
+        _automl_page = AutoMLPage()
+    return _llm_config, _llm_dialog, _data_page, _assistant_page, _automl_page
 
 # アプリケーション状態
 app.storage.general['uploaded_data'] = None
@@ -51,6 +61,7 @@ app.storage.general['current_page'] = 'data'
 @ui.page('/')
 def main_page():
     """メインページ"""
+    llm_config, llm_dialog, data_page, assistant_page, automl_page = get_ui_components()
     
     # ヘッダー
     with ui.header().classes('bg-white shadow-sm'):
@@ -97,6 +108,7 @@ def main_page():
 # ============================================================================
 def navigate_to_automl(data: pd.DataFrame):
     """AutoMLページへ遷移"""
+    _, _, _, _, automl_page = get_ui_components()
     automl_page.load_data(data)
     ui.notify('AutoMLページへ移動しました', type='info')
 

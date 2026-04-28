@@ -109,14 +109,10 @@ class AutoMLPage:
                         self._max_trials = ui.number(value=20, min=5, max=100, step=5)
                 
                 ui.label('使用するモデル').classes('mt-4 font-bold')
-                self._models = ui.checkbox_group(
-                    options=[
-                        ('random_forest', 'Random Forest'),
-                        ('lightgbm', 'LightGBM'),
-                        ('xgboost', 'XGBoost'),
-                    ],
-                    value=['random_forest', 'lightgbm']
-                ).classes('w-full')
+                with ui.row().classes('w-full gap-4'):
+                    self._model_rf = ui.checkbox('Random Forest', value=True)
+                    self._model_lgbm = ui.checkbox('LightGBM', value=True)
+                    self._model_xgb = ui.checkbox('XGBoost', value=False)
             
             # 実行ボタン
             with ui.row().classes('w-full justify-center gap-4'):
