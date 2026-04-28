@@ -114,7 +114,7 @@ def render_smiles_table(
                 cells += f"<td{align}>{val_str}</td>"
         rows_html += f"<tr>{cells}</tr>"
 
-    html = f"""
+    html_table = f"""
 <style>
 .smi-table {{ border-collapse:collapse; width:100%; font-size:12px; color:#e0e0f0; }}
 .smi-table th {{ background:#1a1f2e; color:#7fb3f5; padding:6px 10px; border:1px solid #2a2f3e;
@@ -138,9 +138,14 @@ def render_smiles_table(
 <tbody>{rows_html}</tbody>
 </table>
 </div>
-<script>
+"""
+    ui.html(html_table)
+
+    # ホバー用JavaScriptは run_javascript で個別に追加（scriptタグエラー回避）
+    ui.run_javascript(f"""
 document.querySelectorAll('.smi-cell').forEach(cell => {{
   const popup = cell.querySelector('.smi-popup');
+  if (!popup) return;
   cell.addEventListener('mousemove', e => {{
     let x = e.clientX + 16, y = e.clientY - 10;
     if (x + {img_size + 40} > window.innerWidth) x = e.clientX - {img_size + 40};
@@ -149,9 +154,7 @@ document.querySelectorAll('.smi-cell').forEach(cell => {{
     popup.style.top = y + 'px';
   }});
 }});
-</script>
-"""
-    ui.html(html)
+""")
 
 
 # ── Plotlyホバー拡張 ──

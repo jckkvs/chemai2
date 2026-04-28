@@ -22,10 +22,37 @@ logger = logging.getLogger(__name__)
 
 # 任意依存 (遅延インポートにより環境エラーを絶縁)
 def _get_umap_class() -> Any:
+    """umap-learn がインストールされている場合に UMAP クラスを返す。
+
+    PyPI には 'umap' という別のパッケージも存在するため、
+    umap.UMAP が本当に存在するかを確認してから返す。
+    """
     try:
-        mod = safe_import("umap", alias="umap-learn")
-        return getattr(mod, "UMAP", None) if mod is not None else None
-    except:
+        # まず umap.umap_ から直接インポート（umap-learn の内部構造）
+        try:
+            from umap.umap_ import UMAP
+            return UMAP
+        except (ImportError, AttributeError):
+            pass
+
+        # フォールバック: umap モジュール全体を確認
+        import importlib
+        mod = importlib.import_module("umap")
+        umap_cls = getattr(mod, "UMAP", None)
+        if umap_cls is not None:
+            return umap_cls
+
+        # umap はあるが umap-learn ではない場合
+        logger.warning(
+            "モジュール 'umap' は存在しますが、'umap-learn' がインストールされていません。"
+            "正しいパッケージをインストールしてください: pip install umap-learn"
+        )
+        return None
+    except ImportError:
+        logger.info("umap-learn がインストールされていません。pip install umap-learn でインストールできます。")
+        return None
+    except Exception as e:
+        logger.warning(f"UMAP のインポート中にエラー: {e}")
         return None
 
 

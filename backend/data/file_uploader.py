@@ -196,13 +196,28 @@ def assess_data_quality(df: pd.DataFrame) -> Dict[str, any]:
         quality_report['recommendations'].append('重複行の削除を検討')
     
     # 外れ値の簡易チェック（数値列のみ）
+    # 外れ値データを保持するリスト（SMILES等も含めて表示用）
+    if 'outlier_details' not in quality_report:
+        quality_report['outlier_details'] = []
+
     for col in df.select_dtypes(include=[np.number]).columns:
         if df[col].notna().sum() > 10:
             q1, q3 = df[col].quantile([0.25, 0.75])
             iqr = q3 - q1
-            outliers = ((df[col] < q1 - 3*iqr) | (df[col] > q3 + 3*iqr)).sum()
+            outlier_mask = (df[col] < q1 - 3*iqr) | (df[col] > q3 + 3*iqr)
+            outliers = outlier_mask.sum()
             if outliers > len(df) * 0.05:
                 quality_report['issues'].append(f'列 "{col}" に外れ値の疑い: {outliers} 件')
                 quality_report['recommendations'].append(f'列 "{col}" の外れ値を確認')
+                # 外れ値のデータを取得（SMILES列も含める）
+                outlier_rows = df[outlier_mask].copy()
+                outlier_rows['_outlier_col'] = col  # どの列で外れ値と判定されたか
+                outlier_rows['_outlier_value'] = df.loc[outlier_mask, col].values  # 外れ値自体
+                quality_report['outlier_details'].append({
+                    'column': col,
+                    'count': int(outliers),
+                    'rows': outlier_rows.head(50).to_dict('records'),  # 最大50件まで保持
+                    'columns': list(outlier_rows.columns),
+                })
     
     return quality_report

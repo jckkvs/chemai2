@@ -44,10 +44,12 @@ class DataUploadPage:
             # 修正: visibleはプロパティとして設定
             self._quality_card = ui.card().classes('w-full mb-4')
             self._quality_card.visible = False
-            
+
             with self._quality_card:
                 ui.label('データ品質評価').classes('font-bold text-lg mb-2')
                 self._quality_label = ui.label()
+                # 外れ値詳細テーブル用コンテナ
+                self._outlier_container = ui.column().classes('w-full q-mt-md')
 
                 with ui.row().classes('mt-4 gap-4'):
                     ui.button('🔧 LLM支援でクリーニング', on_click=self._run_cleaning, color='primary').props('outline')
@@ -73,9 +75,12 @@ class DataUploadPage:
                     if issues:
                         self._quality_label.text = f"✓ {meta.get('filename', 'unknown')} | {meta.get('shape', (0, 0))[0]}行 × {meta.get('shape', (0, 0))[1]}列 | 注意: {', '.join(issues[:3])}"
                         self._quality_label.classes('text-orange-600')
+                        # 外れ値詳細をテーブル表示
+                        self._show_outlier_details()
                     else:
                         self._quality_label.text = f"✓ {meta.get('filename', 'unknown')} | {meta.get('shape', (0, 0))[0]}行 × {meta.get('shape', (0, 0))[1]}列 | 状態: 問題なし"
                         self._quality_label.classes('text-green-600')
+                        self._outlier_container.clear()
                 except Exception:
                     self._quality_label.text = f"✓ {meta.get('filename', 'unknown')} | {meta.get('shape', (0, 0))[0]}行 × {meta.get('shape', (0, 0))[1]}列"
                     self._quality_label.classes('text-green-600')
@@ -203,3 +208,57 @@ class DataUploadPage:
             ui.notify('AutoMLタブへ移動しました', type='info')
         else:
             ui.notify('データを読み込みました。AutoMLタブへ移動してください', type='positive')
+
+    def _show_outlier_details(self):
+        """外れ値の詳細（SMILES含む実際のデータ）をテーブル表示"""
+        self._outlier_container.clear()
+        if not self.quality_report:
+            return
+        outlier_details = self.quality_report.get('outlier_details', [])
+        if not outlier_details:
+            return
+
+        with self._outlier_container:
+            ui.label('⚠️ 外れ値の詳細データ').classes('text-lg font-bold text-orange-600 mb-2')
+
+            for detail in outlier_details:
+                col_name = detail.get('column', '')
+                count = detail.get('count', 0)
+                rows = detail.get('rows', [])
+                columns = detail.get('columns', [])
+
+                if not rows:
+                    continue
+
+                ui.label(f'列 "{col_name}" の外れ値: {count}件').classes('text-md font-bold text-orange-500 mb-1')
+
+                # テーブル用の列定義（SMILES列を優先表示）
+                smiles_cols = [c for c in columns if 'smiles' in c.lower()]
+                other_cols = [c for c in columns if c not in smiles_cols and c not in ('_outlier_col_', '_outlier_value_')]
+                display_cols = smiles_cols + other_cols + ['_outlier_value_']
+
+                # 行データをテーブル用に変換
+                table_rows = []
+                for row in rows[:10]:  # 最大10件表示
+                    table_rows.append({
+                        'SMILES': row.get(col_name, '') if col_name in smiles_cols else row.get(smiles_cols[0], '') if smiles_cols else '',
+                        '列名': col_name,
+                        '外れ値': row.get('_outlier_value_', ''),
+                        **{c: row.get(c, '') for c in other_cols[:5]}  # その他の列は最大5つ
+                    })
+
+                if table_rows:
+                    ui.table(
+                        columns=[
+                            {'name': 'SMILES', 'label': 'SMILES', 'field': 'SMILES', 'align': 'left'},
+                            {'name': '列名', 'label': '外れ値列', 'field': '列名'},
+                            {'name': '外れ値', 'label': '外れ値', 'field': '外れ値'},
+                        ] + [
+                            {'name': c, 'label': c, 'field': c}
+                            for c in other_cols[:5]
+                        ],
+                        rows=table_rows,
+                    ).classes('w-full').props('dense flat bordered')
+
+                if len(rows) > 10:
+                    ui.label(f'... 他 {len(rows) - 10}件の外れ値があります').classes('text-caption text-grey-500')
