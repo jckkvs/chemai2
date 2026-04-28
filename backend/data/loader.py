@@ -29,6 +29,10 @@ _SUPPORTED_EXTENSIONS = {
     ".sqlite3": "sqlite",
     ".sdf": "sdf",
     ".mol": "mol",
+    ".pptx": "powerpoint",
+    ".ppt": "powerpoint",
+    ".docx": "word",
+    ".doc": "word",
 }
 
 
@@ -77,6 +81,8 @@ def load_file(
         "sqlite": _load_sqlite,
         "sdf": _load_sdf,
         "mol": _load_mol,
+        "powerpoint": _load_powerpoint,
+        "word": _load_word,
     }
 
     loader = loader_map[fmt]
@@ -127,6 +133,10 @@ def load_from_bytes(
         return pd.read_json(buf, **kwargs)
     elif fmt == "sdf":
         return _load_sdf_from_buf(buf, filename)
+    elif fmt == "powerpoint":
+        return _load_powerpoint_from_buf(buf, filename)
+    elif fmt == "word":
+        return _load_word_from_buf(buf, filename)
     else:
         raise ValueError(f"バイトストリームからの読み込みは '{fmt}' 未対応です")
 
@@ -223,6 +233,99 @@ def _load_sdf_from_buf(buf: Any, filename: str) -> pd.DataFrame:
 
     try:
         return PandasTools.LoadSDF(tmp_path, molColName="Molecule", includeFingerprints=False)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def _load_powerpoint(path: Path, **kwargs: Any) -> pd.DataFrame:
+    """PowerPoint ファイルからテキストを抽出し DataFrame に変換する。"""
+    from backend.utils.optional_import import require
+    require("python-pptx", feature="PowerPoint 読み込み")
+    
+    from pptx import Presentation  # type: ignore
+    
+    prs = Presentation(str(path))
+    text_content = []
+    
+    for slide_num, slide in enumerate(prs.slides, 1):
+        slide_text = []
+        for shape in slide.shapes:
+            if hasattr(shape, "text") and shape.text.strip():
+                slide_text.append(shape.text.strip())
+        
+        if slide_text:
+            text_content.append({
+                "slide_number": slide_num,
+                "content": "\\n".join(slide_text),
+                "source_file": path.name,
+            })
+    
+    if not text_content:
+        logger.warning(f"PowerPoint からテキストを抽出できませんでした：{path}")
+        return pd.DataFrame(columns=["slide_number", "content", "source_file"])
+    
+    df = pd.DataFrame(text_content)
+    logger.info(f"PowerPoint 読み込み：{len(df)} スライド")
+    return df
+
+
+def _load_word(path: Path, **kwargs: Any) -> pd.DataFrame:
+    """Word ファイルからテキストを抽出し DataFrame に変換する。"""
+    from backend.utils.optional_import import require
+    require("python-docx", feature="Word 読み込み")
+    
+    import docx  # type: ignore
+    
+    doc = docx.Document(str(path))
+    paragraphs = []
+    
+    for para_num, para in enumerate(doc.paragraphs, 1):
+        if para.text.strip():
+            paragraphs.append({
+                "paragraph_number": para_num,
+                "content": para.text.strip(),
+                "source_file": path.name,
+            })
+    
+    if not paragraphs:
+        logger.warning(f"Word ドキュメントからテキストを抽出できませんでした：{path}")
+        return pd.DataFrame(columns=["paragraph_number", "content", "source_file"])
+    
+    df = pd.DataFrame(paragraphs)
+    logger.info(f"Word 読み込み：{len(df)} 段落")
+    return df
+
+
+def _load_powerpoint_from_buf(buf: Any, filename: str) -> pd.DataFrame:
+    """バイトバッファから PowerPoint を読み込む（Streamlit/stlite 用）。"""
+    import tempfile
+    
+    from backend.utils.optional_import import require
+    require("python-pptx", feature="PowerPoint 読み込み（バッファ）")
+    
+    with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as tmp:
+        tmp.write(buf.read())
+        tmp_path = tmp.name
+    
+    try:
+        return _load_powerpoint(Path(tmp_path))
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def _load_word_from_buf(buf: Any, filename: str) -> pd.DataFrame:
+    """バイトバッファから Word を読み込む（Streamlit/stlite 用）。"""
+    import tempfile
+    
+    from backend.utils.optional_import import require
+    require("python-docx", feature="Word 読み込み（バッファ）")
+    
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+        tmp.write(buf.read())
+        tmp_path = tmp.name
+    
+    try:
+        return _load_word(Path(tmp_path))
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

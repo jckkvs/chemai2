@@ -6,7 +6,7 @@ LLM を使用したデータ整形・クリーニングコード生成モジュ�
 機能:
   - 整形されていない CSV/Excel データを分析
   - LLM がデータクリーニング用の Python コードを生成
-  - セル結合、誤字、欠損値の自動修正コードを生成
+  - セル結合,誤字,欠損値の自動修正コードを生成
   - 外部 LLM（ChatGPT, Claude 等）用のプロンプトも生成可能
 """
 from __future__ import annotations
@@ -18,14 +18,14 @@ from typing import Any, Optional
 import pandas as pd
 
 from backend.llm.provider import LLMRequest, LLMResponse
-from backend.llm.registry import get_llm_provider
+from backend.llm import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class DataQualityReport:
-    """データ品質レポート。"""
+    """データ品質レポート."""
     is_clean: bool = True                    # きれいなデータか
     issues: list[str] = field(default_factory=list)  # 検出された問題
     suggestions: list[str] = field(default_factory=list)  # 修正提案
@@ -35,13 +35,13 @@ class DataQualityReport:
     
     @property
     def needs_cleaning(self) -> bool:
-        """クリーニングが必要か。"""
+        """クリーニングが必要か."""
         return not self.is_clean or len(self.issues) > 0
 
 
 def analyze_data_quality(df: pd.DataFrame) -> DataQualityReport:
     """
-    DataFrame の品質を分析し、問題を特定する。
+    DataFrame の品質を分析し,問題を特定する。
     
     Args:
         df: 分析対象の DataFrame
@@ -176,7 +176,7 @@ def generate_cleaning_code(
 
 
 def _build_context(df: pd.DataFrame, report: DataQualityReport) -> dict:
-    """LLM に渡すコンテキスト情報を構築。"""
+    """LLM に渡すコンテキスト情報を構築."""
     return {
         "shape": df.shape,
         "columns": list(df.columns),
@@ -190,7 +190,7 @@ def _build_context(df: pd.DataFrame, report: DataQualityReport) -> dict:
 
 
 def _build_user_prompt(context: dict) -> str:
-    """ユーザープロンプトを構築。"""
+    """ユーザープロンプトを構築."""
     issues_str = "\n".join(f"- {issue}" for issue in context["issues"])
     suggestions_str = "\n".join(f"- {s}" for s in context["suggestions"])
     
@@ -211,7 +211,7 @@ def _build_user_prompt(context: dict) -> str:
 {suggestions_str if suggestions_str else 'なし'}
 
 上記の問題を解決する Python コードを生成してください。
-pandas を使用し、元の DataFrame を受け取ってクリーニング済みの DataFrame を返す関数を作成してください。"""
+pandas を使用し,元の DataFrame を受け取ってクリーニング済みの DataFrame を返す関数を作成してください."""
     
     return prompt
 
@@ -255,12 +255,12 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_external_cleaning_prompt(context: dict) -> str:
-    """外部 LLM（ChatGPT, Claude 等）に渡すための完全なプロンプト。"""
+    """外部 LLM（ChatGPT, Claude 等）に渡すための完全なプロンプト."""
     issues_str = "\n".join(f"- {issue}" for issue in context["issues"])
     
     prompt = f"""# ChemAI ML Studio データクリーニングコード生成依頼
 
-あなたは化学データ解析の専門家として、整形されていない実験データを機械学習に適した形式に整理する Python コードを作成してください。
+あなたは化学データ解析の専門家として,整形されていない実験データを機械学習に適した形式に整理する Python コードを作成してください。
 
 ## データの状況
 - サイズ：{context['shape'][0]}行 × {context['shape'][1]}列
@@ -284,12 +284,12 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     実験データをクリーニングする関数
     
     実施すること:
-    1. 列名の正規化（空白除去、統一）
+    1. 列名の正規化（空白除去,統一）
     2. 欠損値の適切な処理
     3. データ型の修正
     4. 不要な行・列の削除
     5. セル結合やフォーマット問題の修正
-    """
+    \"\"\"
     df_clean = df.copy()
     
     # ここに具体的なクリーニング処理を記述
@@ -301,16 +301,16 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 - RDKit や化学専門ライブラリは不要 (汎用的なデータクリーニングのみ)
 - 各処理ステップにコメントを付ける
 - エラーが発生しやすい箇所には try-except を入れる
-- 元の DataFrame を変更せず、コピーを操作する
+- 元の DataFrame を変更せず,コピーを操作する
 - 最終的に対数表形式 (tidy data) になるようにする
 
-コードのみを出力し、説明文は含めないでください。"""
+コードのみを出力し,説明文は含めないでください."""
     
     return prompt
 
 
 def _extract_code_from_response(content: str) -> str:
-    """レスポンスから Python コードを抽出。"""
+    """レスポンスから Python コードを抽出."""
     import re
     
     # コードブロック記法があれば除去
@@ -330,7 +330,7 @@ def _extract_code_from_response(content: str) -> str:
 
 
 def _generate_rule_based_cleaning_code(df: pd.DataFrame, report: DataQualityReport) -> str:
-    """フォールバック用のルールベースクリーニングコードを生成。"""
+    """フォールバック用のルールベースクリーニングコードを生成."""
     operations = []
     
     # 列名の空白除去

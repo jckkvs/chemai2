@@ -26,6 +26,13 @@ try:
 except ImportError:
     pass
 
+# OpenAI プロバイダーを登録（openai パッケージがインストール済みの場合のみ）
+try:
+    from backend.llm.providers.openai_provider import OpenAIProvider
+    _registry.register("openai", OpenAIProvider)
+except ImportError:
+    pass
+
 
 def get_llm_provider(name: str = "stub") -> LLMProvider:
     """登録済みLLMプロバイダーを取得する。"""
