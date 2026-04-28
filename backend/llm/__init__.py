@@ -19,6 +19,13 @@ from backend.llm.manager import LLMManager, LLMState
 from backend.llm.hardware_detector import detect_hardware, HardwareProfile
 from backend.llm.model_selector import select_optimal_model, LLMModelConfig
 from backend.llm.benchmark_runner import BenchmarkRunner
+from backend.llm.model_registry import (
+    OllamaModelInfo,
+    OLLAMA_MODELS,
+    get_recommended_models,
+    get_model_by_name,
+    get_tier_label,
+)
 
 _registry = LLMProviderRegistry()
 _registry.register("stub", StubLLMProvider)
@@ -58,6 +65,11 @@ __all__ = [
     "HardwareProfile",
     "LLMModelConfig",
     "BenchmarkRunner",
+    "OllamaModelInfo",
+    "OLLAMA_MODELS",
+    "get_recommended_models",
+    "get_model_by_name",
+    "get_tier_label",
     "get_llm_provider",
     "register_llm_provider",
     "get_llm_manager",
