@@ -22,7 +22,7 @@ class FileUploadZone:
         'excel': ['.xlsx', '.xls', '.xlsm'],
     }
     
-    def __init__(self, 
+    def __init__(self,
                  on_upload: Callable[[Dict], None],
                  allowed_types: Optional[List[str]] = None,
                  max_file_size_mb: float = 50,
@@ -30,11 +30,12 @@ class FileUploadZone:
                  label: str = 'Upload Data'):
         self.on_upload = on_upload
         self.allowed_types = allowed_types or list(self.SUPPORTED_EXTENSIONS.keys())
-        self.max_file_size = max_file_size_mb * 1024 * 1024
+        self.max_file_size_bytes = int(max_file_size_mb * 1024 * 1024)
+        self.max_file_size_mb = max_file_size_mb
         self.multiple = multiple
         self.label = label
         self._uploaded_files: List[Dict] = []
-        
+
         self._render()
     
     def _render(self):
@@ -44,20 +45,20 @@ class FileUploadZone:
             
             with ui.row().classes('text-sm text-gray-600 mb-2'):
                 ui.label(f"Supported: {', '.join(self.allowed_types)}")
-                ui.label(f"• Max: {self.max_file_size // (1024*1024)}MB")
+                ui.label(f"• Max: {int(self.max_file_size_mb)}MB")
             
             # Drop zone area
             with ui.element('div').classes('relative border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors cursor-pointer'):
                 ui.icon('upload_file', size='2em').classes('text-gray-400 mb-2')
                 ui.label('Click to select files or drag & drop').classes('text-gray-600')
                 
-                # Corrected: ui.upload() is self-triggering, no .run() method
-                # Style it to cover the drop zone area
+                # auto_upload=True: upload immediately on selection (no hidden submit button needed)
+                # max_file_size omitted: Python-side validation avoids Quasar unit ambiguity
                 self._uploader = ui.upload(
                     on_upload=self._handle_upload,
                     on_rejected=self._handle_rejected,
                     multiple=self.multiple,
-                    max_file_size=self.max_file_size
+                    auto_upload=True,
                 ).classes('absolute inset-0 opacity-0 cursor-pointer')
             
             # Progress bar
@@ -81,15 +82,19 @@ class FileUploadZone:
             # Read file content
             content = await e.file.read()
             file_name = e.file.name
-            file_size = len(content)  # Corrected: size is a property, not an awaitable method
-            
+            file_size = len(content)
+
             self._progress.value = 60
-            
+
+            # Python-side size validation
+            if file_size > self.max_file_size_bytes:
+                raise ValueError(f"File too large: {file_size / 1024 / 1024:.1f}MB (max {int(self.max_file_size_mb)}MB)")
+
             # Detect file type
             file_type = self._detect_type(file_name)
-            
+
             if file_type not in self.allowed_types:
-                raise ValueError(f"Unsupported file type: {file_type}")
+                raise ValueError(f"Unsupported file type: {Path(file_name).suffix} (allowed: {self.allowed_types})")
             
             self._progress.value = 80
             
@@ -135,9 +140,10 @@ class FileUploadZone:
             self._progress.visible = False
     
     def _handle_rejected(self, e: events.UiEventArguments):
-        """Handle rejected upload"""
-        self._message.text = '✗ File type or size not allowed'
+        """Handle rejected upload (fired by Quasar client-side validation)"""
+        self._message.text = '✗ Upload rejected by browser (file may exceed limits)'
         self._message.classes('text-red-600')
+        logger.warning(f"Upload rejected event: {e}")
     
     def _detect_type(self, filename: str) -> str:
         """Detect file type from extension"""
