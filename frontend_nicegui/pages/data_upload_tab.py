@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 class DataUploadPage:
     """データアップロードページ"""
 
-    def __init__(self, llm_config, automl_page=None, viz_page=None):
+    def __init__(self, llm_config, automl_page=None, viz_page=None, navigate_to_automl=None):
         self.llm_config = llm_config
         self.automl_page = automl_page
         self.viz_page = viz_page
+        self._navigate_to_automl_cb = navigate_to_automl
         self.uploaded_data: Optional[pd.DataFrame] = None
         self.quality_report: Optional[Dict] = None
 
@@ -190,19 +191,15 @@ class DataUploadPage:
             ui.notify('データが読み込まれていません', type='warning')
             return
 
-        # 1. データを渡す
+        # データを渡す
         if self.automl_page:
             self.automl_page.load_data(self.uploaded_data)
         if self.viz_page:
             self.viz_page.load_data(self.uploaded_data)
 
-        # 2. JavaScriptでAutoMLタブをクリック
-        ui.run_javascript('''
-            const tabs = document.querySelectorAll('[role="tab"]');
-            tabs.forEach(tab => {
-                if (tab.textContent.includes('AutoML') && !tab.textContent.includes('Future')) {
-                    tab.click();
-                }
-            });
-        ''')
-        ui.notify('AutoMLタブへ移動しました', type='info')
+        # NiceGUI ネイティブのタブ切り替え
+        if self._navigate_to_automl_cb:
+            self._navigate_to_automl_cb()
+            ui.notify('AutoMLタブへ移動しました', type='info')
+        else:
+            ui.notify('データを読み込みました。AutoMLタブへ移動してください', type='positive')

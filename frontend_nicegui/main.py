@@ -42,25 +42,35 @@ def main_page():
 
     viz_page = VisualizationPage()
     automl_page = AutoMLPage(viz_page=viz_page)
-    data_page = DataUploadPage(llm_config=llm_config, automl_page=automl_page, viz_page=viz_page)
+    # data_page needs navigate callback — created after tab_panels below
     assistant_page = LLMAssistantPage(llm_config=llm_config, llm_dialog=llm_dialog)
-    
+
     with ui.header().classes('bg-white shadow-sm'):
         with ui.row().classes('w-full justify-between items-center px-4'):
             ui.label('ChemAI MI Studio').classes('text-xl font-bold text-primary')
             with ui.row().classes('gap-2'):
                 ui.label('v1.0.0').classes('text-xs text-gray-500')
                 llm_dialog.create_trigger_button(ui.row(), label='⚙️', icon='settings')
-    
+
     # タブの作成
     with ui.tabs().classes('w-full bg-white shadow-sm') as t:
         data_tab = ui.tab('Data Upload & Cleaning', icon='cloud_upload')
         llm_tab = ui.tab('LLM Assistant', icon='auto_awesome')
         auto_ml_tab = ui.tab('AutoML', icon='model_training')
         viz_tab = ui.tab('Visualization', icon='insights')
-    
-    with ui.tab_panels(t, value=data_tab).classes('w-full max-w-7xl mx-auto mt-4'):
+
+    with ui.tab_panels(t, value=data_tab).classes('w-full max-w-7xl mx-auto mt-4') as tab_panels:
         with ui.tab_panel(data_tab):
+            # Pass native tab-switch callback so DataUploadPage can navigate reliably
+            def go_to_automl():
+                tab_panels.set_value(auto_ml_tab)
+
+            data_page = DataUploadPage(
+                llm_config=llm_config,
+                automl_page=automl_page,
+                viz_page=viz_page,
+                navigate_to_automl=go_to_automl,
+            )
             data_page.render()
         with ui.tab_panel(llm_tab):
             assistant_page.render()
