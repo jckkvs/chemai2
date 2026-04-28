@@ -1,69 +1,126 @@
 """
 frontend_nicegui/main.py
-ChemAI ML Studio - NiceGUI Entry Point
+完全統合版 - すべての機能を連携
 """
-from nicegui import ui
+from nicegui import ui, app
+import pandas as pd
+from typing import Optional, Dict
 import logging
 
-# LLM & Data Upload Extensions
+# 設定
 from backend.config.llm_settings import LLMConfig
+
+# データ処理
+from backend.data.file_uploader import read_csv_smart, read_excel_smart, assess_data_quality
+from backend.data.data_cleaner import DataCleanerLLM
+
+# LLM
+from backend.llm.prompt_templates import create_external_prompt
+
+# UIコンポーネント
+from frontend_nicegui.components.file_upload_zone import FileUploadZone
 from frontend_nicegui.components.llm_config_dialog import LLMConfigDialog
+
+# ページ
 from frontend_nicegui.pages.data_upload_tab import DataUploadPage
 from frontend_nicegui.pages.llm_assistant_tab import LLMAssistantPage
+from frontend_nicegui.pages.automl_page import AutoMLPage
 
-# Logging setup
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize configurations
+# ============================================================================
+#  グローバル状態
+# ============================================================================
 llm_config = LLMConfig.load().get_effective_config()
-
-# Global state / components
 llm_dialog = LLMConfigDialog(config=llm_config, on_config_change=lambda c: c.save())
 data_page = DataUploadPage(llm_config=llm_config)
 assistant_page = LLMAssistantPage(llm_config=llm_config, llm_dialog=llm_dialog)
+automl_page = AutoMLPage()
 
-# UI Layout
-ui.query('body').style('background-color: #f5f5f5;')
+# アプリケーション状態
+app.storage.general['uploaded_data'] = None
+app.storage.general['quality_report'] = None
+app.storage.general['current_page'] = 'data'
 
-with ui.header().classes('items-center bg-primary text-white p-4'):
-    ui.icon('psychology', size='2em')
-    ui.label('ChemAI ML Studio').classes('text-2xl font-bold ml-2')
-    ui.space()
-    with ui.row().classes('items-center gap-4'):
 
-        ui.label('Materials Informatics Autonomous Platform').classes('text-sm opacity-80')
-        # Settings button in header for global access
-        ui.button(icon='settings', on_click=llm_dialog.open).props('flat round color=white')
-
-with ui.tabs().classes('w-full bg-white shadow-sm') as tabs:
-    data_tab = ui.tab('Data Upload & Cleaning', icon='cloud_upload')
-    llm_tab = ui.tab('LLM Assistant', icon='auto_awesome')
-    # Placeholders for existing features
-    auto_ml_tab = ui.tab('AutoML (Future)', icon='model_training')
-    viz_tab = ui.tab('Visualization (Future)', icon='insights')
-
-with ui.tab_panels(tabs, value=data_tab).classes('w-full max-w-5xl mx-auto mt-4'):
-    with ui.tab_panel(data_tab):
-        data_page.render()
+# ============================================================================
+#  UIレイアウト
+# ============================================================================
+@ui.page('/')
+def main_page():
+    """メインページ"""
+    
+    # ヘッダー
+    with ui.header().classes('bg-white shadow-sm'):
+        with ui.row().classes('w-full justify-between items-center px-4 py-2'):
+            with ui.row().classes('items-center'):
+                ui.icon('psychology', size='2em', color='primary')
+                ui.label('ChemAI MI Studio').classes('text-xl font-bold text-primary ml-2')
+            
+            with ui.row().classes('gap-4 items-center'):
+                ui.label('v1.0.0').classes('text-xs text-gray-500')
+                ui.button(icon='settings', on_click=llm_dialog.open).props('flat round color=primary')
+    
+    # ナビゲーションタブ
+    with ui.tabs().classes('w-full bg-white shadow-sm') as tabs:
+        data_tab = ui.tab('Data Upload & Cleaning', icon='cloud_upload')
+        llm_tab = ui.tab('LLM Assistant', icon='auto_awesome')
+        auto_ml_tab = ui.tab('AutoML', icon='model_training')
+        viz_tab = ui.tab('Visualization (Future)', icon='insights')
+    
+    # タブパネル
+    with ui.tab_panels(tabs, value=data_tab).classes('w-full max-w-7xl mx-auto mt-4'):
+        with ui.tab_panel(data_tab):
+            data_page.render()
         
-    with ui.tab_panel(llm_tab):
-        assistant_page.render()
+        with ui.tab_panel(llm_tab):
+            assistant_page.render()
         
-    with ui.tab_panel(auto_ml_tab):
-        with ui.card().classes('p-8 text-center'):
-            ui.icon('construction', size='4em', color='gray')
-            ui.label('既存のAutoML機能との統合を準備中です。').classes('text-xl text-gray-500 mt-4')
-            ui.button('従来のUIを開く（仮）', on_click=lambda: ui.notify('実装予定')).classes('mt-4')
+        with ui.tab_panel(auto_ml_tab):
+            automl_page.render()
+        
+        with ui.tab_panel(viz_tab):
+            with ui.card().classes('w-full p-8 text-center'):
+                ui.icon('bar_chart', size='4em', color='gray')
+                ui.label('可視化機能は開発中です').classes('text-xl text-gray-500 mt-4')
+    
+    # フッター
+    with ui.footer().classes('bg-gray-100 text-gray-600 border-t'):
+        with ui.row().classes('w-full justify-center py-2'):
+            ui.label('© 2026 ChemAI MI Studio - Materials Informatics Platform').classes('text-xs')
 
-    with ui.tab_panel(viz_tab):
-        with ui.card().classes('p-8 text-center'):
-            ui.icon('bar_chart', size='4em', color='gray')
-            ui.label('可視化機能は開発中です。').classes('text-xl text-gray-500 mt-4')
 
-# Footer
-with ui.footer().classes('bg-gray-100 text-gray-500 text-xs p-2 justify-center'):
-    ui.label('© 2026 ChemAI Project - Materials Informatics Suite')
+# ============================================================================
+#  データ連携関数
+# ============================================================================
+def navigate_to_automl(data: pd.DataFrame):
+    """AutoMLページへ遷移"""
+    automl_page.load_data(data)
+    ui.notify('AutoMLページへ移動しました', type='info')
 
-# Run the app
-ui.run(title='ChemAI ML Studio', port=8085, dark=False, reload=True)
+
+# ============================================================================
+#  エラーハンドリング
+# ============================================================================
+@ui.page('/error')
+def error_page():
+    """エラーページ"""
+    with ui.column().classes('w-full items-center p-8'):
+        ui.icon('error', size='4em', color='red')
+        ui.label('エラーが発生しました').classes('text-xl font-bold text-red-600 mt-4')
+        ui.button('ホームに戻る', on_click=lambda: ui.navigate.to('/')).classes('mt-4')
+
+
+# ============================================================================
+#  アプリケーション起動
+# ============================================================================
+if __name__ in {"__main__", "__mp_main__"}:
+    ui.run(
+        title='ChemAI MI Studio',
+        host='0.0.0.0',
+        port=8085,
+        reload=True,
+        storage_secret='chemai2_secret_key_2026_final'
+    )

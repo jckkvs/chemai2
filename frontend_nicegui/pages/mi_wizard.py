@@ -187,14 +187,19 @@ class MIWizard:
         self._result_area = ui.column().classes('w-full mt-4')
     
     def _execute_analysis(self):
-        """解析の自律実行"""
-        with ui.column().classes('w-full') as log:
-            ui.label('⏳ ステップ1: データの検証中...').classes('text-blue-600')
-            ui.label('⏳ ステップ2: 記述子の生成中...').classes('text-blue-600')
-            ui.label('⏳ ステップ3: モデルの学習中...').classes('text-blue-600')
+        """解析の自律実行 - AutoMLページへ遷移"""
+        if self.current_data is None:
+            ui.notify('データがアップロードされていません', type='warning')
+            return
         
-        ui.notify('解析を開始しました（シミュレーション）', type='info')
-        # 実際にはバックグラウンドで実行
+        # AutoMLページにデータを渡して遷移
+        from frontend_nicegui.main import automl_page, tabs, auto_ml_tab
+        automl_page.load_data(self.current_data)
+        
+        # タブを切り替え
+        tabs.value = auto_ml_tab
+        
+        ui.notify('AutoMLページへ移動しました', type='info')
     
     def _next_step(self):
         """ステップを次に進める"""

@@ -95,7 +95,8 @@ def read_excel_smart(file_content: Union[str, bytes, io.BytesIO],
         df = df.ffill()
         
         # 列名のクリーニング
-        if df.columns.isnull().any() or df.columns.astype(str).str.strip().eq('').any():
+        column_names = df.columns.astype(str).str.strip()
+        if df.columns.isnull().any() or (column_names == '').any():
             df.columns = [f"Column_{i}" if pd.isna(col) or str(col).strip() == '' else str(col).strip() 
                          for i, col in enumerate(df.columns)]
         
@@ -176,7 +177,8 @@ def assess_data_quality(df: pd.DataFrame) -> Dict[str, any]:
         quality_report['recommendations'].append('欠損値補完または削除を検討')
     
     # 列名の整合性チェック
-    if df.columns.isnull().any() or df.columns.astype(str).str.strip().eq('').any():
+    column_names = df.columns.astype(str).str.strip()
+    if df.columns.isnull().any() or (column_names == '').any():
         quality_report['issues'].append('列名に空白またはNULLが含まれています')
         quality_report['recommendations'].append('列名を整理してください')
         quality_report['is_clean'] = False

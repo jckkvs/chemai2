@@ -92,7 +92,7 @@ class FileUploadZone:
             self._file_list = ui.column().classes('mt-4')
             self._render_file_list()
     
-    def _handle_upload(self, e: events.UploadEventArguments):
+    async def _handle_upload(self, e: events.UploadEventArguments):
         """アップロード処理"""
         try:
             # 進捗表示
@@ -100,12 +100,16 @@ class FileUploadZone:
             self._progress.value = 0.3
             self._message.text = 'ファイル読み込み中...'
             
-            # ファイル内容を読み込み
-            content = e.content.read()
+            # ファイル内容を読み込み (NiceGUI 3.0.0+ API)
+            content = await e.file.read()
             self._progress.value = 0.6
             
+            # ファイル情報の取得
+            file_name = e.file.name
+            file_size = e.file.size()  # NiceGUI 3.8.0 では同期メソッド
+            
             # 拡張子からタイプ判定
-            file_type = self._detect_type(e.name)
+            file_type = self._detect_type(file_name)
             self._progress.value = 0.8
             
             # 読み込み処理（backendの関数を呼び出し）
@@ -118,7 +122,9 @@ class FileUploadZone:
             elif file_type in ['excel']:
                 data = read_excel_smart(content)
             elif file_type in ['pptx', 'docx']:
-                data = read_document_to_text(content, file_type)
+                # backend/data/file_uploader.py の期待する文字列に変換
+                internal_type = 'powerpoint' if file_type == 'pptx' else 'word'
+                data = read_document_to_text(content, internal_type)
             else:
                 # Default to text
                 data = content.decode('utf-8', errors='ignore')
@@ -127,8 +133,8 @@ class FileUploadZone:
             
             # メタ情報作成
             meta = {
-                'filename': e.name,
-                'size': e.size,
+                'filename': file_name,
+                'size': file_size,
                 'type': file_type,
                 'shape': data.shape if isinstance(data, pd.DataFrame) else None,
             }
@@ -141,7 +147,7 @@ class FileUploadZone:
             self._uploaded_files.append(result)
             self._render_file_list()
             
-            self._message.text = f'✓ {e.name} を読み込みました'
+            self._message.text = f'✓ {file_name} を読み込みました'
             self._message.classes('text-green-600')
             
         except Exception as ex:
