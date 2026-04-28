@@ -37,6 +37,13 @@ try:
 except ImportError:
     pass
 
+# Ollamaプロバイダーを登録（httpx がインストール済みの場合のみ）
+try:
+    from backend.llm.providers.ollama_provider import OllamaProvider
+    _registry.register("ollama", OllamaProvider)
+except ImportError:
+    pass
+
 
 def get_llm_provider(name: str = "stub") -> LLMProvider:
     """登録済みLLMプロバイダーを取得する。"""
