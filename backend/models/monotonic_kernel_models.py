@@ -339,14 +339,18 @@ class MonotonicRFR(BaseEstimator, RegressorMixin):
         n_estimators: int = 100,
         max_depth: int = 10,
         monotonic_features: Optional[List[int]] = None,
+        monotonic_directions: Optional[List[str]] = None,
         constraint_strength: float = 1.0,
+        n_sigma: float = 3.0,
         random_state: Optional[int] = None,
         **kwargs,
     ):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.monotonic_features = monotonic_features or []
+        self.monotonic_directions = monotonic_directions or []
         self.constraint_strength = constraint_strength
+        self.n_sigma = n_sigma
         self.random_state = random_state
         self._rf = None
         self._kernel_model = None
@@ -369,10 +373,13 @@ class MonotonicRFR(BaseEstimator, RegressorMixin):
             from backend.models.monotonic_kernel import MonotonicConstrainedKernel
 
             base_kernel = RandomForestKernel(ensemble=self._rf)
+            base_kernel.fit(X, y)  # Fit the kernel
             kernel = MonotonicConstrainedKernel(
                 base_kernel=base_kernel,
                 monotonic_features=self.monotonic_features,
+                monotonic_directions=self.monotonic_directions,
                 constraint_strength=self.constraint_strength,
+                n_sigma=self.n_sigma,
             )
             self._kernel_model = KernelRidge(kernel=kernel)
             self._kernel_model.fit(X, y)
@@ -406,19 +413,26 @@ class MonotonicRFC(BaseEstimator, ClassifierMixin):
         n_estimators: int = 100,
         max_depth: int = 10,
         monotonic_features: Optional[List[int]] = None,
+        monotonic_directions: Optional[List[str]] = None,
         constraint_strength: float = 1.0,
+        n_sigma: float = 3.0,
         random_state: Optional[int] = None,
         **kwargs,
     ):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.monotonic_features = monotonic_features or []
+        self.monotonic_directions = monotonic_directions or []
         self.constraint_strength = constraint_strength
+        self.n_sigma = n_sigma
         self.random_state = random_state
         self._rfc = None
+        self._kernel_model = None
 
     def fit(self, X, y):
         from sklearn.ensemble import RandomForestClassifier
+        from sklearn.gaussian_process import GaussianProcessClassifier
+        from sklearn.gaussian_process.kernels import RBF
 
         self._rfc = RandomForestClassifier(
             n_estimators=self.n_estimators,
@@ -427,12 +441,36 @@ class MonotonicRFC(BaseEstimator, ClassifierMixin):
         )
         self._rfc.fit(X, y)
         self.classes_ = self._rfc.classes_
+
+        # Create kernel with monotonicity for GPC
+        if self.monotonic_features:
+            from backend.models.tree_kernels import RandomForestKernel
+            from backend.models.monotonic_kernel import MonotonicConstrainedKernel
+
+            base_kernel = RandomForestKernel(ensemble=self._rfc)
+            base_kernel.fit(X, y)  # Fit the kernel
+            kernel = MonotonicConstrainedKernel(
+                base_kernel=base_kernel,
+                monotonic_features=self.monotonic_features,
+                monotonic_directions=self.monotonic_directions,
+                constraint_strength=self.constraint_strength,
+                n_sigma=self.n_sigma,
+            )
+            self._kernel_model = GaussianProcessClassifier(kernel=kernel, random_state=self.random_state)
+            self._kernel_model.fit(X, y)
+        else:
+            self._kernel_model = None
+
         return self
 
     def predict(self, X):
+        if self._kernel_model is not None:
+            return self._kernel_model.predict(X)
         return self._rfc.predict(X)
 
     def predict_proba(self, X):
+        if self._kernel_model is not None:
+            return self._kernel_model.predict_proba(X)
         return self._rfc.predict_proba(X)
 
 
