@@ -1,11 +1,11 @@
 """
 frontend_nicegui/pages/automl_page.py
-既存のAutoMLEngineと統合した完全版 - ui.table() 修正済み
+AutoML page - integrated with existing AutoMLEngine
 """
-from nicegui import ui, events
+from nicegui import ui
 import pandas as pd
 import numpy as np
-from typing import Optional, Dict, List
+from typing import Optional, Dict, Any
 import asyncio
 import logging
 import concurrent.futures
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class AutoMLPage:
-    """AutoML解析ページ - 既存のAutoMLEngineを使用"""
+    """AutoML analysis page - uses existing AutoMLEngine"""
 
     def __init__(self, viz_page=None):
         self.current_data: Optional[pd.DataFrame] = None
@@ -23,124 +23,138 @@ class AutoMLPage:
         self.automl_instance = None
         self.last_results: Optional[Dict] = None
         self.viz_page = viz_page
-        self._run_btn = None  # ボタンは render() で初期化
+        self._run_btn = None
         self._cancel_btn = None
+        self._pending_data = None
 
     def render(self):
-        """AutoMLページを描画"""
+        """Render the AutoML page"""
         with ui.column().classes('w-full max-w-6xl mx-auto p-4'):
 
-            # ヘッダー
+            # Header
             with ui.card().classes('w-full mb-4'):
                 with ui.row().classes('w-full items-center'):
-                    ui.label('🤖 AutoML - 自動機械学習').classes('text-2xl font-bold')
+                    ui.label('AutoML - Automatic Machine Learning').classes('text-2xl font-bold')
                     ui.space()
-                    ui.label('既存のAutoML機能を利用した解析').classes('text-gray-600')
+                    ui.label('Using existing AutoML functionality').classes('text-gray-600')
 
-            # データ確認セクション
+            # Data confirmation section
             with ui.card().classes('w-full mb-4'):
-                ui.label('📊 読み込み済みデータ').classes('font-bold text-lg mb-2')
+                ui.label('Loaded Data').classes('font-bold text-lg mb-2')
 
                 with ui.row().classes('w-full gap-4'):
                     with ui.column():
-                        ui.label('行数').classes('text-xs text-gray-500')
+                        ui.label('Rows').classes('text-xs text-gray-500')
                         self._row_count = ui.label('-')
                     with ui.column():
-                        ui.label('列数').classes('text-xs text-gray-500')
+                        ui.label('Columns').classes('text-xs text-gray-500')
                         self._col_count = ui.label('-')
                     with ui.column():
-                        ui.label('メモリ使用量').classes('text-xs text-gray-500')
+                        ui.label('Memory Usage').classes('text-xs text-gray-500')
                         self._memory_usage = ui.label('-')
 
-                ui.label('プレビュー（先頭10行）').classes('mt-4 font-bold')
-                # 修正: ui.table() には columns, rows 引数が必要
+                ui.label('Preview (first 10 rows)').classes('mt-4 font-bold')
                 self._data_table = ui.table(columns=[], rows=[]).classes('w-full h-64')
                 self._data_table.visible = False
 
-                self._no_data_msg = ui.label('⚠️ データが読み込まれていません。「Data Upload」タブからデータをアップロードしてください。')
+                self._no_data_msg = ui.label('No data loaded. Please upload data from the Data Upload tab.')
                 self._no_data_msg.classes('text-orange-600 p-4 bg-orange-50 rounded')
 
-            # 目的変数選択
+            # Target variable selection
             self._target_card = ui.card().classes('w-full mb-4')
             self._target_card.visible = False
-            
-            with self._target_card:
-                ui.label('🎯 目的変数を選択').classes('font-bold text-lg mb-2')
-                self._target_select = ui.select(options=[], label='目的変数（予測対象）', with_input=True).classes('w-full')
-                ui.label('ヒント: 数値列なら回帰分析、カテゴリ列なら分類分析が自動選択されます').classes('text-xs text-gray-500 mt-1')
 
-            # AutoML設定
+            with self._target_card:
+                ui.label('Select Target Variable').classes('font-bold text-lg mb-2')
+                self._target_select = ui.select(options=[], label='Target variable (prediction target)', with_input=True).classes('w-full')
+                ui.label('Hint: Numeric columns = regression, Categorical columns = classification').classes('text-xs text-gray-500 mt-1')
+
+            # AutoML configuration
             self._config_card = ui.card().classes('w-full mb-4')
             self._config_card.visible = False
-            
+
             with self._config_card:
-                ui.label('⚙️ AutoML設定').classes('font-bold text-lg mb-2')
+                ui.label('AutoML Settings').classes('font-bold text-lg mb-2')
                 with ui.row().classes('w-full gap-4'):
                     with ui.column():
-                        ui.label('CV Fold数').classes('text-xs text-gray-500')
+                        ui.label('CV Folds').classes('text-xs text-gray-500')
                         self._cv_folds = ui.number(value=5, min=2, max=10, step=1)
                     with ui.column():
-                        ui.label('評価指標').classes('text-xs text-gray-500')
+                        ui.label('Metric').classes('text-xs text-gray-500')
                         self._metric = ui.select(options=['rmse', 'mae', 'r2', 'accuracy', 'f1'], value='rmse')
                     with ui.column():
-                        ui.label('最大試行').classes('text-xs text-gray-500')
+                        ui.label('Max Trials').classes('text-xs text-gray-500')
                         self._max_trials = ui.number(value=20, min=5, max=100, step=5)
 
-                ui.label('使用するモデル').classes('mt-4 font-bold')
+                ui.label('Models to use').classes('mt-4 font-bold')
                 self._models = ui.select(
                     options={'rf': 'Random Forest', 'lgbm': 'LightGBM', 'xgb': 'XGBoost'},
                     value=['rf', 'lgbm'],
                     multiple=True,
-                    label='モデル選択'
+                    label='Model Selection'
                 ).classes('w-full')
 
-            # 実行ボタン
+            # Run button
             with ui.row().classes('w-full justify-center gap-4'):
-                self._run_btn = ui.button('▶ AutoMLを実行', on_click=self._run_automl, color='primary').props('size=lg').disable()
-                self._cancel_btn = ui.button('⏹ キャンセル', on_click=self._cancel_execution, color='negative').props('outline').disable()
+                self._run_btn = ui.button('Run AutoML', on_click=self._run_automl, color='primary').props('size=lg')
+                self._cancel_btn = ui.button('Cancel', on_click=self._cancel_execution, color='negative').props('outline')
+                self._run_btn.disable()
+                self._cancel_btn.disable()
 
-            # 進捗表示
+            # Progress display
             self._progress_card = ui.card().classes('w-full mt-4')
             self._progress_card.visible = False
-            
+
             with self._progress_card:
-                ui.label('⏳ AutoML実行中...').classes('font-bold text-lg')
+                ui.label('Running AutoML...').classes('font-bold text-lg')
                 self._progress_bar = ui.linear_progress(value=0, show_value=True)
                 self._progress_log = ui.log().classes('w-full h-64 font-mono text-xs')
 
-            # 結果表示
+            # Results display
             self._result_card = ui.card().classes('w-full mt-4')
             self._result_card.visible = False
-            
+
             with self._result_card:
                 with ui.row().classes('w-full items-center'):
-                    ui.label('✅ 解析完了').classes('font-bold text-lg text-green-600')
+                    ui.label('Analysis Complete').classes('font-bold text-lg text-green-600')
                     ui.space()
                     self._best_model_label = ui.label('').classes('text-sm text-gray-600')
-                # 修正: ui.table() には columns, rows 引数が必要
                 self._results_table = ui.table(columns=[], rows=[]).classes('w-full')
 
-                with ui.expansion('📊 特徴量重要度', icon='analytics').classes('w-full mt-4'):
+                with ui.expansion('Feature Importance', icon='analytics').classes('w-full mt-4'):
                     self._importance_container = ui.column().classes('w-full')
 
+                with ui.expansion('Recommendation Reasons', icon='lightbulb').classes('w-full mt-4'):
+                    self._cv_reason_md = ui.markdown('').classes('text-sm')
+                    self._model_reason_md = ui.markdown('').classes('text-sm mt-2')
+
                 with ui.row().classes('w-full gap-4 mt-4'):
-                    ui.button('📊 結果を可視化', on_click=self._visualize_results)
-                    ui.button('💾 モデルを保存', on_click=self._save_model)
-                    ui.button('📄 レポート出力', on_click=self._export_report)
+                    ui.button('Visualize Results', on_click=self._visualize_results)
+                    ui.button('Save Model', on_click=self._save_model)
+                    ui.button('Export Report', on_click=self._export_report)
+
+        # Process pending data if any
+        if self._pending_data is not None:
+            pending = self._pending_data
+            self._pending_data = None
+            self.load_data(pending)
 
     def load_data(self, data: pd.DataFrame):
-        """データをロードしてUIを更新"""
+        """Load data and update UI"""
         self.current_data = data
 
-        # 可視化ページにもデータを渡す
         if self.viz_page:
             self.viz_page.load_data(data)
+
+        if self._run_btn is None:
+            ui.notify('UI initializing...', type='info')
+            self._pending_data = data
+            return
 
         self._row_count.text = f"{len(data):,}"
         self._col_count.text = f"{len(data.columns)}"
         self._memory_usage.text = f"{data.memory_usage(deep=True).sum() / 1024**2:.2f} MB"
 
-        # 修正: tableのcolumns/rowsを設定
         columns = [{'name': col, 'label': col, 'field': col} for col in data.columns]
         rows = data.head(10).to_dict('records')
         self._data_table.columns = columns
@@ -162,15 +176,15 @@ class AutoMLPage:
         self._config_card.visible = True
         if self._run_btn is not None:
             self._run_btn.enable()
-        ui.notify(f'データを読み込みました: {len(data)}行 × {len(data.columns)}列', type='positive')
+        ui.notify(f'Data loaded: {len(data)} rows x {len(data.columns)} columns', type='positive')
 
     def _run_automl(self):
-        """AutoMLを実行"""
+        """Run AutoML"""
         if self.current_data is None:
-            ui.notify('データが読み込まれていません', type='warning')
+            ui.notify('No data loaded', type='warning')
             return
         if not self._target_select.value:
-            ui.notify('目的変数を選択してください', type='warning')
+            ui.notify('Please select a target variable', type='warning')
             return
 
         self.target_column = self._target_select.value
@@ -182,25 +196,31 @@ class AutoMLPage:
             self._cancel_btn.enable()
         self._progress_log.clear()
 
-        import asyncio
+        # Reset completion flags
+        self._pipeline_done = False
+        self._pipeline_error = None
+        self._pipeline_results = None
+
+        # Start background task
         asyncio.create_task(self._execute_automl_pipeline())
 
+        # Use timer to check for completion (runs in main thread)
+        self._timer = ui.timer(interval=0.5, callback=self._check_pipeline_done)
+
     async def _execute_automl_pipeline(self):
-        """AutoMLパイプラインを実行 - 既存のAutoMLEngineを使用"""
+        """Execute AutoML pipeline using existing AutoMLEngine - computation only, no UI updates"""
         try:
-            # 既存のAutoMLEngineをインポート
             from backend.models.automl import AutoMLEngine
-            
+
             def progress_callback(step: int, total: int, message: str):
-                # 進捗を0-1の範囲に変換
+                # Only update progress bar and log - these might work from background
                 value = min(1.0, step / total)
                 self._progress_bar.value = value
                 self._progress_log.push(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 
-            progress_callback(1, 6, "AutoMLを開始します...")
+            progress_callback(1, 6, "Starting AutoML...")
             await asyncio.sleep(0.1)
 
-            # AutoMLEngineを初期化
             engine = AutoMLEngine(
                 task="auto",
                 cv_folds=int(self._cv_folds.value),
@@ -208,43 +228,74 @@ class AutoMLPage:
                 progress_callback=progress_callback
             )
 
-            # 非同期スレッドで実行
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    engine.run,
-                    df=self.current_data,
-                    target_col=self.target_column
-                )
+                future = executor.submit(engine.run, self.current_data, self.target_column)
                 result = await asyncio.get_event_loop().run_in_executor(None, future.result)
 
-            # 結果をUIに表示
             self.last_results = {
                 'best_model': result.best_model_key,
                 'best_cv_score': result.best_score,
-                'results': {result.best_model_key: {
-                    'cv_mean': result.best_score,
-                    'cv_std': 0.0,
-                    'test_score': result.best_score,
-                    'training_time': result.elapsed_seconds
-                }},
+                'best_pipeline': result.best_pipeline,
+                'X_train': result.X_train,
+                'y_train': result.y_train,
+                'results': {
+                    result.best_model_key: {
+                        'cv_mean': result.best_score,
+                        'cv_std': 0.0,
+                        'test_score': result.best_score,
+                        'training_time': result.elapsed_seconds
+                    }
+                },
+                'all_results': [
+                    {'model': k, 'score': v, 'time': result.model_details.get(k, {}).get('fit_time', 0)}
+                    for k, v in result.model_scores.items()
+                ],
+                'cv_folds': self._cv_folds.value,
                 'total_time': result.elapsed_seconds
             }
 
-            await self._display_results(self.last_results)
-            ui.notify('AutoMLが完了しました', type='positive')
+            # Store results and set completion flag - UI updates happen in main thread
+            self.last_results = {
+                'best_model': result.best_model_key,
+                'best_cv_score': result.best_score,
+                'best_pipeline': result.best_pipeline,
+                'X_train': result.X_train,
+                'y_train': result.y_train,
+                'results': {
+                    result.best_model_key: {
+                        'cv_mean': result.best_score,
+                        'cv_std': 0.0,
+                        'test_score': result.best_score,
+                        'training_time': result.elapsed_seconds
+                    }
+                },
+                'all_results': [
+                    {'model': k, 'score': v, 'time': result.model_details.get(k, {}).get('fit_time', 0)}
+                    for k, v in result.model_scores.items()
+                ],
+                'cv_folds': self._cv_folds.value,
+                'total_time': result.elapsed_seconds
+            }
+
+            self._pipeline_done = True
+            self._pipeline_error = None
+            self._progress_log.push("✅ AutoML completed successfully")
 
         except Exception as e:
-            logger.error(f"AutoMLエラー: {e}", exc_info=True)
-            self._progress_log.push(f'❌ エラー: {str(e)}')
-            ui.notify(f'エラーが発生しました: {str(e)}', type='negative')
+            logger.error(f"AutoML error: {e}", exc_info=True)
+            self._pipeline_error = e
+            self._pipeline_done = True
+            self._progress_log.push(f'❌ Error: {str(e)}')
         finally:
-            self._run_btn.enable()
-            self._cancel_btn.disable()
+            if self._run_btn is not None:
+                self._run_btn.enable()
+            if self._cancel_btn is not None:
+                self._cancel_btn.disable()
 
     async def _display_results(self, results: Dict):
-        """結果を表示"""
+        """Display results"""
         self._result_card.visible = True
-        self._best_model_label.text = f"最良モデル: {results['best_model']} (CVスコア: {results['best_cv_score']:.4f})"
+        self._best_model_label.text = f"Best model: {results['best_model']} (CV Score: {results['best_cv_score']:.4f})"
 
         rows = []
         for model_name, result in results['results'].items():
@@ -254,30 +305,100 @@ class AutoMLPage:
                 'cv_std': f"{result.get('cv_std', 0):.4f}",
                 'test_score': f"{result['test_score']:.4f}",
                 'time': f"{result.get('training_time', 0):.2f}s",
-                'best': '✓' if model_name == results['best_model'] else ''
+                'best': 'Y' if model_name == results['best_model'] else ''
             })
 
         columns = [
-            {'name': 'model', 'label': 'モデル', 'field': 'model'},
-            {'name': 'cv_mean', 'label': 'CV平均', 'field': 'cv_mean'},
-            {'name': 'cv_std', 'label': 'CV標準偏差', 'field': 'cv_std'},
-            {'name': 'test_score', 'label': 'テストスコア', 'field': 'test_score'},
-            {'name': 'time', 'label': '訓練時間', 'field': 'time'},
-            {'name': 'best', 'label': '最良', 'field': 'best'},
+            {'name': 'model', 'label': 'Model', 'field': 'model'},
+            {'name': 'cv_mean', 'label': 'CV Mean', 'field': 'cv_mean'},
+            {'name': 'cv_std', 'label': 'CV Std', 'field': 'cv_std'},
+            {'name': 'test_score', 'label': 'Test Score', 'field': 'test_score'},
+            {'name': 'time', 'label': 'Training Time', 'field': 'time'},
+            {'name': 'best', 'label': 'Best', 'field': 'best'},
         ]
         self._results_table.columns = columns
         self._results_table.rows = rows
-        self._progress_log.push(f"✅ 完了 - 総時間: {results['total_time']:.2f}秒")
+
+        # 推奨理由の取得と表示
+        try:
+            from backend.utils.cv_recommender import recommend_cv_strategy
+            from backend.llm.analysis_advisor import AnalysisAdvisor
+
+            X = results.get('X_train')
+            y = results.get('y_train')
+            if X is not None and y is not None:
+                import pandas as pd
+                import numpy as np
+                if not isinstance(X, pd.DataFrame):
+                    numeric_cols = self.current_data.select_dtypes(include=['number']).columns.tolist()
+                    if self.target_column in numeric_cols:
+                        numeric_cols.remove(self.target_column)
+                    if X.shape[1] == len(numeric_cols):
+                        X_df = pd.DataFrame(X, columns=numeric_cols)
+                    else:
+                        X_df = pd.DataFrame(X)
+                else:
+                    X_df = X
+
+                if not isinstance(y, pd.Series):
+                    y = pd.Series(y)
+
+                # CV推奨理由
+                cv_rec = recommend_cv_strategy(X_df, y, metadata={'task_type': 'regression'})
+                if hasattr(self, '_cv_reason_md'):
+                    self._cv_reason_md.content = f"**CV推奨**: {cv_rec.reason}"
+
+                # モデル推奨理由（暫定）
+                if hasattr(self, '_model_reason_md'):
+                    best_model = results.get('best_model', 'Unknown')
+                    self._model_reason_md.content = f"**最佳模型**: {best_model} が選択されました。"
+            else:
+                if hasattr(self, '_cv_reason_md'):
+                    self._cv_reason_md.content = "推奨理由を表示するためのデータが不足しています。"
+        except Exception as e:
+            logger.error(f"推奨理由の取得エラー: {e}", exc_info=True)
+            if hasattr(self, '_cv_reason_md'):
+                self._cv_reason_md.content = f"推奨理由の取得中にエラー: {str(e)}"
+
+        self._progress_log.push(f"Complete - Total time: {self.last_results['total_time']:.2f} seconds")
+
+    def _check_pipeline_done(self):
+        """Check if pipeline is done - runs in main thread via timer"""
+        if not self._pipeline_done:
+            return  # Not done yet
+
+        # Cancel the timer
+        if hasattr(self, '_timer') and self._timer:
+            self._timer.cancel()
+            self._timer = None
+
+        # Update UI based on results
+        if self._pipeline_error:
+            # Pipeline failed
+            logger.error(f"AutoML pipeline failed: {self._pipeline_error}")
+            self._progress_log.push(f'❌ Pipeline error: {str(self._pipeline_error)}')
+        else:
+            # Pipeline succeeded - update UI
+            if self.last_results:
+                asyncio.create_task(self._display_results(self.last_results))
+
+        # Re-enable buttons
+        if self._run_btn is not None:
+            self._run_btn.enable()
+        if self._cancel_btn is not None:
+            self._cancel_btn.disable()
 
     def _cancel_execution(self):
-        ui.notify('キャンセルしました', type='info')
-        self._run_btn.enable()
-        self._cancel_btn.disable()
+        ui.notify('Cancelled', type='info')
+        if self._run_btn is not None:
+            self._run_btn.enable()
+        if self._cancel_btn is not None:
+            self._cancel_btn.disable()
 
     def _visualize_results(self):
-        """AutoML結果の可視化 - SHAP + 特徴量重要度"""
+        """Visualize AutoML results - SHAP + feature importance"""
         if self.last_results is None or self.current_data is None:
-            ui.notify('結果がありません', type='warning')
+            ui.notify('No results available', type='warning')
             return
 
         try:
@@ -288,40 +409,51 @@ class AutoMLPage:
             self._progress_card.visible = True
             self._progress_bar.value = 20
 
-            # 最良モデルを取得
-            best_model = self.last_results.get('best_model')
-            X_test = self.last_results.get('X_test')
+            best_pipeline = self.last_results.get('best_pipeline')
+            X_train = self.last_results.get('X_train')
 
-            if best_model is None or X_test is None:
-                ui.notify('モデル情報が不足しています', type='warning')
+            if best_pipeline is None or X_train is None:
+                ui.notify('Model information is insufficient', type='warning')
                 return
 
+            # X_train が NumPy 配列の場合は DataFrame に変換
+            if not isinstance(X_train, pd.DataFrame):
+                processed_X = self.last_results.get('processed_X')
+                if isinstance(processed_X, pd.DataFrame):
+                    X_train = pd.DataFrame(X_train, columns=processed_X.columns)
+                else:
+                    n_features = X_train.shape[1] if len(X_train.shape) > 1 else 1
+                    X_train = pd.DataFrame(
+                        X_train,
+                        columns=[f'feature_{i}' for i in range(n_features)]
+                    )
+
             numeric_cols = self.current_data.select_dtypes(include=['number']).columns.tolist()
-            X_test_numeric = X_test[numeric_cols] if numeric_cols else X_test
+            # Remove target column from numeric_cols (X_train doesn't have it)
+            if self.target_column in numeric_cols:
+                numeric_cols.remove(self.target_column)
+            X_train_numeric = X_train[numeric_cols] if numeric_cols else X_train
 
             self._progress_bar.value = 40
 
-            # SHAP値を計算
             try:
                 config = ShapConfig(max_display=10)
                 explainer = ShapExplainer(config)
-                shap_result = explainer.explain(best_model, X_test_numeric.iloc[:min(100, len(X_test_numeric))])
+                shap_result = explainer.explain(best_pipeline, X_train_numeric.iloc[:min(100, len(X_train_numeric))])
 
                 self._progress_bar.value = 60
 
-                # 特徴量重要度を計算
                 feature_importance = shap_result.feature_importance().head(10)
 
                 self._progress_bar.value = 70
 
-                # Plotlyで可視化
                 fig = px.bar(
                     feature_importance,
                     x='importance',
                     y='feature',
                     orientation='h',
-                    title='📊 SHAP値による特徴量重要度',
-                    labels={'importance': '平均SHAP値の絶対値', 'feature': '特徴量'},
+                    title='Feature Importance by SHAP Values',
+                    labels={'importance': 'Mean |SHAP value|', 'feature': 'Feature'},
                     height=500,
                     color='importance',
                     color_continuous_scale='Viridis'
@@ -330,18 +462,17 @@ class AutoMLPage:
 
                 self._progress_bar.value = 80
 
-                # 結果を表示
                 self._importance_container.clear()
                 with self._importance_container:
-                    ui.html(fig.to_html(include_plotlyjs='cdn', config={'responsive': True}))
+                    ui.plotly(fig)
 
-                ui.notify('SHAP解釈グラフを生成しました', type='positive')
+                ui.notify('SHAP interpretation graph generated', type='positive')
 
             except ImportError:
-                ui.notify('⚠️ SHAPライブラリが未インストールです。特徴量重要度のみ表示します', type='warning')
-                # フォールバック: モデルのfeature_importances を表示
-                if hasattr(best_model, 'feature_importances_'):
-                    importances = best_model.feature_importances_
+                ui.notify('SHAP library not installed. Showing model feature importance only.', type='warning')
+                estimator = best_pipeline.steps[-1][1] if hasattr(best_pipeline, 'steps') else best_pipeline
+                if hasattr(estimator, 'feature_importances_'):
+                    importances = estimator.feature_importances_
                     feature_importance = pd.DataFrame({
                         'feature': numeric_cols,
                         'importance': importances
@@ -352,25 +483,25 @@ class AutoMLPage:
                         x='importance',
                         y='feature',
                         orientation='h',
-                        title='📊 モデル特徴量重要度',
+                        title='Model Feature Importance',
                         height=500
                     )
                     self._importance_container.clear()
                     with self._importance_container:
-                        ui.html(fig.to_html(include_plotlyjs='cdn', config={'responsive': True}))
+                        ui.plotly(fig)
 
             self._progress_bar.value = 100
 
         except Exception as e:
-            logger.error(f"可視化エラー: {e}", exc_info=True)
-            ui.notify(f'エラー: {str(e)}', type='negative')
+            logger.error(f"Visualization error: {e}", exc_info=True)
+            ui.notify(f'Error: {str(e)}', type='negative')
         finally:
             self._progress_card.visible = False
 
     def _save_model(self):
-        """AutoMLの最良モデルを保存"""
+        """Save the best AutoML model"""
         if self.last_results is None:
-            ui.notify('保存するモデルがありません', type='warning')
+            ui.notify('No model to save', type='warning')
             return
 
         try:
@@ -380,27 +511,24 @@ class AutoMLPage:
             self._progress_card.visible = True
             self._progress_bar.value = 30
 
-            # モデル保存ディレクトリを作成
             model_dir = Path('models')
             model_dir.mkdir(exist_ok=True)
 
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             model_path = model_dir / f'automl_model_{timestamp}.pkl'
 
-            # 最良モデルを保存
-            best_model = self.last_results.get('best_model')
-            if best_model is None:
-                ui.notify('モデルが見つかりません', type='warning')
+            best_pipeline = self.last_results.get('best_pipeline')
+            if best_pipeline is None:
+                ui.notify('Model not found', type='warning')
                 return
 
-            joblib.dump(best_model, model_path)
+            joblib.dump(best_pipeline, model_path)
             self._progress_bar.value = 70
 
-            # メタデータを保存
             metadata = {
                 'timestamp': timestamp,
-                'best_score': self.last_results.get('best_score', 0),
-                'model_type': type(best_model).__name__,
+                'best_score': self.last_results.get('best_cv_score', 0),
+                'model_type': type(best_pipeline).__name__,
                 'data_shape': str(self.current_data.shape) if self.current_data is not None else None,
                 'target_column': self.target_column,
             }
@@ -412,30 +540,29 @@ class AutoMLPage:
 
             self._progress_bar.value = 100
 
-            ui.notify(f'✓ モデルを保存しました: {model_path}', type='positive')
+            ui.notify(f'Model saved: {model_path}', type='positive')
 
-            # ダウンロードリンクを表示
             with ui.dialog() as dialog:
                 with ui.card():
-                    ui.label('📦 モデル保存完了').classes('text-lg font-bold')
-                    ui.label(f'モデルファイル: {model_path}').classes('text-sm font-mono')
-                    ui.label(f'メタデータ: {metadata_path}').classes('text-sm font-mono')
-                    ui.label(f'最良スコア: {metadata["best_score"]:.4f}').classes('text-sm')
+                    ui.label('Model Save Complete').classes('text-lg font-bold')
+                    ui.label(f'Model file: {model_path}').classes('text-sm font-mono')
+                    ui.label(f'Metadata: {metadata_path}').classes('text-sm font-mono')
+                    ui.label(f'Best score: {metadata["best_score"]:.4f}').classes('text-sm')
                     with ui.row():
-                        ui.button('閉じる', on_click=dialog.close)
+                        ui.button('Close', on_click=dialog.close)
 
             dialog.open()
 
         except Exception as e:
-            logger.error(f"モデル保存エラー: {e}", exc_info=True)
-            ui.notify(f'エラー: {str(e)}', type='negative')
+            logger.error(f"Model save error: {e}", exc_info=True)
+            ui.notify(f'Error: {str(e)}', type='negative')
         finally:
             self._progress_card.visible = False
 
     def _export_report(self):
-        """AutoML結果をPDFレポートで出力"""
+        """Export AutoML results as PDF report (with LLM commentary)"""
         if self.last_results is None or self.current_data is None:
-            ui.notify('出力する結果がありません', type='warning')
+            ui.notify('No results to export', type='warning')
             return
 
         try:
@@ -443,64 +570,142 @@ class AutoMLPage:
             from backend.export.pdf_exporter import PDFExporter
 
             self._progress_card.visible = True
-            self._progress_bar.value = 20
+            self._progress_bar.value = 10
 
-            # レポート出力ディレクトリを作成
             report_dir = Path('reports')
             report_dir.mkdir(exist_ok=True)
 
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            report_filename = f'automl_report_{timestamp}.pdf'
+            report_filename = f'automl_report_{timestamp}'
 
-            self._progress_bar.value = 40
+            self._progress_bar.value = 20
 
-            # PDF生成データを準備
+            # ── 特徴量重要度の抽出（共通） ──
+            feature_importances = self._extract_feature_importances()
+
+            # ── LLM考察の生成 ──
+            ai_commentary = ""
+            try:
+                from backend.llm.report_generator import LLMReportGenerator, AnalysisResults
+                from backend.llm import get_llm_provider
+
+                provider = get_llm_provider()
+                if provider:
+                    generator = LLMReportGenerator(provider=provider)
+
+                    # AnalysisResultsを構築
+                    results = AnalysisResults(
+                        n_samples=self.current_data.shape[0],
+                        n_features=self.current_data.shape[1],
+                        target_col=self.target_column or "Target",
+                        task_type="regression",
+                        best_model=self.last_results.get('best_model', 'Unknown'),
+                        best_score=float(self.last_results.get('best_cv_score', 0)),
+                        model_comparison=[
+                            {'name': r.get('model', ''), 'score': float(r.get('score', 0))}
+                            for r in self.last_results.get('all_results', [])
+                        ],
+                        feature_importance=[
+                            {'name': k, 'importance': v}
+                            for k, v in sorted(feature_importances.items(), key=lambda x: x[1], reverse=True)[:20]
+                        ],
+                    )
+
+                    self._progress_bar.value = 40
+                    ui.notify('LLM考察を生成中...', type='info')
+
+                    report = generator.generate_report(results)
+                    ai_commentary = report.full_report or ""
+
+                    self._progress_bar.value = 60
+                    ui.notify('LLM考察完了', type='positive')
+            except ImportError:
+                logger.warning("LLM report generator not available")
+            except Exception as e:
+                logger.warning(f"LLM commentary generation failed: {e}")
+
+            # ── 評価指標の構築 ──
+            metrics = {'CV Score': self.last_results.get('best_cv_score', 0)}
+            try:
+                from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+                oof_pred = getattr(self, '_oof_predictions', None)
+                oof_true = getattr(self, '_oof_true', None)
+                if oof_pred is not None and oof_true is not None:
+                    metrics['R² (OOF)'] = float(r2_score(oof_true, oof_pred))
+                    metrics['RMSE (OOF)'] = float(mean_squared_error(oof_true, oof_pred, squared=False))
+                    metrics['MAE (OOF)'] = float(mean_absolute_error(oof_true, oof_pred))
+            except Exception:
+                pass
+
+            # ── PDFExporter用データ構造（キー名を合わせる） ──
             report_data = {
-                'title': 'ChemAI AutoML 解析レポート',
-                'timestamp': timestamp,
-                'data_shape': self.current_data.shape,
-                'target_column': self.target_column,
-                'best_score': self.last_results.get('best_score', 0),
-                'best_model': type(self.last_results.get('best_model')).__name__,
-                'cv_folds': self.last_results.get('cv_folds', 5),
-                'results_summary': [
-                    {
-                        'model': result.get('model'),
-                        'score': result.get('score', 0),
-                        'time': result.get('time', 0)
-                    }
-                    for result in self.last_results.get('all_results', [])[:5]  # Top 5
-                ]
+                'best_model_name': self.last_results.get('best_model', 'Unknown'),
+                'metrics': metrics,
+                'feature_importances': feature_importances,
+                'ai_commentary': ai_commentary,
+                'chart_paths': [],
             }
 
-            self._progress_bar.value = 60
+            self._progress_bar.value = 70
 
-            # PDFExporter を使用
             exporter = PDFExporter(output_dir=str(report_dir))
             pdf_path = exporter.export(report_data, report_filename)
 
             self._progress_bar.value = 90
 
-            ui.notify(f'✓ レポートを出力しました: {pdf_path}', type='positive')
+            ui.notify(f'Report exported: {pdf_path}', type='positive')
 
-            # 完了ダイアログ
             with ui.dialog() as dialog:
                 with ui.card():
-                    ui.label('📄 レポート出力完了').classes('text-lg font-bold')
-                    ui.label(f'ファイル: {pdf_path}').classes('text-sm font-mono')
+                    ui.label('Report Export Complete').classes('text-lg font-bold')
+                    ui.label(f'File: {pdf_path}').classes('text-sm font-mono')
+                    if ai_commentary:
+                        ui.label('LLM考察を含むレポートです').classes('text-caption text-teal')
                     with ui.row().classes('mt-4'):
-                        ui.button('閉じる', on_click=dialog.close)
+                        ui.button('Close', on_click=dialog.close)
 
             dialog.open()
 
             self._progress_bar.value = 100
 
         except ImportError:
-            ui.notify('⚠️ PDFエクスポート機能が利用できません（reportlab未インストール）', type='warning')
+            ui.notify('PDF export not available (reportlab not installed)', type='warning')
 
         except Exception as e:
-            logger.error(f"レポート出力エラー: {e}", exc_info=True)
-            ui.notify(f'エラー: {str(e)}', type='negative')
+            logger.error(f"Report export error: {e}", exc_info=True)
+            ui.notify(f'Error: {str(e)}', type='negative')
 
         finally:
             self._progress_card.visible = False
+
+    def _extract_feature_importances(self) -> dict:
+        """best_pipelineから特徴量重要度を抽出する共通メソッド"""
+        feature_importances = {}
+        try:
+            pipeline = self.last_results.get('best_pipeline')
+            if pipeline is None:
+                return feature_importances
+
+            estimator = pipeline
+            if hasattr(estimator, 'steps'):
+                estimator = estimator.steps[-1][1]
+                if hasattr(estimator, 'steps'):
+                    estimator = estimator.steps[-1][1]
+
+            if hasattr(estimator, 'feature_importances_'):
+                importances = estimator.feature_importances_
+                try:
+                    feat_names = pipeline[:-1].get_feature_names_out().tolist()
+                except Exception:
+                    X = self.last_results.get('X_train')
+                    if X is not None and hasattr(X, 'columns'):
+                        feat_names = list(X.columns)
+                    else:
+                        feat_names = [f"f{i}" for i in range(len(importances))]
+
+                for i, imp in enumerate(importances):
+                    name = feat_names[i] if i < len(feat_names) else f"f{i}"
+                    feature_importances[name] = float(imp)
+        except Exception as e:
+            logger.warning(f"Feature importance extraction failed: {e}")
+        return feature_importances

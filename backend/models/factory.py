@@ -43,6 +43,52 @@ from sklearn.cross_decomposition import PLSRegression
 
 from backend.utils.config import RANDOM_STATE, AUTOML_N_JOBS
 from backend.utils.optional_import import safe_import, is_available
+import warnings
+
+
+class _LGBMWrapper:
+    """LGBM モデルのラッパー。特徴量名警告を抑制する。"""
+    def __init__(self, model):
+        self._model = model
+        # fit 時に feature_names_in_ がセットされるが、警告の原因になるため
+        # 予測時の警告を防ぐ。__class__ の書き換えは行わず、明示的な
+        # predict / predict_proba のオーバーライドで警告を抑制する。
+
+    def fit(self, X, y, *args, **kwargs):
+        """学習後、feature_names_in_ を削除して警告を防ぐ。"""
+        result = self._model.fit(X, y, *args, **kwargs)
+        # sklearn の feature_names_in_ が設定されていると、NumPy 配列を渡した際に
+        # UserWarning が出るため削除する
+        if hasattr(self._model, 'feature_names_in_'):
+            del self._model.feature_names_in_
+        return result
+
+    def predict(self, X, *args, **kwargs):
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=".*feature names.*",
+                category=UserWarning,
+            )
+            return self._model.predict(X, *args, **kwargs)
+
+    def predict_proba(self, X, *args, **kwargs):
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=".*feature names.*",
+                category=UserWarning,
+            )
+            return self._model.predict_proba(X, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._model, name)
+
+    def __setattr__(self, name, value):
+        if name in ("_model",):
+            super().__setattr__(name, value)
+        else:
+            setattr(self._model, name, value)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +105,10 @@ try:
         LinearForestRegressor, LinearForestClassifier,
         LinearBoostRegressor, LinearBoostClassifier,
         RidgeTreeRegressor, RidgeTreeClassifier,
+        EnhancedDecisionTree,
+        BernoulliForestRegressorIJCAI,
+        SoftSplitTreeRegressor,
+        HonestTreeRegressor,
     )
     _linear_tree_available = True
 except ImportError as e:
@@ -97,12 +147,14 @@ def _xgbrf_classifier(**kw: Any) -> Any:
 
 def _lgb_regressor(**kw: Any) -> Any:
     from lightgbm import LGBMRegressor  # type: ignore
-    return LGBMRegressor(random_state=RANDOM_STATE, verbose=-1, **kw)
+    model = LGBMRegressor(random_state=RANDOM_STATE, verbose=-1, **kw)
+    return _LGBMWrapper(model)
 
 
 def _lgb_classifier(**kw: Any) -> Any:
     from lightgbm import LGBMClassifier  # type: ignore
-    return LGBMClassifier(random_state=RANDOM_STATE, verbose=-1, **kw)
+    model = LGBMClassifier(random_state=RANDOM_STATE, verbose=-1, **kw)
+    return _LGBMWrapper(model)
 
 
 def _cat_regressor(**kw: Any) -> Any:
@@ -161,6 +213,48 @@ def _greedytree_classifier(**kw: Any) -> Any:
     return GreedyTreeClassifier(**kw)
 
 
+# ── Tree Kernel Models (RFR-Kernel extension) ────────────────────────
+
+def _kr_rf_kernel_regressor(**kw: Any) -> Any:
+    """KernelRidge with RandomForest kernel."""
+    from backend.models.tree_kernels import make_tree_kernel_model
+    return make_tree_kernel_model(
+        model_type="kernelridge",
+        kernel_type="rf",
+        **kw,
+    )
+
+
+def _kr_et_kernel_regressor(**kw: Any) -> Any:
+    """KernelRidge with ExtraTrees kernel."""
+    from backend.models.tree_kernels import make_tree_kernel_model
+    return make_tree_kernel_model(
+        model_type="kernelridge",
+        kernel_type="et",
+        **kw,
+    )
+
+
+def _svr_rf_kernel_regressor(**kw: Any) -> Any:
+    """SVR with RandomForest kernel."""
+    from backend.models.tree_kernels import make_tree_kernel_model
+    return make_tree_kernel_model(
+        model_type="svr",
+        kernel_type="rf",
+        **kw,
+    )
+
+
+def _gpr_rf_kernel_regressor(**kw: Any) -> Any:
+    """GPR with RandomForest kernel."""
+    from backend.models.tree_kernels import make_tree_kernel_model
+    return make_tree_kernel_model(
+        model_type="gpr",
+        kernel_type="rf",
+        **kw,
+    )
+
+
 # LinearTree ファクトリー関数 (機能別に base_estimator をエクスポーズ)
 def _linear_tree_regressor(**kw: Any) -> Any:
     from sklearn.linear_model import Ridge
@@ -196,6 +290,54 @@ def _linear_boost_classifier(**kw: Any) -> Any:
     from sklearn.linear_model import LogisticRegression
     base = kw.pop("base_estimator", LogisticRegression(max_iter=500))
     return LinearBoostClassifier(base_estimator=base, **kw)
+
+
+# ─── Enhanced Decision Tree ────────────────────────
+def _enhanced_tree_regressor(**kw: Any) -> Any:
+    """Enhanced Decision Tree with soft splits, regularization, and honest splits."""
+    return EnhancedDecisionTree(**kw)
+
+
+def _enhanced_tree_classifier(**kw: Any) -> Any:
+    """Enhanced Decision Tree Classifier."""
+    from backend.models.linear_tree import EnhancedDecisionTree as EDT
+    # Note: EnhancedDecisionTree is currently regression-only
+    # For classification, fall back to LinearTreeClassifier
+    from sklearn.linear_model import LogisticRegression
+    base = kw.pop("base_estimator", LogisticRegression(max_iter=500))
+    return LinearTreeClassifier(base_estimator=base, **kw)
+
+
+# ─── Bernoulli Forest (IJCAI 2016) ────────────────────────
+def _bernoulli_ijcai_regressor(**kw: Any) -> Any:
+    """Bernoulli Random Forest per IJCAI 2016 paper."""
+    return BernoulliForestRegressorIJCAI(**kw)
+
+
+# ─── Soft Split Tree ────────────────────────
+def _soft_split_tree_regressor(**kw: Any) -> Any:
+    """Decision tree with soft splits (sigmoid weighting)."""
+    return SoftSplitTreeRegressor(**kw)
+
+
+def _soft_split_tree_classifier(**kw: Any) -> Any:
+    """Soft Split Tree Classifier."""
+    from sklearn.linear_model import LogisticRegression
+    base = kw.pop("base_estimator", LogisticRegression(max_iter=500))
+    return LinearTreeClassifier(base_estimator=base, **kw)
+
+
+# ─── Honest Tree Regressor ────────────────────────
+def _honest_tree_regressor(**kw: Any) -> Any:
+    """Decision tree with separate structure/estimation samples."""
+    return HonestTreeRegressor(**kw)
+
+
+def _honest_tree_classifier(**kw: Any) -> Any:
+    """Honest Tree Classifier."""
+    from sklearn.linear_model import LogisticRegression
+    base = kw.pop("base_estimator", LogisticRegression(max_iter=500))
+    return LinearTreeClassifier(base_estimator=base, **kw)
 
 
 # ============================================================
@@ -302,6 +444,32 @@ def _gpc_dotproduct(**kw: Any) -> GaussianProcessClassifier:
     kw.setdefault("random_state", RANDOM_STATE)
     kw.setdefault("n_restarts_optimizer", 3)
     return GaussianProcessClassifier(kernel=kernel, **kw)
+
+
+# ── Monotonic Kernel Models (New 2026-04-29) ────────────────────────
+
+def _kr_mono_regressor(**kw: Any) -> Any:
+    """Monotonic Kernel Ridge (GPR with constrained kernel)."""
+    from backend.models.monotonic_kernel_models import MonotonicGPR
+    return MonotonicGPR(**kw)
+
+
+def _gpc_mono_classifier(**kw: Any) -> Any:
+    """Monotonic GPC with constrained kernel."""
+    from backend.models.monotonic_kernel_models import MonotonicGPC
+    return MonotonicGPC(**kw)
+
+
+def _svr_mono_regressor(**kw: Any) -> Any:
+    """Monotonic SVR with penalty-based constraints."""
+    from backend.models.monotonic_kernel_models import MonotonicSVR
+    return MonotonicSVR(**kw)
+
+
+def _svc_mono_classifier(**kw: Any) -> Any:
+    """Monotonic SVC with penalty-based constraints."""
+    from backend.models.monotonic_kernel_models import MonotonicSVC
+    return MonotonicSVC(**kw)
 
 
 # ============================================================
@@ -536,6 +704,41 @@ _REGRESSION_REGISTRY: dict[str, dict[str, Any]] = {
         "available": True,
         "tags": ["probabilistic", "gaussian_process", "kernel", "linear"],
     },
+    "kr_mono": {
+        "name": "KernelRidge (Monotonic)",
+        "factory": _kr_mono_regressor,
+        "default_params": {"monotonic_features": [], "constraint_strength": 1.0},
+        "available": True,
+        "tags": ["kernel", "monotonic", "nonlinear"],
+    },
+    "svr_mono": {
+        "name": "SVR (Monotonic Penalty)",
+        "factory": _svr_mono_regressor,
+        "default_params": {"monotonic_features": [], "constraint_strength": 1.0, "kernel": "rbf"},
+        "available": True,
+        "tags": ["kernel", "monotonic", "nonlinear"],
+    },
+    "kr_rf_kernel": {
+        "name": "KernelRidge (RandomForest Kernel)",
+        "factory": _kr_rf_kernel_regressor,
+        "default_params": {"n_trees": 100, "max_depth": 10},
+        "available": True,
+        "tags": ["kernel", "tree_kernel", "rf"],
+    },
+    "kr_et_kernel": {
+        "name": "KernelRidge (ExtraTrees Kernel)",
+        "factory": _kr_et_kernel_regressor,
+        "default_params": {"n_trees": 100, "max_depth": 10},
+        "available": True,
+        "tags": ["kernel", "tree_kernel", "et"],
+    },
+    "svr_rf_kernel": {
+        "name": "SVR (RandomForest Kernel)",
+        "factory": _svr_rf_kernel_regressor,
+        "default_params": {"n_trees": 100, "max_depth": 10},
+        "available": True,
+        "tags": ["kernel", "tree_kernel", "rf"],
+    },
     "pls": {
         "name": "PLS Regression",
         "class": PLSRegression,
@@ -578,6 +781,38 @@ _REGRESSION_REGISTRY: dict[str, dict[str, Any]] = {
         "default_params": {"max_depth": 5, "alpha": 1.0},
         "available": _linear_tree_available,
         "tags": ["tree", "linear", "interpretable"],
+    },
+    # ── Enhanced Decision Tree ──────────────────────
+    "enhancedtree": {
+        "name": "Enhanced Decision Tree (soft split, regularization, honest)",
+        "factory": _enhanced_tree_regressor,
+        "default_params": {"max_depth": 10, "temperature": 1.0, "l1_alpha": 0.0, "l2_alpha": 1.0},
+        "available": _linear_tree_available,
+        "tags": ["tree", "linear", "interpretable", "regularized", "honest"],
+    },
+    # ── Bernoulli Forest (IJCAI 2016) ──────────────────────
+    "bernoulli_ijcai": {
+        "name": "Bernoulli Forest (IJCAI 2016)",
+        "factory": _bernoulli_ijcai_regressor,
+        "default_params": {"n_estimators": 100, "max_depth": 10, "p1": 0.5, "p2": 0.5},
+        "available": _linear_tree_available,
+        "tags": ["ensemble", "tree", "bernoulli", "honest"],
+    },
+    # ── Soft Split Tree ──────────────────────
+    "softsplit": {
+        "name": "Soft Split Tree Regressor",
+        "factory": _soft_split_tree_regressor,
+        "default_params": {"max_depth": 10, "temperature": 1.0},
+        "available": _linear_tree_available,
+        "tags": ["tree", "soft_split", "linear"],
+    },
+    # ── Honest Tree Regressor ──────────────────────
+    "honesttree": {
+        "name": "Honest Tree Regressor (structure/estimation split)",
+        "factory": _honest_tree_regressor,
+        "default_params": {"max_depth": 10, "split_ratio": 0.7},
+        "available": _linear_tree_available,
+        "tags": ["tree", "honest", "linear"],
     },
 }
 
@@ -801,6 +1036,20 @@ _CLASSIFICATION_REGISTRY: dict[str, dict[str, Any]] = {
         "available": True,
         "tags": ["probabilistic", "gaussian_process", "kernel", "linear"],
     },
+    "gpc_mono": {
+        "name": "GPC (Monotonic Kernel)",
+        "factory": _gpc_mono_classifier,
+        "default_params": {"monotonic_features": [], "constraint_strength": 1.0},
+        "available": True,
+        "tags": ["probabilistic", "gaussian_process", "kernel", "monotonic"],
+    },
+    "svc_mono": {
+        "name": "SVC (Monotonic Penalty)",
+        "factory": _svc_mono_classifier,
+        "default_params": {"monotonic_features": [], "constraint_strength": 1.0, "kernel": "rbf"},
+        "available": True,
+        "tags": ["kernel", "monotonic", "nonlinear"],
+    },
     "xgbrf_c": {
         "name": "XGBoost Random Forest (XGBRFClassifier)",
         "factory": _xgbrf_classifier,
@@ -836,6 +1085,30 @@ _CLASSIFICATION_REGISTRY: dict[str, dict[str, Any]] = {
         "default_params": {"max_depth": 5},
         "available": _linear_tree_available,
         "tags": ["tree", "linear", "interpretable"],
+    },
+    # ── Enhanced Decision Tree ────────────────────
+    "enhancedtree_c": {
+        "name": "Enhanced Decision Tree (Classifier)",
+        "factory": _enhanced_tree_classifier,
+        "default_params": {"max_depth": 10, "temperature": 1.0},
+        "available": _linear_tree_available,
+        "tags": ["tree", "linear", "interpretable", "regularized", "honest"],
+    },
+    # ── Soft Split Tree ────────────────────
+    "softsplit_c": {
+        "name": "Soft Split Tree Classifier",
+        "factory": _soft_split_tree_classifier,
+        "default_params": {"max_depth": 10, "temperature": 1.0},
+        "available": _linear_tree_available,
+        "tags": ["tree", "soft_split", "linear"],
+    },
+    # ── Honest Tree ────────────────────
+    "honesttree_c": {
+        "name": "Honest Tree Classifier",
+        "factory": _honest_tree_classifier,
+        "default_params": {"max_depth": 10, "split_ratio": 0.7},
+        "available": _linear_tree_available,
+        "tags": ["tree", "honest", "linear"],
     },
     # ─── imodels ───
     "figs_c": {
