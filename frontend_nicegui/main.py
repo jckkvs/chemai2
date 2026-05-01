@@ -61,8 +61,9 @@ def create_navigation_drawer() -> None:
                 ui.label('初心者モード').classes('text-sm text-gray-300')
                 beginner_toggle = ui.switch(value=app_state.beginner_mode)
                 beginner_toggle.classes('text-white')
+                from frontend_nicegui.utils.beginner_mode import beginner_mode_toggle_changed
                 beginner_toggle.on_value_change(
-                    lambda e: setattr(app_state, 'beginner_mode', e.value)
+                    lambda e: beginner_mode_toggle_changed(e.value)
                 )
 
             nav_items = [
