@@ -122,8 +122,8 @@ def validate_and_preview_smiles(
     }
     try:
         mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            result['error'] = 'Invalid SMILES string'
+        if mol is None or mol.GetNumAtoms() == 0:
+            result['error'] = 'Invalid SMILES string (empty or no atoms)'
             return result
         result['valid'] = True
         result['svg'] = smiles_to_svg(smiles, size=size)
