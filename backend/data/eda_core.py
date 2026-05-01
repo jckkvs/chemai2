@@ -58,8 +58,9 @@ def detect_outliers(df: pd.DataFrame, method: str = 'iqr', threshold: float = 1.
                 outlier_mask[col] = (df[col] < lower_bound) | (df[col] > upper_bound)
             
             elif method == 'zscore':
-                z_scores = np.abs(stats.zscore(df[col].dropna()))
-                outlier_mask.loc[z_scores.index, col] = z_scores > threshold
+                valid = df[col].dropna()
+                z_scores = np.abs(stats.zscore(valid))
+                outlier_mask.loc[valid.index, col] = z_scores > threshold
     
     return outlier_mask
 

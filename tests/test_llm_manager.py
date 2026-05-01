@@ -100,7 +100,7 @@ class TestLLMManagerState:
             nonlocal call_count
             call_count += 1
             await asyncio.sleep(0.05)
-            return original_init(*args, **kwargs)
+            return await original_init(*args, **kwargs)
         
         llm_manager._engine.initialize = slow_init
         llm_manager._state = LLMState.UNINITIALIZED
@@ -139,7 +139,7 @@ class TestModelSwitching:
         """Should raise RuntimeError if switching during load"""
         llm_manager._state = LLMState.LOADING_MODEL
         with pytest.raises(RuntimeError, match="Cannot switch model"):
-            await llm_manager.switch_model("qwen2.5-3b")
+            await llm_manager.switch_model("qwen2.5-coder-1.5b")
 
 
 @pytest.mark.asyncio
@@ -185,8 +185,13 @@ class TestErrorHandling:
     async def test_stream_chat_error_propagation(self, llm_manager):
         """Should propagate engine errors correctly"""
         llm_manager._state = LLMState.READY
-        llm_manager._engine.stream_chat = AsyncMock(side_effect=RuntimeError("GPU OOM"))
-        
+        # Mock stream_chat to raise an error when called
+        async def mock_stream_chat(*args, **kwargs):
+            raise RuntimeError("GPU OOM")
+            # This makes it an async generator
+            yield  # pragma: no cover
+        llm_manager._engine.stream_chat = mock_stream_chat
+
         with pytest.raises(RuntimeError, match="GPU OOM"):
             async for _ in llm_manager.stream_chat("test"):
                 pass

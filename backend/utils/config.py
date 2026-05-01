@@ -38,7 +38,7 @@ AUTOML_TIMEOUT_SECONDS: int = 600               # 最大学習時間(秒)
 # Windows環境での並列処理制約
 IS_WINDOWS: bool = (os.name == "nt")
 
-AUTOML_N_JOBS: int = 1 if IS_WINDOWS else -1  # Windowsでは1（直列）, 他は全コア
+AUTOML_N_JOBS: int = -1  # 全プラットフォームで-1（全コア使用）
 
 # ============================================================
 # SHAP 設定

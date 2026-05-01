@@ -187,12 +187,12 @@ class CVStrategyFactory:
         return list(sig.parameters.keys())
     
     @classmethod
-    def auto_detect_strategy(cls, X: pd.DataFrame, y: pd.Series, 
+    def auto_detect_strategy(cls, X: pd.DataFrame, y: pd.Series,
                             groups: pd.Series = None,
                             task_type: str = 'regression') -> str:
         """
         Auto-detect appropriate CV strategy based on data characteristics
-        
+
         Logic:
         - Classification + imbalanced y -> stratified_kfold
         - Time series data (datetime index) -> timeseries
@@ -201,26 +201,151 @@ class CVStrategyFactory:
         - Default -> kfold
         """
         n_samples = len(y)
-        
+
         # Time series detection
         if isinstance(X.index, pd.DatetimeIndex) or (hasattr(X, 'columns') and any('date' in str(c).lower() or 'time' in str(c).lower() for c in X.columns)):
             return 'timeseries'
-        
+
         # Group-based detection
         if groups is not None and groups.nunique() > 1:
             return 'group_kfold'
-        
+
         # Stratified for classification with imbalanced classes
         if task_type == 'classification' and y.nunique() >= 2:
             class_counts = y.value_counts()
             if (class_counts / len(y)).min() < 0.3:  # Imbalanced
                 return 'stratified_kfold'
-        
+
         # Leave-one-out for very small datasets
         if n_samples < 100:
             return 'loo' if n_samples < 50 else 'kfold'
-        
+
         return 'kfold'
+
+    @classmethod
+    def recommend_strategy(cls, X: pd.DataFrame, y: pd.Series,
+                           groups: pd.Series = None,
+                           task_type: str = 'regression') -> dict:
+        """
+        Recommend CV strategy with detailed reason in Japanese.
+
+        Returns:
+            {
+                "strategy": str,
+                "reason": str,
+                "confidence": "high" | "medium" | "low",
+                "alternatives": list[str],
+            }
+        """
+        n_samples = len(y)
+        reasons = []
+        alternatives = []
+        confidence = "high"
+
+        # Time series detection
+        has_time_col = (
+            isinstance(X.index, pd.DatetimeIndex) or
+            any('date' in str(c).lower() or 'time' in str(c).lower() for c in X.columns)
+        )
+        if has_time_col:
+            reasons.append(
+                "📅 時間列またはDatetimeIndexが検出されました。"
+                "時系列データでは未来のデータが過去の学習に使われないよう、"
+                "TimeSeriesSplitを使用すべきです。"
+            )
+            return {
+                "strategy": "timeseries",
+                "reason": " ".join(reasons),
+                "confidence": "high",
+                "alternatives": ["kfold", "shuffle"],
+            }
+
+        # Group-based detection
+        if groups is not None and groups.nunique() > 1:
+            n_groups = groups.nunique()
+            reasons.append(
+                f"👥 グループ列が検出されました（{n_groups}グループ）。"
+                "同じグループのデータが学習・検証に分割されないよう、"
+                "GroupKFoldを使用すべきです。"
+            )
+            if n_groups <= n_samples:
+                alternatives.append("loogroup")
+            return {
+                "strategy": "group_kfold",
+                "reason": " ".join(reasons),
+                "confidence": "high",
+                "alternatives": alternatives or ["stratified_kfold", "kfold"],
+            }
+
+        # Classification with class imbalance
+        if task_type == 'classification' and y.nunique() >= 2:
+            class_counts = y.value_counts(normalize=True)
+            min_ratio = class_counts.min()
+            if min_ratio < 0.2:
+                reasons.append(
+                    f"⚖️ クラスが極めて不均衡です（最小クラス: {min_ratio:.1%}）。"
+                    "各foldでクラス比率を維持するStratifiedKFoldを推奨します。"
+                )
+                return {
+                    "strategy": "stratified_kfold",
+                    "reason": " ".join(reasons),
+                    "confidence": "high",
+                    "alternatives": ["group_kfold", "kfold"],
+                }
+            elif min_ratio < 0.3:
+                reasons.append(
+                    f"📊 クラスにやや不均衡が見られます（最小クラス: {min_ratio:.1%}）。"
+                    "StratifiedKFoldでクラス比率を維持することを推奨します。"
+                )
+                return {
+                    "strategy": "stratified_kfold",
+                    "reason": " ".join(reasons),
+                    "confidence": "medium",
+                    "alternatives": ["kfold", "shuffle"],
+                }
+
+        # Small dataset
+        if n_samples < 30:
+            reasons.append(
+                f"📉 サンプル数が非常に少ないです（{n_samples}件）。"
+                "LeaveOneOutですべてのデータを最大限活用できます。"
+            )
+            return {
+                "strategy": "loo",
+                "reason": " ".join(reasons),
+                "confidence": "high",
+                "alternatives": ["kfold"],
+            }
+        elif n_samples < 100:
+            reasons.append(
+                f"📊 サンプル数が少ないです（{n_samples}件）。"
+                "KFold（5分割）で安定した評価を行います。"
+            )
+            return {
+                "strategy": "kfold",
+                "reason": " ".join(reasons),
+                "confidence": "medium",
+                "alternatives": ["loo", "shuffle"],
+            }
+
+        # Default for regression
+        if task_type == 'regression':
+            reasons.append(
+                f"🔄 回帰タスク、サンプル数{n_samples}件です。"
+                "KFoldで十分な評価が可能です。"
+            )
+        else:
+            reasons.append(
+                f"🔄 分類タスク、サンプル数{n_samples}件です。"
+                "StratifiedKFoldでクラス比率を維持します。"
+            )
+
+        return {
+            "strategy": "stratified_kfold" if task_type == 'classification' else "kfold",
+            "reason": " ".join(reasons),
+            "confidence": "medium",
+            "alternatives": ["shuffle", "stratified_shuffle"],
+        }
     
     @classmethod
     def get_available_strategies(cls) -> List[str]:

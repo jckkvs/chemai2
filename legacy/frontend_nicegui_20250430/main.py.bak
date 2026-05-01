@@ -1,0 +1,158 @@
+"""
+frontend_nicegui/main.py
+タブ切り替えロジック修正版 - 完全版
+"""
+import sys
+from pathlib import Path
+
+# ============================================================================
+#  インポートパスの自動設定 (重要)
+# ============================================================================
+# プロジェクトルート (chemai2/) を sys.path に追加
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from nicegui import ui, app
+import pandas as pd
+from typing import Optional, Dict
+import logging
+
+logger = logging.getLogger(__name__)
+
+# ============================================================================
+#  UIレイアウト
+# ============================================================================
+@ui.page('/')
+def main_page():
+    """メインページ"""
+
+    # ウェルカムガイド（初回表示）
+    def show_welcome():
+        with ui.dialog() as welcome_dialog:
+            with ui.card().classes('w-full max-w-3xl'):
+                with ui.column().classes('w-full gap-4 p-6'):
+                    ui.label('🧪 ChemAI MI Studio へようこそ！').classes('text-2xl font-bold text-center')
+                    ui.separator()
+
+                    ui.label('このアプリは、機械学習に詳しくない方でも簡単に化学・材料データの解析ができるよう設計されています。').classes('text-base text-gray-700')
+
+                    with ui.card().classes('w-full bg-blue-50'):
+                        ui.label('📋 推奨ワークフロー').classes('font-bold text-lg mb-2')
+                        with ui.column().classes('gap-2'):
+                            ui.label('① データアップロード: CSV/Excelファイルをアップロード').classes('text-sm')
+                            ui.label('② LLMヒアリング: AIが対話形式で解析方針を一緒に考えます').classes('text-sm')
+                            ui.label('③ 自動解析: 最適なモデルを自動選択・学習').classes('text-sm')
+                            ui.label('④ 結果確認: 予測・解釈・可視化').classes('text-sm')
+
+                    with ui.expansion('詳細：LLMヒアリングについて', icon='help').classes('w-full'):
+                        ui.label('''
+LLMヒアリングでは、AIがあなたのデータを読み取り、以下の観点から対話形式で解析方針を立てます：
+
+• 解析目的（予測・解釈・実験計画）の確認
+• 予測したいサンプルの性質
+• 実験誤差や変数の性質
+• 最適な特徴量や交差検証手法
+
+機械学習の知識がなくても、AIが適切な方針を提案します！
+''').classes('text-sm text-gray-700 whitespace-pre-wrap')
+
+                    with ui.row().classes('w-full justify-between items-center'):
+                        ui.checkbox('次回から表示しない', value=False).props('color=grey').classes('text-xs')
+                        ui.button('始める →', on_click=welcome_dialog.close).props('color=primary size=lg')
+
+        welcome_dialog.open()
+
+    # 設定の読み込み
+    from backend.config.llm_settings import LLMConfig
+    from frontend_nicegui.components.llm_config_dialog import LLMConfigDialog
+    from frontend_nicegui.pages.data_upload_tab import DataUploadPage
+    from frontend_nicegui.pages.llm_assistant_tab import LLMAssistantPage
+    from frontend_nicegui.pages.automl_page import AutoMLPage
+    
+    llm_config = LLMConfig.load().get_effective_config()
+    llm_dialog = LLMConfigDialog(config=llm_config, on_config_change=lambda c: c.save())
+
+    # ページインスタンスの作成と連携
+    from frontend_nicegui.pages.visualization_tab import VisualizationPage
+    from frontend_nicegui.pages.doe_page import DoEPage
+    from frontend_nicegui.pages.interview_page import InterviewPage
+
+    viz_page = VisualizationPage()
+    automl_page = AutoMLPage(viz_page=viz_page)
+    doe_page = DoEPage()
+    interview_page = InterviewPage(
+        navigate_to_automl=lambda: tab_panels.set_value(auto_ml_tab),
+        navigate_to_doe=lambda: tab_panels.set_value(doe_tab),
+    )
+    # data_page needs navigate callback — created after tab_panels below
+    assistant_page = LLMAssistantPage(llm_config=llm_config, llm_dialog=llm_dialog)
+
+    with ui.header().classes('bg-white shadow-sm'):
+        with ui.row().classes('w-full justify-between items-center px-4'):
+            ui.label('ChemAI MI Studio').classes('text-xl font-bold text-primary')
+            with ui.row().classes('gap-2'):
+                ui.label('v1.0.0').classes('text-xs text-gray-500')
+                llm_dialog.create_trigger_button(ui.row(), label='⚙️', icon='settings')
+
+    # タブの作成
+    with ui.tabs().classes('w-full bg-white shadow-sm') as t:
+        data_tab = ui.tab('Data Upload & Cleaning', icon='cloud_upload')
+        interview_tab = ui.tab('LLM Interview', icon='psychology')
+        doe_tab = ui.tab('DOE', icon='science')
+        llm_tab = ui.tab('LLM Assistant', icon='auto_awesome')
+        auto_ml_tab = ui.tab('AutoML', icon='model_training')
+        viz_tab = ui.tab('Visualization', icon='insights')
+
+    with ui.tab_panels(t, value=data_tab).classes('w-full max-w-7xl mx-auto mt-4') as tab_panels:
+        with ui.tab_panel(data_tab):
+            # Pass native tab-switch callback so DataUploadPage can navigate reliably
+            def go_to_interview():
+                # アップロード済みデータをインタビューページに渡してからタブ遷移
+                if data_page and data_page.uploaded_data is not None:
+                    interview_page.set_data(data_page.uploaded_data)
+                tab_panels.set_value(interview_tab)
+
+            def go_to_automl():
+                tab_panels.set_value(auto_ml_tab)
+
+            data_page = DataUploadPage(
+                llm_config=llm_config,
+                automl_page=automl_page,
+                viz_page=viz_page,
+                navigate_to_automl=go_to_automl,
+                navigate_to_interview=go_to_interview,
+            )
+            data_page.render()
+        with ui.tab_panel(interview_tab):
+            interview_page.render()
+        with ui.tab_panel(llm_tab):
+            assistant_page.render()
+        with ui.tab_panel(auto_ml_tab):
+            automl_page.render()
+        with ui.tab_panel(viz_tab):
+            viz_page.render()
+        with ui.tab_panel(doe_tab):
+            doe_page.render()
+    
+    with ui.footer().classes('bg-gray-100'):
+        with ui.row().classes('w-full justify-center py-2 gap-2'):
+            ui.label('ChemAI MI Studio - Materials Informatics Platform').classes('text-xs text-gray-600')
+            ui.separator().props('vertical')
+            ui.button('❓ ヘルプ', on_click=show_welcome).props('flat dense size=xs')
+
+
+# ============================================================================
+#  アプリケーション起動
+# ============================================================================
+if __name__ in {"__main__", "__mp_main__"}:
+    # アプリ起動時にウェルカムガイドを表示（初回のみ）
+    ui.timer(0.5, show_welcome, once=True)
+
+    ui.run(
+        title='ChemAI MI Studio',
+        host='0.0.0.0',
+        port=8080,
+        reload=False,
+        storage_secret='chemai2_secret_key_2026'
+    )

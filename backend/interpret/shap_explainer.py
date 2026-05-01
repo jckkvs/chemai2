@@ -61,7 +61,7 @@ class ShapResult:
         """
         sv = self.shap_values
         if self.is_multiclass and sv.ndim == 3:
-            imp = np.abs(sv).mean(axis=(0, 2))
+            imp = np.abs(sv).mean(axis=(0, 1))
         else:
             imp = np.abs(sv).mean(axis=0)
 
@@ -477,7 +477,7 @@ class ShapExplainer:
         """
         sv = result.shap_values
         if result.is_multiclass:
-            sv = np.abs(sv).mean(axis=(0, 2))
+            sv = np.abs(sv).mean(axis=(0, 1))
         else:
             sv = np.abs(sv).mean(axis=0)
 

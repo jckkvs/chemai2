@@ -29,7 +29,7 @@ async def run_automl_pipeline(
         # Map frontend config to engine params
         preprocess_params={
             "numeric_scaler": config.get("num_scaler", "standard"),
-            "numerical_imputer": config.get("num_imputer", "median"),
+            "numeric_imputer": config.get("num_imputer", "median"),
             "categorical_encoder": config.get("cat_encoder", "onehot"),
         }
     )

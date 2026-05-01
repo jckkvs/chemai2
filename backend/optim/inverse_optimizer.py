@@ -366,7 +366,7 @@ def _optimize_bayesian(
                 for j, col in enumerate(search_cols):
                     lo, hi = bounds[col]
                     x_new[j] = rng.uniform(lo, hi)
-                X_all = np.vstack([X_all, x_new])
+                X_all = np.vstack([X_all, x_new.reshape(1, -1)])
                 new_score = objective(x_new.reshape(1, -1))
                 scores_all = np.append(scores_all, new_score)
                 continue
@@ -399,7 +399,7 @@ def _optimize_bayesian(
             best_idx = np.argmax(acq_vals)
             x_new = X_cand[best_idx]
 
-            X_all = np.vstack([X_all, x_new])
+            X_all = np.vstack([X_all, x_new.reshape(1, -1)])
             new_score = objective(x_new.reshape(1, -1))
             scores_all = np.append(scores_all, new_score)
 

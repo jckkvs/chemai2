@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backend.chem.cosmo_adapter import CosmoAdapter, _COSMO_DESCRIPTORS
+from backend.chem.cosmo_adapter import CosmoAdapter
 
 
 class TestCosmoAdapterProperties:
@@ -33,24 +33,22 @@ class TestCosmoAdapterProperties:
     def test_get_descriptor_names(self):
         adapter = CosmoAdapter()
         names = adapter.get_descriptor_names()
-        assert "mu_comb" in names
-        assert "mu_res" in names
-        assert "ln_gamma" in names
+        assert "cosmo_energy" in names
+        assert "cosmo_sigma_moment" in names
+        assert "cosmo_solvation_energy" in names
 
-    def test_get_descriptors_metadata(self):
+    def test_get_descriptor_count(self):
         adapter = CosmoAdapter()
-        meta = adapter.get_descriptors_metadata()
-        assert len(meta) == 3
-        assert meta[0].name == "mu_comb"
-        assert meta[0].is_count is False
+        names = adapter.get_descriptor_names()
+        assert len(names) == 3
 
     def test_parameterization_default(self):
         adapter = CosmoAdapter()
-        assert adapter._par == "default_turbomole"
+        assert adapter.cosmo_path == "cosmo_rs"
 
     def test_parameterization_custom(self):
-        adapter = CosmoAdapter(parameterization="custom_par")
-        assert adapter._par == "custom_par"
+        adapter = CosmoAdapter(cosmo_path="custom_path")
+        assert adapter.cosmo_path == "custom_path"
 
 
 class TestCosmoAdapterAvailability:
@@ -133,9 +131,9 @@ class TestCosmoAdapterComputeWithCosmiFiles:
         """COSMORS計算成功時（dict結果）"""
         mock_crs = MagicMock()
         mock_crs.calculate.return_value = {
-            "mu_comb": [1.5],
-            "mu_res": [2.3],
-            "ln_gamma": [0.5],
+            "cosmo_energy": [1.5],
+            "cosmo_sigma_moment": [2.3],
+            "cosmo_solvation_energy": [0.5],
         }
         mock_module = self._make_mock_module(mock_crs)
         adapter = CosmoAdapter()
@@ -150,9 +148,9 @@ class TestCosmoAdapterComputeWithCosmiFiles:
                         cosmi_files=[tmp_path]
                     )
                     assert result.descriptors.shape == (1, 3)
-                    assert result.descriptors["mu_comb"].iloc[0] == pytest.approx(1.5)
-                    assert result.descriptors["mu_res"].iloc[0] == pytest.approx(2.3)
-                    assert result.descriptors["ln_gamma"].iloc[0] == pytest.approx(0.5)
+                    assert result.descriptors["cosmo_energy"].iloc[0] == pytest.approx(1.5)
+                    assert result.descriptors["cosmo_sigma_moment"].iloc[0] == pytest.approx(2.3)
+                    assert result.descriptors["cosmo_solvation_energy"].iloc[0] == pytest.approx(0.5)
         finally:
             os.unlink(tmp_path)
 
@@ -199,16 +197,3 @@ class TestCosmoAdapterComputeWithCosmiFiles:
             os.unlink(tmp_path)
 
 
-class TestCosmoDescriptorConstants:
-    """記述子定数の整合性。"""
-
-    def test_descriptor_keys(self):
-        assert set(_COSMO_DESCRIPTORS.keys()) == {"mu_comb", "mu_res", "ln_gamma"}
-
-    def test_descriptor_values_are_japanese(self):
-        for desc in _COSMO_DESCRIPTORS.values():
-            assert isinstance(desc, str)
-            assert len(desc) > 0
-"""
-Implements: F-CHEM-COSMO-001
-"""

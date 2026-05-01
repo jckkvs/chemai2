@@ -15,9 +15,7 @@ from backend.llm.provider import LLMProvider, StubLLMProvider
 from backend.llm.generator import LLMDescriptorGenerator
 from backend.llm.registry import LLMProviderRegistry
 from backend.llm.reviewer import LLMCodeReviewer, CodeReviewResult
-from backend.llm.manager import LLMManager, LLMState
 from backend.llm.hardware_detector import detect_hardware, HardwareProfile
-from backend.llm.model_selector import select_optimal_model, LLMModelConfig
 from backend.llm.benchmark_runner import BenchmarkRunner
 from backend.llm.model_registry import (
     OllamaModelInfo,
@@ -26,6 +24,22 @@ from backend.llm.model_registry import (
     get_model_by_name,
     get_tier_label,
 )
+
+# Lazy imports to avoid circular imports
+def get_llm_manager():
+    """LLMManagerを遅延インポートで取得。"""
+    from backend.llm.manager import LLMManager, LLMState
+    return LLMManager()
+
+def select_optimal_model(task="general", profile=None, use_gguf_fallback=True):
+    """モデル選択を遅延インポートで実行。"""
+    from backend.llm.model_selector import select_optimal_model as _som
+    return _som(task=task, profile=profile, use_gguf_fallback=use_gguf_fallback)
+
+def get_LLMModelConfig():
+    """LLMModelConfigを遅延インポートで取得。"""
+    from backend.llm.model_selector import LLMModelConfig
+    return LLMModelConfig
 
 _registry = LLMProviderRegistry()
 _registry.register("stub", StubLLMProvider)
@@ -55,11 +69,6 @@ def register_llm_provider(name: str, cls: type) -> None:
     _registry.register(name, cls)
 
 
-def get_llm_manager() -> LLMManager:
-    """LLMマネージャーのシングルトンインスタンスを取得する。"""
-    return LLMManager()
-
-
 __all__ = [
     "LLMProvider",
     "StubLLMProvider",
@@ -67,10 +76,8 @@ __all__ = [
     "LLMProviderRegistry",
     "LLMCodeReviewer",
     "CodeReviewResult",
-    "LLMManager",
-    "LLMState",
+    "get_llm_manager",
     "HardwareProfile",
-    "LLMModelConfig",
     "BenchmarkRunner",
     "OllamaModelInfo",
     "OLLAMA_MODELS",
@@ -79,7 +86,7 @@ __all__ = [
     "get_tier_label",
     "get_llm_provider",
     "register_llm_provider",
-    "get_llm_manager",
     "detect_hardware",
     "select_optimal_model",
+    "get_LLMModelConfig",
 ]

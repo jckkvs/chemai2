@@ -1,1 +1,1 @@
-# frontend_nicegui/__init__.py
+# ChemAI2 NiceGUI Frontend Package

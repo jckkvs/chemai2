@@ -12,8 +12,8 @@ from typing import Optional, Tuple, List, Dict
 import logging
 
 from .config import XTBConfig
-from ...utils.process import safe_subprocess_run, ProcessError
-from ....chem.utils import smiles_to_3d_mol  # Assuming there's a chem/utils module
+from backend.utils.process import safe_subprocess_run, ProcessError
+from backend.chem.utils import smiles_to_3d_mol
 
 logger = logging.getLogger(__name__)
 

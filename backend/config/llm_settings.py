@@ -18,30 +18,40 @@ logger = logging.getLogger(__name__)
 class LLMConfig:
     """LLM設定のデータクラス"""
     # モード: 'local' | 'api' | 'prompt_only'
-    mode: str = 'prompt_only'
-    
-    # API設定（mode='api'時）
+    # - local: ローカルLLMを使用（デフォルト、推奨）
+    # - api: 外部APIを使用（OpenAI等）
+    # - prompt_only: プロンプトのみ生成（セキュア推奨、外部LLMにコピペ用）
+    mode: str = 'local'
+
+    # --- API設定（mode='api'時） ---
     api_endpoint: Optional[str] = None
     api_key: Optional[str] = None  # 環境変数推奨
     model_name: str = 'gpt-4o-mini'
     temperature: float = 0.1
     max_tokens: int = 2000
-    
-    # ローカルLLM設定（mode='local'時）
-    local_model_path: Optional[str] = None
+
+    # --- ローカルLLM設定（mode='local'時） ---
+    local_model_id: str = 'jckkvs/bonsai-8b-1.58bit'  # HuggingFace model ID
+    local_model_path: Optional[str] = None  # ローカルパス（Noneならキャッシュから）
     local_device: str = 'cuda'  # 'cuda' | 'cpu'
     local_max_length: int = 2048
-    
-    # 動作設定
+    local_temperature: float = 0.7
+    local_max_tokens: int = 1024
+
+    # --- 自動ダウンロード設定 ---
+    auto_download_on_first_run: bool = True  # 初回起動時にモデルを自動ダウンロード
+    auto_download_verify_hash: bool = False  # ダウンロード時にハッシュを検証
+
+    # --- 動作設定 ---
     enable_code_execution: bool = False  # LLM生成コードの自動実行（セキュリティ注意）
     sandbox_mode: bool = True  # コード実行をサンドボックスで制限
     log_prompts: bool = False  # プロンプトログの記録
-    
-    # UI設定
+
+    # --- UI設定 ---
     show_advanced_options: bool = False  # 詳細設定を表示
     auto_save: bool = True  # 設定変更を自動保存
-    
-    # メタ情報（設定用、出力しない）
+
+    # --- メタ情報（設定用、出力しない） ---
     _config_path: Optional[str] = field(default=None, repr=False)
     
     def to_dict(self) -> Dict[str, Any]:

@@ -3,7 +3,7 @@ Pipeline Orchestrator - chemai2/backend/ml/pipeline_orchestrator.py
 5-stage ML pipeline with automatic type detection and constraint support
 """
 import json
-import pickle
+import joblib
 import warnings
 from copy import deepcopy
 from dataclasses import dataclass, field, asdict
@@ -16,12 +16,13 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin, clone, is_classifier, is_regressor
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, PowerTransformer, QuantileTransformer
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, PowerTransformer
+from backend.ml.transformers import AdaptiveQuantileTransformer
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.feature_selection import (
     SelectKBest, SelectFromModel, RFE, RFECV,
     f_regression, f_classif, mutual_info_regression, mutual_info_classif,
-    chi2, variance_threshold
+    chi2, VarianceThreshold
 )
 from sklearn.model_selection import (
     KFold, StratifiedKFold, LeaveOneOut, LeaveOneGroupOut,
@@ -106,9 +107,9 @@ class ColumnPreprocessingConfig:
             elif self.scaler == 'robust':
                 scaler = RobustScaler(**self.scaler_params)
             elif self.scaler == 'quantile_uniform':
-                scaler = QuantileTransformer(output_distribution='uniform', **self.scaler_params)
+                scaler = AdaptiveQuantileTransformer(output_distribution='uniform', **self.scaler_params)
             elif self.scaler == 'quantile_normal':
-                scaler = QuantileTransformer(output_distribution='normal', **self.scaler_params)
+                scaler = AdaptiveQuantileTransformer(output_distribution='normal', **self.scaler_params)
             elif self.scaler == 'power_yeojohnson':
                 scaler = PowerTransformer(method='yeo-johnson', **self.scaler_params)
             elif self.scaler == 'power_boxcox':
@@ -497,7 +498,7 @@ class PipelineOrchestrator:
         params = fs_config.get('params', {})
         
         if method == 'variance':
-            return variance_threshold.VarianceThreshold(**params)
+            return VarianceThreshold(**params)
         
         elif method == 'correlation':
             score_func = f_regression if task == 'regression' else f_classif
@@ -641,9 +642,8 @@ class PipelineOrchestrator:
         
         # Save fitted pipeline if available
         if self._fitted and self.pipeline:
-            model_path = path / 'model.pkl'
-            with open(model_path, 'wb') as f:
-                pickle.dump(self.pipeline, f)
+            model_path = path / 'model.joblib'
+            joblib.dump(self.pipeline, model_path)
         
         # Save feature names
         if self._feature_names:
@@ -669,10 +669,9 @@ class PipelineOrchestrator:
         orchestrator = cls(config)
         
         # Load fitted pipeline if exists
-        model_path = path / 'model.pkl'
+        model_path = path / 'model.joblib'
         if model_path.exists():
-            with open(model_path, 'rb') as f:
-                orchestrator.pipeline = pickle.load(f)
+            orchestrator.pipeline = joblib.load(model_path)
             orchestrator._fitted = True
         
         # Load feature names

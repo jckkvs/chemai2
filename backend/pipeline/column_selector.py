@@ -13,6 +13,75 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ColumnMeta:
+    """Metadata for a single column (monotonicity, grouping, etc.)"""
+    monotonic: int = 0  # -1, 0, or 1
+    constraint_strength: Union[str, float] = 0.0  # "strong", "medium", "weak", "none", or 0.0-1.0
+    sigma_range: float = 3.0  # Apply constraint within ±nσ
+    group: str = ""
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "monotonic": self.monotonic,
+            "constraint_strength": self.constraint_strength,
+            "sigma_range": self.sigma_range,
+            "group": self.group,
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> 'ColumnMeta':
+        """Restore from dictionary."""
+        return ColumnMeta(
+            monotonic=d.get("monotonic", 0),
+            constraint_strength=d.get("constraint_strength", 0.0),
+            sigma_range=d.get("sigma_range", 3.0),
+            group=d.get("group", ""),
+        )
+
+
+class ColumnSelectorWrapper:
+    """sklearn-compatible transformer that selects columns by name."""
+
+    def __init__(self, mode: str = "all", columns: Union[str, List[str]] = None,
+                 col_range: Tuple[int, int] = None, strict: bool = True,
+                 rule: "ColumnSelectionRule" = None):
+        if rule is not None:
+            self.rule = rule
+        else:
+            include = []
+            exclude = []
+            if mode == "all":
+                include = []
+            elif mode == "include":
+                include = columns if isinstance(columns, list) else [columns] if columns else []
+            elif mode == "exclude":
+                exclude = columns if isinstance(columns, list) else [columns] if columns else []
+            else:
+                raise ValueError(f"Invalid mode: {mode}")
+            self.rule = ColumnSelectionRule(include=include, exclude=exclude)
+        self.strict = strict
+        self._mode = mode
+        self._columns = columns
+        self._col_range = col_range
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        return select_columns(X, self.rule, strict=self.strict)
+
+    def get_params(self, deep=True):
+        return {"mode": self._mode, "columns": self._columns,
+                "col_range": self._col_range, "strict": self.strict, "rule": self.rule}
+
+    def set_params(self, **params):
+        for k, v in params.items():
+            setattr(self, k, v)
+        return self
+
+
+@dataclass
 class ColumnSelectionRule:
     """
     Rule for selecting columns with pattern matching and dependencies

@@ -150,7 +150,7 @@ def compute_correlation(
     corr_matrix = numeric_df.corr(method=method)
 
     if target_col and target_col in corr_matrix.columns:
-        return corr_matrix[[target_col]].drop(index=target_col, errors="ignore")
+        return corr_matrix[target_col].drop(index=target_col, errors="ignore")
 
     return corr_matrix
 

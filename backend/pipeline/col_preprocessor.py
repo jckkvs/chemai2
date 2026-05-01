@@ -33,11 +33,10 @@ from sklearn.preprocessing import (
     RobustScaler,
     MaxAbsScaler,
     PowerTransformer,
-    QuantileTransformer,
     OneHotEncoder,
     OrdinalEncoder,
 )
-
+from backend.ml.transformers import AdaptiveQuantileTransformer
 from backend.data.type_detector import ColumnType, TypeDetector, DetectionResult
 from backend.data.preprocessor import LogTransformer
 from backend.utils.config import RANDOM_STATE
@@ -375,12 +374,12 @@ class ColPreprocessor(BaseEstimator, TransformerMixin):
             "maxabs": MaxAbsScaler(),
             "power_yj": PowerTransformer(method="yeo-johnson"),
             "power_bc": PowerTransformer(method="box-cox"),
-            "quantile_normal": QuantileTransformer(
+            "quantile_normal": AdaptiveQuantileTransformer(
                 n_quantiles=cfg.quantile_n_quantiles,
                 output_distribution="normal",
                 random_state=RANDOM_STATE,
             ),
-            "quantile_uniform": QuantileTransformer(
+            "quantile_uniform": AdaptiveQuantileTransformer(
                 n_quantiles=cfg.quantile_n_quantiles,
                 output_distribution="uniform",
                 random_state=RANDOM_STATE,

@@ -320,7 +320,29 @@ class AutoAnalyzer:
         # 化学ドメイン固有質問
         if self.domain == 'chemistry' and any('smiles' in str(c).lower() for c in df.columns):
             questions.append("分子構造（SMILES）から記述子を自動生成しますか？（量子化学計算含む）")
-        
+
+        # 20260429.txt: 実験誤差・変数性質のヒアリング
+        if task_type == AnalysisTask.REGRESSION:
+            questions.append("同じ条件で実験したときの実験誤差（再現性）はどの程度ですか？")
+
+        # 変数の性質：制御可 vs 成り行き
+        if feature_cols:
+            numeric_features = [c for c in feature_cols if pd.api.types.is_numeric_dtype(df[c])]
+            if numeric_features:
+                questions.append(
+                    f"以下の変数のうち、完全に制御できる変数はどれですか？ {numeric_features[:5]}"
+                )
+                questions.append(
+                    "成り行き変数（制御できない変数）はどれですか？ "
+                    "※科学者は実質的に成り行き変数でも「制御できる」と誤答することがありますので注意。"
+                )
+
+        # 予測対象サンプルについて
+        questions.append(
+            "どういうサンプルを予測したいですか？"
+            "（過去のデータセットに近いサンプルか、遠いサンプルか）"
+        )
+
         return questions
     
     def _generate_notes(self, df: pd.DataFrame,

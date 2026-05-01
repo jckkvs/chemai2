@@ -291,3 +291,149 @@ class TestSearchSpace:
         df = space.generate_candidates(method="grid", n_per_dim=5)
         assert "c" in df.columns
         assert set(df["c"].unique()) == {"a", "b"}
+
+
+# ============================================================
+# T-008: tabular_50_safe.csv を使った実験計画法(DOE)統合テスト
+# ============================================================
+
+class TestTabular50SafeDOE:
+    """T-008: tabular_50_safe.csv を使った実験計画法のテスト。"""
+
+    @pytest.fixture
+    def tabular_df(self) -> pd.DataFrame:
+        """tabular_50_safe.csv を読み込む。"""
+        from pathlib import Path
+        from backend.data.loader import load_file
+        return load_file(Path("data/samples/tabular_50_safe.csv"))
+
+    @pytest.fixture
+    def factors(self) -> list:
+        """tabular_50_safe.csv の特徴量を因子として定義する。"""
+        from backend.doe.factor import Factor
+
+        # Feature_1〜8 を連続値因子として定義
+        factors = []
+        for i in range(1, 9):
+            col = f"Feature_{i}"
+            factors.append(Factor.continuous(name=col, low=-3.0, high=3.0, n_levels=5))
+        return factors
+
+    def test_doe_d_optimality(self, factors) -> None:
+        """D最適化（D-optimality）が正しく動作すること。(T-008-01)"""
+        from backend.doe.design import DoEOptimizer
+
+        optimizer = DoEOptimizer(
+            factors=factors,
+            n_new=10,
+            criterion="D",
+            max_candidates=1000,
+            random_seed=42,
+            n_starts=3,
+            max_iter=100,
+        )
+        result = optimizer.optimize()
+
+        assert result is not None
+        assert hasattr(result, 'design_df')
+        assert len(result.design_df) > 0
+        assert result.criterion_name == "D"
+
+    def test_doe_maximin(self, factors) -> None:
+        """Maximin 基準が正しく動作すること。(T-008-02)"""
+        from backend.doe.design import DoEOptimizer
+
+        optimizer = DoEOptimizer(
+            factors=factors,
+            n_new=10,
+            criterion="MAXIMIN",
+            max_candidates=1000,
+            random_seed=42,
+            n_starts=3,
+            max_iter=100,
+        )
+        result = optimizer.optimize()
+
+        assert result is not None
+        assert hasattr(result, 'design_df')
+        assert len(result.design_df) > 0
+        assert result.criterion_name == "MAXIMIN"
+
+    def test_doe_minimax(self, factors) -> None:
+        """Minimax 基準が正しく動作すること。(T-008-03)"""
+        from backend.doe.design import DoEOptimizer
+
+        optimizer = DoEOptimizer(
+            factors=factors,
+            n_new=10,
+            criterion="MINIMAX",
+            max_candidates=1000,
+            random_seed=42,
+            n_starts=3,
+            max_iter=100,
+        )
+        result = optimizer.optimize()
+
+        assert result is not None
+        assert hasattr(result, 'design_df')
+        assert len(result.design_df) > 0
+        assert result.criterion_name == "MINIMAX"
+
+    def test_doe_with_existing_data(self, factors, tabular_df) -> None:
+        """既存データを含めて最適化が正しく動作すること。(T-008-04)"""
+        from backend.doe.design import DoEOptimizer
+
+        optimizer = DoEOptimizer(
+            factors=factors,
+            n_new=5,
+            criterion="D",
+            existing_df=tabular_df,
+            max_candidates=1000,
+            random_seed=42,
+            n_starts=3,
+            max_iter=100,
+        )
+        result = optimizer.optimize()
+
+        assert result is not None
+        assert hasattr(result, 'design_df')
+        # 既存データ + 新規5点
+        assert len(result.design_df) >= 5
+        assert hasattr(result, 'is_new')
+        assert sum(result.is_new) == 5
+
+    def test_doe_e_optimality(self, factors) -> None:
+        """E最適化（E-optimality）が正しく動作すること。(T-008-05)"""
+        from backend.doe.design import DoEOptimizer
+
+        optimizer = DoEOptimizer(
+            factors=factors,
+            n_new=10,
+            criterion="E",
+            max_candidates=1000,
+            random_seed=42,
+            n_starts=3,
+            max_iter=100,
+        )
+        result = optimizer.optimize()
+
+        assert result is not None
+        assert result.criterion_name == "E"
+
+    def test_doe_i_optimality(self, factors) -> None:
+        """I最適化（I-optimality）が正しく動作すること。(T-008-06)"""
+        from backend.doe.design import DoEOptimizer
+
+        optimizer = DoEOptimizer(
+            factors=factors,
+            n_new=10,
+            criterion="I",
+            max_candidates=1000,
+            random_seed=42,
+            n_starts=3,
+            max_iter=100,
+        )
+        result = optimizer.optimize()
+
+        assert result is not None
+        assert result.criterion_name == "I"

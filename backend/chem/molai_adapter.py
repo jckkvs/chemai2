@@ -77,7 +77,13 @@ def calculate_molai_descriptors(
 
 
 def _filter_valid_smiles(smiles_list: List[str]) -> Tuple[List[str], np.ndarray]:
-    """Filter valid SMILES and return mask for reconstruction"""
+    """
+    有効なSMILESをフィルタリングし、再構築用マスクを返す。
+
+    Returns:
+        valid_smiles: 有効なSMILESのリスト
+        valid_mask: 元のリストに対応するブールマスク
+    """
     valid_mask = np.ones(len(smiles_list), dtype=bool)
     valid_smiles = []
     try:
@@ -96,7 +102,12 @@ def _filter_valid_smiles(smiles_list: List[str]) -> Tuple[List[str], np.ndarray]
 
 
 def _detect_best_device(requested: Optional[str]) -> str:
-    """Auto-detect best available compute device with fallback chain"""
+    """
+    最適な計算デバイスを自動検出し、フォールバックチェーンを適用。
+
+    CUDA → MPS → CPU の順で検出。
+    指定があれば優先し、利用不可の場合はフォールバック。
+    """
     try:
         import torch
         if requested in ('cuda', 'mps', 'cpu'):
@@ -110,7 +121,17 @@ def _detect_best_device(requested: Optional[str]) -> str:
 
 
 def _load_molai_model(model_path: Optional[Union[str, Path]], latent_dim: int, device: str):
-    """Load MolAI model with fallback to bundled default"""
+    """
+    MolAIモデルをロードする。存在しない場合はデフォルトモデルを生成。
+
+    Args:
+        model_path: モデルファイルのパス（Noneでデフォルト）
+        latent_dim: 潜在空間の次元数
+        device: 計算デバイス（'cuda'/'cpu'等）
+
+    Returns:
+        MolAIModelインスタンス、失敗時はNone
+    """
     import torch
     from backend.chem.molai_model import MolAIModel
     if model_path is None: model_path = Path(__file__).parent / 'models' / 'molai_default.pt'
@@ -123,6 +144,17 @@ def _load_molai_model(model_path: Optional[Union[str, Path]], latent_dim: int, d
 
 
 def _smiles_to_tensor(smiles_list: List[str], tokenizer, device: str):
+    """
+    SMILESリストをトークン化してテンソルに変換。
+
+    Args:
+        smiles_list: SMILES文字列のリスト
+        tokenizer: MolAIトークナイザー
+        device: 計算デバイス
+
+    Returns:
+        パッディング済みテンソル（バッチサイズ × 最大長）
+    """
     import torch
     encoded = tokenizer.encode_batch(smiles_list)
     max_len = max(len(e) for e in encoded)
@@ -131,6 +163,19 @@ def _smiles_to_tensor(smiles_list: List[str], tokenizer, device: str):
 
 
 def _validate_embedding_output(embedding, expected_dim: int, batch_smiles: List[str]):
+    """
+    埋め込み出力の検証：次元・dtype・NaNチェック。
+
+    【修正点4】出力検証: 次元・dtype・NaNチェック
+
+    Args:
+        embedding: モデルからの出力テンソル
+        expected_dim: 期待される潜在空間の次元数
+        batch_smiles: バッチのSMILESリスト（ログ用）
+
+    Returns:
+        検証済みテンソル（NaN/Infは0で置換）
+    """
     import torch
     if embedding.dim() != 2 or embedding.shape[1] != expected_dim:
         if embedding.numel() == len(batch_smiles) * expected_dim: embedding = embedding.view(len(batch_smiles), expected_dim)
@@ -141,5 +186,16 @@ def _validate_embedding_output(embedding, expected_dim: int, batch_smiles: List[
 
 
 def _create_empty_result(n_samples, latent_dim, return_numpy):
+    """
+    空の結果を作成（計算失敗時のフォールバック用）。
+
+    Args:
+        n_samples: サンプル数
+        latent_dim: 潜在空間の次元数
+        return_numpy: Trueならnumpy配列、Falseならpandas DataFrame
+
+    Returns:
+        NaNで埋められた空の結果
+    """
     res = np.full((n_samples, latent_dim), np.nan, dtype=np.float32)
     return res if return_numpy else pd.DataFrame(res, columns=[f'molai_latent_{i}' for i in range(latent_dim)])

@@ -24,15 +24,21 @@ class MonotonicConstrainedKernel(Kernel):
         self,
         base_kernel=None,
         monotonic_features: Optional[List[int]] = None,
+        monotonic_directions: Optional[List[str]] = None,
         constraint_strength: float = 1.0,
+        n_sigma: float = 3.0,
         regularization: float = 1e-6,
         verbose: bool = False
     ):
         self.base_kernel = base_kernel or RBF()
         self.monotonic_features = monotonic_features or []
+        self.monotonic_directions = monotonic_directions or []
         self.constraint_strength = constraint_strength
+        self.n_sigma = n_sigma
         self.regularization = regularization
         self.verbose = verbose
+        self._resolved_directions_ = []
+        self._feature_ranges_ = []
 
     def is_stationary(self):
         """Return whether the kernel is stationary (it is not, due to monotonic penalty)."""
@@ -54,22 +60,46 @@ class MonotonicConstrainedKernel(Kernel):
         self.X_train = np.asarray(X, dtype=np.float64)
         self.y_train = np.asarray(y, dtype=np.float64)
         self.n_features = self.X_train.shape[1]
-        
-        # 【修正点4】制約インデックスの検証
+
+        # Resolve monotonic directions and compute feature ranges
+        self._resolved_directions_ = []
+        self._feature_ranges_ = []
+
         valid_idx = [i for i in self.monotonic_features if 0 <= i < self.n_features]
         invalid = [i for i in self.monotonic_features if i not in valid_idx]
         if invalid:
             logger.warning(f"Ignoring invalid feature indices for monotonicity: {invalid}")
             self.monotonic_features = valid_idx
-        
+
+        for i, feat_idx in enumerate(self.monotonic_features):
+            # Resolve direction
+            if i < len(self.monotonic_directions):
+                direction = self.monotonic_directions[i]
+            else:
+                direction = 'monotonic'
+
+            if direction == 'monotonic':
+                corr = np.corrcoef(self.X_train[:, feat_idx], self.y_train)[0, 1]
+                direction = 'increasing' if corr >= 0 else 'decreasing'
+
+            self._resolved_directions_.append((feat_idx, direction))
+
+            # Compute ±n_sigma range
+            feat_values = self.X_train[:, feat_idx]
+            mean_val = np.mean(feat_values)
+            std_val = np.std(feat_values)
+            lower = mean_val - self.n_sigma * std_val
+            upper = mean_val + self.n_sigma * std_val
+            self._feature_ranges_.append((feat_idx, lower, upper))
+
         if not self.monotonic_features:
             if self.verbose:
                 logger.info("No valid monotonic features. Using base kernel.")
             return self
-        
+
         # 【修正点4】事前検証: 訓練データ内の単調性チェック
         self._validate_training_monotonicity()
-        
+
         return self
     
     def _validate_training_monotonicity(self):
@@ -113,23 +143,46 @@ class MonotonicConstrainedKernel(Kernel):
                 return K_base, []
             return K_base
         
-        # 【修正点1】数値安定性のため制約ペナルティを指数関数的に適用
-        # 有限差分で勾配を推定（訓練データのみ）
+        # 制約ペナルティ行列を初期化
         penalty_matrix = np.ones_like(K_base)
-        
-        for feat_idx in self.monotonic_features:
+
+        for i, (feat_idx, direction) in enumerate(self._resolved_directions_):
+            if feat_idx >= self.X_train.shape[1]:
+                continue
+            if i >= len(self._feature_ranges_):
+                continue
+
             grad_X = self._estimate_gradient(X[:, feat_idx], self.y_train)
             grad_Y = self._estimate_gradient(Y[:, feat_idx], self.y_train) if Y is not X else grad_X
-            
-            # 【修正点2】勾配のクリッピングと安定化
+
+            # 勾配のクリッピングと安定化
             grad_X = np.clip(grad_X, -10.0, 10.0)
             grad_Y = np.clip(grad_Y, -10.0, 10.0)
-            
-            # 正の勾配に対するペナルティ（単調増加制約）
-            interaction = grad_X[:, None] * grad_Y[None, :]
-            penalty = np.exp(-self.constraint_strength * np.maximum(0, interaction))
+
+            # 方向性に応じたペナルティ
+            if direction == 'increasing':
+                interaction = grad_X[:, None] * grad_Y[None, :]
+                penalty = np.exp(-self.constraint_strength * np.maximum(0, interaction))
+            elif direction == 'decreasing':
+                interaction = (-grad_X[:, None]) * (-grad_Y[None, :])  # 負の勾配に対するペナルティ
+                penalty = np.exp(-self.constraint_strength * np.maximum(0, interaction))
+            else:
+                # Unknown direction: 正または負の勾配を許容
+                interaction_inc = grad_X[:, None] * grad_Y[None, :]
+                interaction_dec = (-grad_X[:, None]) * (-grad_Y[None, :])
+                penalty_inc = np.exp(-self.constraint_strength * np.maximum(0, interaction_inc))
+                penalty_dec = np.exp(-self.constraint_strength * np.maximum(0, interaction_dec))
+                penalty = np.maximum(penalty_inc, penalty_dec)
+
+            # ±n_sigma 範囲内のみ制約を適用
+            _, lower, upper = self._feature_ranges_[i]
+            x_in_range = (X >= lower) & (X <= upper)
+            y_in_range = (Y >= lower) & (Y <= upper) if Y is not X else x_in_range
+            range_mask = x_in_range[:, None] & y_in_range[None, :]
+            penalty = np.where(range_mask, penalty, 1.0)
+
             penalty_matrix *= penalty
-        
+
         K_constrained = K_base * penalty_matrix
         
         # 【修正点1】対角に正則化追加（数値安定性）

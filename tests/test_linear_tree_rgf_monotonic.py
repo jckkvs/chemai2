@@ -409,7 +409,7 @@ class TestPipelineIntegration:
             "feat0": ColumnMeta(monotonic=1),
             "feat1": ColumnMeta(monotonic=0),
         }
-        result = apply_monotonic_constraints(estimator, cm)
+        result = apply_monotonic_constraints(estimator, cm, feature_names=["feat0", "feat1", "feat2"])
         assert isinstance(result, MonotonicConstraintRegressor), (
             f"SVRに対してMonotonicConstraintRegressorが適用されていない。実際: {type(result)}"
         )

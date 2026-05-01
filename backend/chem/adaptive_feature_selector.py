@@ -20,6 +20,59 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# recommender.py 知識ベースの統合
+# ============================================================
+
+def _get_recommender_features(task_type: str) -> list[str]:
+    """
+    recommender.py の知識ベースから、指定タスク種別に関連する
+    特徴量名のリストを返す。
+    """
+    try:
+        from backend.chem.recommender import (
+            get_target_recommendation_by_name,
+            get_all_target_recommendations,
+        )
+    except ImportError:
+        logger.debug("recommender.py not available")
+        return []
+
+    # task_type から recommender のターゲット名を推定
+    # recommender.py のターゲット名は日本語だが、部分一致で検索する
+    rec = get_target_recommendation_by_name(task_type)
+    if rec is None:
+        # 全ターゲットからカテゴリ一致を探す
+        all_recs = get_all_target_recommendations()
+        for r in all_recs:
+            if task_type.lower() in r.category.lower():
+                rec = r
+                break
+
+    if rec is None:
+        return []
+
+    # DescriptorInfo から特徴量名を抽出
+    # library 名を adaptive_feature_selector の特徴量名にマップ
+    feature_names = []
+    library_map = {
+        "RDKit": "rdkit_2d",
+        "XTB": "xtb_sp",
+        "COSMO-RS": "cosmo",
+        "GroupContribution": "group_contrib",
+        "Uni-pKa": "unipka",
+    }
+    for desc in rec.descriptors:
+        mapped = library_map.get(desc.library)
+        if mapped and mapped not in feature_names:
+            feature_names.append(mapped)
+        elif desc.name not in feature_names:
+            # そのまま追加
+            feature_names.append(desc.name)
+
+    return feature_names
+
+
+# ============================================================
 # 特徴量の計算コスト定義
 # ============================================================
 
@@ -272,6 +325,20 @@ class AdaptiveFeatureSelector:
         force_include = set(force_include or [])
         force_exclude = set(force_exclude or [])
 
+        # 0.5. recommender.py の知識ベースから追加推奨を取得
+        recommender_features = _get_recommender_features(task_type)
+        if recommender_features:
+            # rec.must_have / recommended / optional に統合
+            # 既存の推奨と重複しないように追加
+            existing = set(rec.must_have + rec.recommended + rec.optional)
+            for f in recommender_features:
+                if f not in existing and f not in force_exclude:
+                    rec.recommended.append(f)
+            logger.info(
+                "recommender.py から %d 件の特徴量を追加推奨: %s",
+                len(recommender_features), recommender_features[:5],
+            )
+
         # 1. 候補リスト構築（must → recommended → optional の順）
         candidates_ordered = []
         for f_name in rec.must_have:
@@ -363,3 +430,138 @@ class AdaptiveFeatureSelector:
             }
             for f in _FEATURE_COST_CATALOG
         ]
+
+    def select_with_correlation(
+        self,
+        df: "pd.DataFrame",
+        target_column: str,
+        task_type: str = "general",
+        n_molecules: int = 100,
+        max_time_per_mol_s: float = 120.0,
+        xtb_available: bool = True,
+        top_n_features: int | None = None,
+        force_include: list[str] | None = None,
+        force_exclude: list[str] | None = None,
+        llm_advisor: Any | None = None,
+    ) -> FeatureSelectionResult:
+        """
+        相関係数とタスクベースの推奨を組み合わせて特徴量を選択する。
+
+        Args:
+            df: 特徴量と目的変数を含むDataFrame。
+            target_column: 目的変数の列名。
+            task_type: タスク種別。
+            n_molecules: データセットの分子数。
+            max_time_per_mol_s: 1分子あたりの最大許容計算時間（秒）。
+            xtb_available: xTBバイナリが利用可能か。
+            top_n_features: 相関係数で選択する上位N件。
+            force_include: 強制的に含める特徴量。
+            force_exclude: 強制的に除外する特徴量。
+
+        Returns:
+            FeatureSelectionResult。
+        """
+        from backend.chem.correlation_selector import (
+            CorrelationBasedSelector, CorrelationMethod, CorrelationResult,
+        )
+
+        notes: list[str] = []
+
+        # 1. 相関係数ベースの選択
+        corr_selector = CorrelationBasedSelector(method=CorrelationMethod.PEARSON)
+        try:
+            corr_result = corr_selector.compute_correlations(df, target_column=target_column)
+            if corr_result.rankings:
+                n = top_n_features or min(10, len(corr_result.rankings))
+                corr_selected = corr_selector.select_top_features(corr_result, n_features=n)
+                notes.append(
+                    f"相関係数トップ{n}件: {', '.join(corr_selected[:5])}"
+                    + (f" 他{len(corr_selected)-5}件" if len(corr_selected) > 5 else "")
+                )
+            else:
+                corr_selected = []
+                notes.append("相関係数計算: 有効な数値特徴量がないためスキップ")
+        except Exception as e:
+            corr_selected = []
+            notes.append(f"相関係数計算でエラー: {e}")
+
+        # 2. LLM推奨（オプション）
+        llm_selected = []
+        if llm_advisor is not None:
+            try:
+                llm_rec = llm_advisor.recommend(
+                    df=df,
+                    target_column=target_column,
+                    task_type=task_type,
+                    n_features=top_n_features or 10,
+                )
+                if llm_rec.feature_names:
+                    llm_selected = llm_rec.feature_names
+                    notes.append(
+                        f"LLM推奨: {', '.join(llm_selected[:5])}"
+                        + (f" 他{len(llm_selected)-5}件" if len(llm_selected) > 5 else "")
+                        + (f" (確信度: {llm_rec.confidence:.1%})" if llm_rec.confidence else "")
+                    )
+                else:
+                    notes.append("LLM推奨: 有効な推奨が得られませんでした")
+            except Exception as e:
+                notes.append(f"LLM推奨でエラー: {e}")
+
+        # 3. タスクベースの選択（既存ロジック）
+        task_result = self.select(
+            task_type=task_type,
+            n_molecules=n_molecules,
+            max_time_per_mol_s=max_time_per_mol_s,
+            xtb_available=xtb_available,
+            force_include=force_include,
+            force_exclude=force_exclude,
+        )
+
+        # 4. 統合: 相関上位 + LLM推奨 + タスク推奨の重複を除きながら統合
+        integrated_selected = list(dict.fromkeys(
+            corr_selected + llm_selected + task_result.selected_features
+        ))
+
+        # 3.5. top_n_features が指定されている場合は制限
+        if top_n_features and len(integrated_selected) > top_n_features:
+            integrated_selected = integrated_selected[:top_n_features]
+            notes.append(f"統合結果を上位{top_n_features}件に制限(correlation)")
+
+        # 4. 予算チェック（統合後の特徴量が予算内か）
+        total_cost = 0.0
+        budget_met = True
+        for f_name in integrated_selected:
+            cost_info = self._cost_catalog.get(f_name)
+            if cost_info:
+                total_cost += cost_info.approx_time_per_mol_s
+                if total_cost > max_time_per_mol_s:
+                    budget_met = False
+                    notes.append(
+                        f"統合後予算超過: {total_cost:.1f}s > {max_time_per_mol_s:.1f}s"
+                    )
+                    break
+
+        integrated_result = FeatureSelectionResult(
+            selected_features=integrated_selected,
+            estimated_time_per_mol_s=total_cost,
+            estimated_total_minutes=(total_cost * n_molecules) / 60.0,
+            requires_xtb=any(
+                self._cost_catalog[f].requires_xtb
+                for f in integrated_selected
+                if f in self._cost_catalog
+            ),
+            requires_opt=any(
+                self._cost_catalog[f].requires_opt
+                for f in integrated_selected
+                if f in self._cost_catalog
+            ),
+            requires_freq=any(
+                self._cost_catalog[f].requires_freq
+                for f in integrated_selected
+                if f in self._cost_catalog
+            ),
+            task_type=task_type,
+            budget_met=budget_met,
+            notes=task_result.notes + notes,
+        )
+        return integrated_result

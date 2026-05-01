@@ -215,3 +215,91 @@ class TestMultiObjective:
         bo.fit(X, Y)
         result = bo.suggest(candidates, n=3)
         assert len(result) == 3
+
+
+# ============================================================
+# T-009: tabular_50_safe.csv を使ったベイズ最適化（逆解析）統合テスト
+# ============================================================
+
+class TestTabular50SafeBayesianOpt:
+    """T-009: tabular_50_safe.csv を使ったベイズ最適化のテスト。"""
+
+    @pytest.fixture
+    def tabular_data(self) -> tuple:
+        """tabular_50_safe.csv を読み込んで X, y を返す。"""
+        from pathlib import Path
+        from backend.data.loader import load_file
+        df = load_file(Path("data/samples/tabular_50_safe.csv"))
+        X = df.drop(columns=["Target"]).values
+        y = df["Target"].values
+        return X, y
+
+    def test_bayesian_optimization_tabular(self, tabular_data) -> None:
+        """BayesianOptimizer が tabular_50_safe.csv で正しく動作すること。(T-009-01)"""
+        X, y = tabular_data
+        from backend.optim.bayesian_optimizer import BayesianOptimizer, BOConfig
+
+        cfg = BOConfig(acquisition="ei", objective="minimize")
+        bo = BayesianOptimizer(cfg)
+        bo.fit(X, y)
+
+        # 候補点を生成（簡略化のため既存データから）
+        result = bo.suggest(X[:10], n=3)
+        assert len(result) == 3
+
+    def test_bayesian_opt_predict(self, tabular_data) -> None:
+        """予測機能が正しく動作すること。(T-009-02)"""
+        X, y = tabular_data
+        from backend.optim.bayesian_optimizer import BayesianOptimizer, BOConfig
+
+        cfg = BOConfig(acquisition="ei")
+        bo = BayesianOptimizer(cfg)
+        bo.fit(X, y)
+
+        # 予測（単一データ点）
+        single_X = X[0:1]
+        mean, std = bo.predict(single_X)
+        assert mean is not None
+        assert std is not None
+        assert len(mean) == 1
+        assert len(std) == 1
+
+    def test_inverse_optimization_tabular(self, tabular_data) -> None:
+        """逆解析（InverseOptimizer）が tabular_50_safe.csv で動作すること。(T-009-03)"""
+        X, y = tabular_data
+        from backend.optim.inverse_optimizer import InverseConfig, run_inverse_optimization
+
+        # 予測関数（簡略化のため線形回帰を使用）
+        from sklearn.linear_model import Ridge
+        model = Ridge()
+        model.fit(X, y)
+
+        def predict_fn(df: pd.DataFrame) -> np.ndarray:
+            return model.predict(df.values)
+
+        config = InverseConfig(
+            method="bayesian",
+            target_mode="maximize",
+            constraints={
+                f"Feature_{i}": {"min": -3.0, "max": 3.0, "active": True}
+                for i in range(1, 9)
+            },
+            method_params={"n_samples": 100, "seed": 42},
+        )
+
+        result = run_inverse_optimization(predict_fn, [f"Feature_{i}" for i in range(1, 9)], config)
+        assert result is not None
+        assert hasattr(result, 'candidates')
+        assert len(result.candidates) > 0
+
+    def test_bayesian_opt_different_acquisitions(self, tabular_data) -> None:
+        """異なる獲得関数で正しく動作すること。(T-009-04)"""
+        X, y = tabular_data
+        from backend.optim.bayesian_optimizer import BayesianOptimizer, BOConfig
+
+        for acq in ["ei", "pi", "ucb"]:
+            cfg = BOConfig(acquisition=acq)
+            bo = BayesianOptimizer(cfg)
+            bo.fit(X, y)
+            result = bo.suggest(X[:5], n=2)
+            assert len(result) == 2

@@ -8,11 +8,11 @@ import pytest
 from sklearn.datasets import make_regression
 
 from backend.ml_pipeline import ConstraintAwareEstimator, build_pipeline
-from backend.chem.plugins.rdkit_descriptors import calculate_descriptors as calculate_rdkit_basic
+from backend.feature_plugins.rdkit_descriptors import compute_features as calculate_rdkit_basic
 
 # Mocking calculate_rdkit_basic if not imported correctly
 try:
-    from backend.chem.plugins.rdkit_descriptors import calculate_descriptors as calculate_rdkit_basic
+    from backend.feature_plugins.rdkit_descriptors import compute_features as calculate_rdkit_basic
 except ImportError:
     def calculate_rdkit_basic(smiles_list):
         from rdkit import Chem

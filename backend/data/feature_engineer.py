@@ -220,9 +220,9 @@ class LagRollingTransformer(BaseEstimator, TransformerMixin):
         windows: list[int] | None = None,
         agg_funcs: list[str] | None = None,
     ) -> None:
-        self.lags = lags or [1, 2, 3]
-        self.windows = windows or [3, 7]
-        self.agg_funcs = agg_funcs or ["mean", "std"]
+        self.lags = [1, 2, 3] if lags is None else lags
+        self.windows = [3, 7] if windows is None else windows
+        self.agg_funcs = ["mean", "std"] if agg_funcs is None else agg_funcs
         self._feature_names: list[str] = []
         self._n_input_cols: int = 0
 

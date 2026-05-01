@@ -1,0 +1,7 @@
+{
+  "timestamp": "20260430_094714",
+  "best_score": -67.58694580709924,
+  "model_type": "Pipeline",
+  "data_shape": "(50, 9)",
+  "target_column": "Target"
+}

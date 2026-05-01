@@ -32,6 +32,16 @@ _CONFIG_FILE = Path(__file__).parent.parent.parent.parent / ".hf_config.json"
 # ── 推奨モデルカタログ ────────────────────────────────────────────────────────
 HF_MODEL_CATALOG: list[dict] = [
     {
+        "id": "jckkvs/bonsai-8b-1.58bit",
+        "label": "Bonsai 8B（軽量・ローカル推論）",
+        "size_gb": 5.0,
+        "description": "日本語対応の軽量モデル。CPU推論も可能。初回起動時に自動ダウンロード。",
+        "require_gpu": False,
+        "chat_template": "chatml",
+        "default": True,
+    },
+
+    {
         "id": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
         "label": "Qwen2.5-Coder 1.5B（推奨・軽量）",
         "size_gb": 3.0,
@@ -341,3 +351,45 @@ class HuggingFaceProvider(LLMProvider):
             raise
         except Exception as e:
             raise LLMProviderError(f"推論エラー ({self._model_id}): {e}") from e
+
+
+def download_model_sync(
+    model_id: str,
+    token: str,
+    timeout: int = 600,
+) -> tuple[bool, str]:
+    """
+    モデルを同期的にダウンロードする。
+
+    Args:
+        model_id: HuggingFace model ID
+        token: HF token (or empty for public models)
+        timeout: Timeout in seconds
+
+    Returns:
+        (success, message) tuple
+    """
+    try:
+        from huggingface_hub import snapshot_download
+
+        logger.info(f"[HF] Sync download: {model_id}")
+
+        # トークン設定
+        if token:
+            os.environ["HF_TOKEN"] = token
+            os.environ["HUGGINGFACE_TOKEN"] = token
+
+        # ダウンロード実行
+        snapshot_download(
+            repo_id=model_id,
+            token=token or None,
+            ignore_patterns=["*.msgpack", "*.h5", "flax_model*", "tf_model*"],
+            max_workers=4,
+        )
+
+        logger.info(f"[HF] Sync download complete: {model_id}")
+        return True, f"ダウンロード完了: {model_id}"
+
+    except Exception as e:
+        logger.exception(f"[HF] Sync download failed: {model_id}")
+        return False, f"ダウンロード失敗: {e}"

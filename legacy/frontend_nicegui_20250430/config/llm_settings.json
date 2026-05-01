@@ -1,0 +1,16 @@
+{
+  "mode": "local",
+  "api_endpoint": null,
+  "api_key": null,
+  "model_name": "",
+  "temperature": 0.1,
+  "max_tokens": 2000,
+  "local_model_path": null,
+  "local_device": "cuda",
+  "local_max_length": 2048,
+  "enable_code_execution": false,
+  "sandbox_mode": true,
+  "log_prompts": false,
+  "show_advanced_options": false,
+  "auto_save": true
+}

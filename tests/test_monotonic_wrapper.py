@@ -621,3 +621,250 @@ class TestExtrapolationMonotonicity:
         })
         pred = m.predict(X_test)
         assert not np.any(np.isnan(pred))
+
+
+# ============================================================
+# T-010: tabular_50_safe.csv を使った単調性制約統合テスト
+# ============================================================
+
+class TestTabular50SafeMonotonic:
+    """T-010: tabular_50_safe.csv を使った単調性制約のテスト。"""
+
+    @pytest.fixture
+    def tabular_data(self) -> tuple:
+        """tabular_50_safe.csv を読み込む。"""
+        from pathlib import Path
+        from backend.data.loader import load_file
+        df = load_file(Path("data/samples/tabular_50_safe.csv"))
+        X = df.drop(columns=["Target"])
+        y = df["Target"].values
+        return X, y
+
+    def test_monotonic_rfr_increasing(self, tabular_data) -> None:
+        """RandomForest + 単調増加制約が正しく動作すること。(T-010-01)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+
+        # Feature_1 を単調増加制約とする
+        constraints = {f"Feature_{i}": 0 for i in range(1, 9)}
+        constraints["Feature_1"] = 1  # increasing
+
+        m = MonotonicConstraintRegressor(
+            base_estimator=RandomForestRegressor(n_estimators=10, random_state=42),
+            monotonic_constraints_dict=constraints,
+            sigma_factor=3.0,
+        )
+        m.fit(X, y)
+        assert hasattr(m, "estimator_")
+
+        # 予測
+        pred = m.predict(X[:5])
+        assert len(pred) == 5
+        assert not np.any(np.isnan(pred))
+
+    def test_monotonic_ridge_decreasing(self, tabular_data) -> None:
+        """Ridge + 単調減少制約が正しく動作すること。(T-010-02)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+
+        # Feature_2 を単調減少制約とする
+        constraints = {f"Feature_{i}": 0 for i in range(1, 9)}
+        constraints["Feature_2"] = -1  # decreasing
+
+        m = MonotonicConstraintRegressor(
+            base_estimator=Ridge(),
+            monotonic_constraints_dict=constraints,
+            sigma_factor=3.0,
+        )
+        m.fit(X, y)
+        assert hasattr(m, "estimator_")
+
+    def test_monotonic_gpr(self, tabular_data) -> None:
+        """GPR + 単調性制約が正しく動作すること。(T-010-03)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+        from sklearn.gaussian_process import GaussianProcessRegressor
+
+        constraints = {f"Feature_{i}": 0 for i in range(1, 9)}
+        constraints["Feature_3"] = 1  # increasing
+
+        m = MonotonicConstraintRegressor(
+            base_estimator=GaussianProcessRegressor(random_state=42),
+            monotonic_constraints_dict=constraints,
+            sigma_factor=3.0,
+        )
+        m.fit(X, y)
+        assert hasattr(m, "estimator_")
+
+    def test_monotonic_svr(self, tabular_data) -> None:
+        """SVR + 単調性制約が正しく動作すること。(T-010-04)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+        from sklearn.svm import SVR
+
+        constraints = {f"Feature_{i}": 0 for i in range(1, 9)}
+        constraints["Feature_4"] = -1  # decreasing
+
+        m = MonotonicConstraintRegressor(
+            base_estimator=SVR(),
+            monotonic_constraints_dict=constraints,
+            sigma_factor=3.0,
+        )
+        m.fit(X, y)
+        assert hasattr(m, "estimator_")
+
+    def test_weak_vs_strong_constraints(self, tabular_data) -> None:
+        """弱い制約と強い制約が正しく動作すること。(T-010-05)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+
+        constraints = {f"Feature_{i}": 0 for i in range(1, 9)}
+        constraints["Feature_1"] = 1
+
+        for strength in ["weak", "strong"]:
+            m = MonotonicConstraintRegressor(
+                base_estimator=Ridge(),
+                monotonic_constraints_dict=constraints,
+                constraint_strength=strength,
+                sigma_factor=3.0,
+            )
+            m.fit(X, y)
+            assert hasattr(m, "estimator_")
+
+    def test_predict_with_dataframe(self, tabular_data) -> None:
+        """DataFrame で予測が正しく動作すること。(T-010-06)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+
+        m = MonotonicConstraintRegressor(
+            base_estimator=Ridge(),
+            sigma_factor=3.0,
+        )
+        m.fit(X, y)
+
+        # DataFrame で予測
+        pred = m.predict(X[:10])
+        assert len(pred) == 10
+        assert not np.any(np.isnan(pred))
+
+
+# ============================================================
+# T-010: tabular_50_safe.csv を使った単調性制約統合テスト
+# ============================================================
+
+class TestTabular50SafeMonotonic:
+    """T-010: tabular_50_safe.csv を使った単調性制約のテスト。"""
+
+    @pytest.fixture
+    def tabular_data(self) -> tuple:
+        """tabular_50_safe.csv を読み込む。"""
+        from pathlib import Path
+        from backend.data.loader import load_file
+        df = load_file(Path("data/samples/tabular_50_safe.csv"))
+        X = df.drop(columns=["Target"])
+        y = df["Target"].values
+        return X, y
+
+    def test_monotonic_rfr_increasing(self, tabular_data) -> None:
+        """RandomForest + 単調増加制約が正しく動作すること。(T-010-01)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+
+        # 8特徴量に対する制約: Feature_1 を単調増加
+        constraints = (1,) + (0,) * 7  # (1, 0, 0, 0, 0, 0, 0, 0)
+
+        m = MonotonicConstraintRegressor(
+            base_estimator=RandomForestRegressor(n_estimators=10, random_state=42),
+            monotonic_constraints=constraints,
+            sigma_factor=3.0,
+        )
+        m.fit(X, y)
+        assert hasattr(m, "estimator_")
+
+        # 予測
+        pred = m.predict(X[:5])
+        assert len(pred) == 5
+        assert not np.any(np.isnan(pred))
+
+    def test_monotonic_ridge_decreasing(self, tabular_data) -> None:
+        """Ridge + 単調減少制約が正しく動作すること。(T-010-02)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+
+        # Feature_2 を単調減少制約
+        constraints = (0,) * 1 + (-1,) + (0,) * 6  # (0, -1, 0, 0, 0, 0, 0, 0)
+
+        m = MonotonicConstraintRegressor(
+            base_estimator=Ridge(),
+            monotonic_constraints=constraints,
+            sigma_factor=3.0,
+        )
+        m.fit(X, y)
+        assert hasattr(m, "estimator_")
+
+    def test_monotonic_gpr(self, tabular_data) -> None:
+        """GPR + 単調性制約が正しく動作すること。(T-010-03)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+        from sklearn.gaussian_process import GaussianProcessRegressor
+
+        # Feature_3 を単調増加制約
+        constraints = (0,) * 2 + (1,) + (0,) * 5  # (0, 0, 1, 0, 0, 0, 0, 0)
+
+        m = MonotonicConstraintRegressor(
+            base_estimator=GaussianProcessRegressor(random_state=42),
+            monotonic_constraints=constraints,
+            sigma_factor=3.0,
+        )
+        m.fit(X, y)
+        assert hasattr(m, "estimator_")
+
+    def test_monotonic_svr(self, tabular_data) -> None:
+        """SVR + 単調性制約が正しく動作すること。(T-010-04)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+        from sklearn.svm import SVR
+
+        # Feature_4 を単調減少制約
+        constraints = (0,) * 3 + (-1,) + (0,) * 4  # (0, 0, 0, -1, 0, 0, 0, 0)
+
+        m = MonotonicConstraintRegressor(
+            base_estimator=SVR(),
+            monotonic_constraints=constraints,
+            sigma_factor=3.0,
+        )
+        m.fit(X, y)
+        assert hasattr(m, "estimator_")
+
+    def test_weak_vs_strong_constraints(self, tabular_data) -> None:
+        """弱い制約と強い制約が正しく動作すること。(T-010-05)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+
+        constraints = (1,) + (0,) * 7  # Feature_1 increasing
+
+        for strength in ["weak", "strong"]:
+            m = MonotonicConstraintRegressor(
+                base_estimator=Ridge(),
+                monotonic_constraints=constraints,
+                constraint_strength=strength,
+                sigma_factor=3.0,
+            )
+            m.fit(X, y)
+            assert hasattr(m, "estimator_")
+
+    def test_predict_with_dataframe(self, tabular_data) -> None:
+        """DataFrame で予測が正しく動作すること。(T-010-06)"""
+        X, y = tabular_data
+        from backend.models.monotonic_wrapper import MonotonicConstraintRegressor
+
+        m = MonotonicConstraintRegressor(
+            base_estimator=Ridge(),
+            sigma_factor=3.0,
+        )
+        m.fit(X, y)
+
+        # DataFrame で予測
+        pred = m.predict(X[:10])
+        assert len(pred) == 10
+        assert not np.any(np.isnan(pred))

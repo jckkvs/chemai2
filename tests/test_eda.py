@@ -259,3 +259,79 @@ class TestAnalyzeTarget:
         result = analyze_target(mixed_df, "null_col", task="regression")
         assert result["n_null"] == 10
         assert abs(result["null_rate"] - 10 / 60) < 1e-4
+
+
+# ============================================================
+# T-EDA-007: tabular_50_safe.csv を使ったEDA統合テスト
+# ============================================================
+
+class TestTabular50SafeEDA:
+    """T-EDA-007: tabular_50_safe.csv を使ったEDAのテスト。"""
+
+    @pytest.fixture
+    def tabular_df(self) -> pd.DataFrame:
+        """tabular_50_safe.csv を読み込む。"""
+        from pathlib import Path
+        from backend.data.loader import load_file
+        return load_file(Path("data/samples/tabular_50_safe.csv"))
+
+    def test_compute_column_stats_tabular(self, tabular_df) -> None:
+        """compute_column_stats が tabular_50_safe.csv で正しく動作すること。(T-EDA-007-01)"""
+        from backend.data.eda import compute_column_stats
+
+        stats = compute_column_stats(tabular_df)
+        assert len(stats) == 9  # 8 features + Target
+
+        # 全ての列が数値型
+        for s in stats:
+            assert s.dtype in ["float64", "int64", "float32"]
+
+    def test_summarize_dataframe_tabular(self, tabular_df) -> None:
+        """summarize_dataframe が tabular_50_safe.csv で正しく動作すること。(T-EDA-007-02)"""
+        from backend.data.eda import summarize_dataframe
+
+        summary = summarize_dataframe(tabular_df)
+        assert "n_rows" in summary
+        assert summary["n_rows"] == 50
+        assert summary["n_cols"] == 9
+        assert summary["n_numeric"] == 9  # 全て数値
+
+    def test_compute_correlation_tabular(self, tabular_df) -> None:
+        """compute_correlation が tabular_50_safe.csv で正しく動作すること。(T-EDA-007-03)"""
+        from backend.data.eda import compute_correlation
+
+        corr = compute_correlation(tabular_df)
+        assert corr.shape[0] == 9
+        assert corr.shape[1] == 9
+        # 対角線は1.0
+        for i in range(9):
+            assert abs(corr.iloc[i, i] - 1.0) < 1e-6
+
+    def test_detect_outliers_tabular(self, tabular_df) -> None:
+        """detect_outliers が tabular_50_safe.csv で正しく動作すること。(T-EDA-007-04)"""
+        from backend.data.eda import detect_outliers
+
+        result = detect_outliers(tabular_df.drop(columns=["Target"]))
+        assert "outlier_indices" in result
+        assert "outlier_rate" in result
+        assert 0 <= result["outlier_rate"] <= 1.0
+
+    def test_compute_distribution_tabular(self, tabular_df) -> None:
+        """compute_distribution が tabular_50_safe.csv で正しく動作すること。(T-EDA-007-05)"""
+        from backend.data.eda import compute_distribution
+
+        dist = compute_distribution(tabular_df, "Feature_1")
+        assert "histogram" in dist
+        assert "bin_edges" in dist
+        assert len(dist["histogram"]) > 0
+
+    def test_analyze_target_regression(self, tabular_df) -> None:
+        """analyze_target が回帰タスクで正しく動作すること。(T-EDA-007-06)"""
+        from backend.data.eda import analyze_target
+
+        result = analyze_target(tabular_df, "Target", task="regression")
+        assert result["task"] == "regression"
+        assert "mean" in result
+        assert "std" in result
+        assert "min" in result
+        assert "max" in result

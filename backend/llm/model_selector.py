@@ -3,14 +3,116 @@
 """
 Model selection logic for LLM engine.
 Selects best model based on task, hardware, and performance history.
+
+Updated 2026-04-29 to use hardware_check module for HuggingFace quantized models.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
+from typing import Dict, Any, Optional, List
 
-from backend.llm.hardware_detector import detect_hardware, HardwareProfile
+# ── LLM Model Configuration ────────────────────────────────────────────────────
+
+@dataclass
+class LLMModelConfig:
+    """Configuration for a single LLM model."""
+    repo_id: str = ""
+    filename: str = ""
+    label: str = ""
+    context_length: int = 4096
+    n_gpu_layers: int = -1
+    expected_size_gb: float = 0.0
+    quantized_size_gb: float = 0.0
+    description: str = ""
+    chat_template: str = "chatml"
+    require_gpu: bool = False
+
+
+# ── Model Registry ─────────────────────────────────────────────────────────────
+
+MODEL_REGISTRY: Dict[str, LLMModelConfig] = {
+    "qwen2.5-coder-1.5b": LLMModelConfig(
+        repo_id="Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        filename="qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        label="Qwen2.5-Coder 1.5B (推奨・軽量)",
+        context_length=8192,
+        n_gpu_layers=-1,
+        expected_size_gb=3.0,
+        quantized_size_gb=3.0,
+        description="コード生成特化。CPUでも実用速度。",
+        chat_template="chatml",
+        require_gpu=False,
+    ),
+    "qwen2.5-coder-7b": LLMModelConfig(
+        repo_id="Qwen/Qwen2.5-Coder-7B-Instruct",
+        filename="qwen2.5-7b-instruct-q4_k_m.gguf",
+        label="Qwen2.5-Coder 7B (高品質)",
+        context_length=8192,
+        n_gpu_layers=-1,
+        expected_size_gb=14.0,
+        quantized_size_gb=14.0,
+        description="上位モデル。高品質なコードを生成。",
+        chat_template="chatml",
+        require_gpu=False,
+    ),
+    "gemma-3-1b": LLMModelConfig(
+        repo_id="google/gemma-3-1b-it",
+        filename="gemma-3-1b-it-q4_k_m.gguf",
+        label="Gemma 3 1B (超軽量)",
+        context_length=4096,
+        n_gpu_layers=-1,
+        expected_size_gb=2.0,
+        quantized_size_gb=2.0,
+        description="Google製超軽量モデル。低スペック環境向け。",
+        chat_template="gemma",
+        require_gpu=False,
+    ),
+    "phi-4-mini": LLMModelConfig(
+        repo_id="microsoft/Phi-4-mini-instruct",
+        filename="phi-4-mini-instruct-q4_k_m.gguf",
+        label="Phi-4 Mini (バランス型)",
+        context_length=4096,
+        n_gpu_layers=-1,
+        expected_size_gb=8.0,
+        quantized_size_gb=8.0,
+        description="Microsoft製。推論品質とサイズのバランスが良い。",
+        chat_template="phi",
+        require_gpu=False,
+    ),
+    "granite-3.3-2b": LLMModelConfig(
+        repo_id="ibm-granite/granite-3.3-2b-instruct",
+        filename="granite-3.3-2b-instruct-q4_k_m.gguf",
+        label="IBM Granite 3.3 2B (コード特化)",
+        context_length=4096,
+        n_gpu_layers=-1,
+        expected_size_gb=4.0,
+        quantized_size_gb=4.0,
+        description="IBM製コード生成モデル。科学技術分野に強い。",
+        chat_template="granite",
+        require_gpu=False,
+    ),
+}
+
+
+# Import hardware_check functions directly to avoid circular imports
+try:
+    from backend.llm.hardware_check import (
+        HardwareProfile,
+        get_hardware_profile,
+        recommend_models,
+        get_best_model,
+        ModelRecommendation,
+    )
+except ImportError:
+    # Fallback: define dummy classes if import fails
+    HardwareProfile = None
+    get_hardware_profile = None
+    recommend_models = None
+    get_best_model = None
+    ModelRecommendation = None
+
 from backend.llm.benchmarks import (
     get_benchmark_for_hardware,
     apply_benchmark_settings,
@@ -20,134 +122,95 @@ from backend.llm.benchmark_runner import BenchmarkRunner
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class LLMModelConfig:
-    """Configuration for a specific LLM model"""
-    repo_id: str
-    filename: str
-    expected_size_gb: float
-    description: str
-    context_length: int = 4096
-    n_gpu_layers: int = -1
-    chemistry_fine_tuned: bool = False
-    extra_params: Dict[str, Any] = field(default_factory=dict)
-
-# Default registry of supported models (Updated 2026-01-22)
-MODEL_REGISTRY: Dict[str, LLMModelConfig] = {
-    "qwen3.5-3b": LLMModelConfig(
-        repo_id="Qwen/Qwen3.5-3B-Instruct-GGUF",
-        filename="qwen3.5-3b-instruct-q4_k_m.gguf",
-        expected_size_gb=2.2,
-        description="Next-gen lightweight model, ultra-fast.",
-    ),
-    "qwen3.5-7b": LLMModelConfig(
-        repo_id="Qwen/Qwen3.5-7B-Instruct-GGUF",
-        filename="qwen3.5-7b-instruct-q4_k_m.gguf",
-        expected_size_gb=4.8,
-        description="New standard for MI research, balanced performance.",
-    ),
-    "qwen3.5-14b": LLMModelConfig(
-        repo_id="Qwen/Qwen3.5-14B-Instruct-GGUF",
-        filename="qwen3.5-14b-instruct-q4_k_m.gguf",
-        expected_size_gb=9.5,
-        description="High precision reasoning for complex tasks.",
-    ),
-    "deepseek-v3.2-3b": LLMModelConfig(
-        repo_id="deepseek-ai/DeepSeek-V3.2-3B-Instruct-GGUF",
-        filename="deepseek-v3.2-3b-instruct-q6_k.gguf",
-        expected_size_gb=3.1,
-        description="Superior mathematical and logical reasoning.",
-    ),
-    "solar-10.7b": LLMModelConfig(
-        repo_id="upstage/Solar-10.7B-Instruct-v1.0-GGUF",
-        filename="solar-10.7b-instruct-v1.0-q4_k_m.gguf",
-        expected_size_gb=6.2,
-        description="Optimized for Japanese instructions.",
-    ),
-}
 
 def select_optimal_model(
     task: str = "general",
     profile: Optional[HardwareProfile] = None,
-) -> LLMModelConfig:
+    use_gguf_fallback: bool = True,
+) -> Optional[LLMModelConfig]:
     """
     Select the best available model for the given task and hardware.
+
+    Args:
+        task: "general", "reasoning", "japanese", "chemistry"
+        profile: Hardware profile. If None, auto-detects.
+        use_gguf_fallback: If True, fall back to GGUF models for Ollama/local runners.
+
+    Returns:
+        LLMModelConfig object with the best model, or None.
     """
     if profile is None:
-        profile = detect_hardware()
-    
-    # Selection logic based on ENV ID (Hardware Catalog)
-    env_id = profile.env_id
-    
-    if task == "reasoning":
-        selected = MODEL_REGISTRY["deepseek-v3.2-3b"]
-    elif task == "japanese":
-        selected = MODEL_REGISTRY["solar-10.7b"]
-    elif env_id == "ENV020": # High-end (RTX 5080)
-        selected = MODEL_REGISTRY["qwen3.5-14b"]
-    elif env_id == "ENV007": # Standard (RTX 3060)
-        selected = MODEL_REGISTRY["qwen3.5-7b"]
-    else: # Entry or CPU
-        selected = MODEL_REGISTRY["qwen3.5-3b"]
+        profile = get_hardware_profile()
 
-    # 【拡張点】ベンチマークベースの最適化適用
+    # Get HuggingFace quantized model recommendations
+    recommendations = recommend_models(profile)
+    selected_rec = None
+    for rec in recommendations:
+        if rec.can_run:
+            selected_rec = rec
+            break
+
+    # If no HF model found and GGUF fallback enabled, try GGUF models
+    if selected_rec is None and use_gguf_fallback:
+        logger.info("No HuggingFace model compatible, trying GGUF fallback")
+        return _select_gguf_model(task, profile)
+
+    if selected_rec is None:
+        logger.warning("No compatible model found for current hardware")
+        # Return the first model anyway (user can try manually)
+        if recommendations:
+            selected_rec = recommendations[0]
+
+    if selected_rec is None:
+        return None
+
+    # Apply benchmark settings if available
     try:
-        # 1. ユーザー実測ベンチマークを最優先
         benchmark_runner = BenchmarkRunner()
         user_rec = benchmark_runner.get_user_recommendation(
-            task="chemistry" if selected.chemistry_fine_tuned else "general",
+            task="chemistry" if task == "chemistry" else "general",
             max_latency_ms=200.0,
         )
-        
-        if user_rec and user_rec["model_name"] in MODEL_REGISTRY:
-            logger.info(f"Using user-benchmarked model: {user_rec['model_name']}")
-            selected = MODEL_REGISTRY[user_rec["model_name"]]
-        
-        # 2. 事前調査済みベンチマークを次点で参照
-        elif profile:
-            matched_benchmark = get_benchmark_for_hardware(
-                profile.cpu_cores,
-                profile.ram_total_gb,
-                profile.gpu_name,
-                profile.vram_total_gb,
-                profile.architecture,
-            )
-            if matched_benchmark:
-                selected = apply_benchmark_settings(selected, matched_benchmark, profile)
-                logger.debug(f"Applied pre-surveyed benchmark settings: {matched_benchmark.name}")
-    
-    except Exception as e:
-        logger.warning(f"Benchmark integration failed, using dynamic selection: {e}")
-        # Fallback to original dynamic selection (selected already set)
-    
-    return selected
 
-def run_model_benchmark(
-    model_name: str,
+        if user_rec and user_rec.get("model_name"):
+            # Find the corresponding model in MODEL_REGISTRY
+            for key, config in MODEL_REGISTRY.items():
+                if config.repo_id == user_rec["model_name"]:
+                    logger.info(f"Using user-benchmarked model: {user_rec['model_name']}")
+                    return config
+    except Exception as e:
+        logger.warning(f"Benchmark integration failed: {e}")
+
+    # Return the LLMModelConfig from MODEL_REGISTRY based on model_id
+    model_id = selected_rec.model_id
+    # Find the matching key in MODEL_REGISTRY
+    for key, config in MODEL_REGISTRY.items():
+        if config.repo_id == model_id or key in model_id:
+            return config
+
+    logger.warning(f"Model {model_id} not found in MODEL_REGISTRY")
+    return None
+
+
+def _select_gguf_model(task: str, profile: HardwareProfile) -> Optional[ModelRecommendation]:
+    """Fallback for GGUF models (Ollama, etc.)."""
+    # This is a simplified version; the original model_selector had GGUF models
+    # For now, return None to indicate no model found
+    logger.info("GGUF model selection not implemented in this version")
+    return None
+
+
+def get_model_recommendations(
     profile: Optional[HardwareProfile] = None,
-    test_prompt: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Run benchmark for specific model and return results
-    
-    Convenience function for UI/API integration.
-    """
-    if model_name not in MODEL_REGISTRY:
-        raise ValueError(f"Unknown model: {model_name}. Available: {list(MODEL_REGISTRY.keys())}")
-    
-    config = MODEL_REGISTRY[model_name]
-    runner = BenchmarkRunner()
-    
-    result = runner.run_benchmark(
-        model_config=config,
-        profile=profile,
-        test_prompt=test_prompt,
-    )
-    
-    return {
-        "model": model_name,
-        "speed_tps": result.speed_tps,
-        "memory_gb": result.memory_peak_gb,
-        "quality_score": result.quality_score,
-        "recommendation": runner.get_user_recommendation(),
-    }
+) -> List[ModelRecommendation]:
+    """Get all model recommendations sorted by compatibility and score."""
+    return recommend_models(profile)
+
+
+def check_model_compatibility(
+    model_id: str,
+    profile: Optional[HardwareProfile] = None,
+) -> tuple[bool, str]:
+    """Check if a specific model can run on the current hardware."""
+    from backend.llm.hardware_check import check_model_compatibility as _check
+    return _check(model_id, profile)

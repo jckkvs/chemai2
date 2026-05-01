@@ -9,8 +9,9 @@ import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, QuantileTransformer
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from sklearn.preprocessing import OneHotEncoder
+from backend.ml.transformers import AdaptiveQuantileTransformer
 
 class AutoTypeDetector:
     @staticmethod
@@ -37,9 +38,9 @@ class AutoTypeDetector:
         elif scaler_type == "robust":
             steps.append(("scaler", RobustScaler()))
         elif scaler_type == "quantile_uniform":
-            steps.append(("scaler", QuantileTransformer(output_distribution="uniform")))
+            steps.append(("scaler", AdaptiveQuantileTransformer(output_distribution="uniform")))
         elif scaler_type == "quantile_normal":
-            steps.append(("scaler", QuantileTransformer(output_distribution="normal")))
+            steps.append(("scaler", AdaptiveQuantileTransformer(output_distribution="normal")))
             
         num_pipeline = Pipeline(steps)
         

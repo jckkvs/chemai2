@@ -113,8 +113,8 @@ def compute_rbf_gram(
     if gamma is None:
         dists_sq = euclidean_distances(X, squared=True)
         # メディアンヒューリスティック（対角除く）
-        mask = np.triu(np.ones_like(dists_sq, dtype=bool), k=1)
-        median_dist_sq = np.median(dists_sq[mask])
+        mask = np.triu(np.ones_like(distances_sq, dtype=bool), k=1)
+        median_dist_sq = np.median(distances_sq[mask])
         gamma = 1.0 / (2.0 * max(median_dist_sq, 1e-10))
 
     K = rbf_kernel(X, gamma=gamma)

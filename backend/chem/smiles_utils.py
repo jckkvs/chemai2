@@ -9,10 +9,10 @@ import logging
 from rdkit import Chem
 from rdkit.Chem import AllChem, SaltRemover
 try:
-    from rdkit.Chem import rdMolStandardize
+    from rdkit.Chem import MolStandardize as rdMolStandardize
 except ImportError:
     try:
-        from rdkit.Chem.MolStandardize import rdMolStandardize
+        from rdkit.Chem import MolStandardize as rdMolStandardize
     except ImportError:
         rdMolStandardize = None
         logger.warning("rdMolStandardize not available. Standardize features may be limited.")

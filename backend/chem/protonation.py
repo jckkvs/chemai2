@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import logging
 from rdkit import Chem
-from rdkit.Chem import rdMolStandardize
+from rdkit.Chem import MolStandardize as rdMolStandardize
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def _try_protonate_rdkit(
     Attempt protonation using RDKit's built-in methods with robust error handling
     """
     try:
-        from rdkit.Chem import rdMolStandardize
+        from rdkit.Chem import MolStandardize as rdMolStandardize
         
         # pH範囲のクリッピング（化学的妥当性の範囲内）
         ph_clipped = max(0.0, min(14.0, ph))

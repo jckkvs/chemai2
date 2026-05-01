@@ -196,7 +196,7 @@ class EDAAnalyzer:
         figures['PCA'] = fig_pca
         
         # t-SNE
-        tsne = TSNE(n_components=2, perplexity=30, random_state=self.config.random_state, n_iter=1000)
+        tsne = TSNE(n_components=2, perplexity=30, random_state=self.config.random_state, max_iter=1000)
         X_tsne = tsne.fit_transform(X_sample)
         fig_tsne = px.scatter(x=X_tsne[:, 0], y=X_tsne[:, 1], color=y_sample,
                               title="t-SNE (Perplexity=30)", template='plotly_white')

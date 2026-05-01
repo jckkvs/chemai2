@@ -224,11 +224,40 @@ class PDFExporter(BaseExporter):
             story.append(self._metrics_table(metrics, styles))
             story.append(Spacer(1, 4 * mm))
 
-        # ── AI考察コメント ──
+        # ── AI考察コメント（LLM生成） ──
         ai_comment = result.get("ai_commentary", "")
         if ai_comment:
-            story.append(Paragraph("🤖 AIアシスタントによる考察", styles["section"]))
-            story.append(Paragraph(ai_comment, styles["body"]))
+            story.append(Paragraph("🤖 LLMによる考察・推奨", styles["section"]))
+            # LLM生成テキストは長文になるため、適切に分割
+            # セクション見出し（# ## ###）で分割して構造化
+            lines = ai_comment.split("\n")
+            current_para = []
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    if current_para:
+                        story.append(Paragraph(" ".join(current_para), styles["body"]))
+                        current_para = []
+                    story.append(Spacer(1, 2 * mm))
+                elif stripped.startswith("# "):
+                    if current_para:
+                        story.append(Paragraph(" ".join(current_para), styles["body"]))
+                        current_para = []
+                    story.append(Paragraph(stripped[2:], styles["section"]))
+                elif stripped.startswith("## "):
+                    if current_para:
+                        story.append(Paragraph(" ".join(current_para), styles["body"]))
+                        current_para = []
+                    story.append(Paragraph(stripped[3:], styles["section"]))
+                elif stripped.startswith("### "):
+                    if current_para:
+                        story.append(Paragraph(" ".join(current_para), styles["body"]))
+                        current_para = []
+                    story.append(Paragraph(stripped[4:], styles["body"]))
+                else:
+                    current_para.append(stripped)
+            if current_para:
+                story.append(Paragraph(" ".join(current_para), styles["body"]))
             story.append(Spacer(1, 4 * mm))
 
         # ── 特徴量重要度テーブル ──

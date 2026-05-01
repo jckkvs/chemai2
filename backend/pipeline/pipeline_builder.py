@@ -100,3 +100,165 @@ class PipelineBuilder:
 
     def rollback(self) -> Optional[pd.DataFrame]:
         return self._last_state.copy() if self._last_state is not None else None
+
+
+@dataclass
+class PipelineConfig:
+    """Configuration for building an ML pipeline."""
+    task: str = "regression"  # "regression" or "classification"
+    col_select_mode: str = "auto"  # "auto", "include", "exclude"
+    col_select_columns: List[str] = field(default_factory=list)
+    column_meta: Dict[str, "ColumnMeta"] = field(default_factory=dict)
+    estimator_key: str = "auto"
+    apply_monotonic: bool = False
+    estimator_params: Dict[str, Any] = field(default_factory=dict)
+
+
+def build_pipeline(config: PipelineConfig):
+    """Build a sklearn Pipeline from PipelineConfig."""
+    from sklearn.pipeline import Pipeline
+    from backend.pipeline.column_selector import ColumnSelectorWrapper, ColumnSelectionRule
+
+    steps = []
+
+    # Column selection step
+    if config.col_select_columns:
+        rule = ColumnSelectionRule(
+            include=config.col_select_columns if config.col_select_mode == "include" else [],
+            exclude=config.col_select_columns if config.col_select_mode == "exclude" else [],
+        )
+        wrapper = ColumnSelectorWrapper(rule, strict=False)
+        steps.append(("col_select", wrapper))
+
+    # Placeholder for preprocessing, feature generation, feature selection
+    # These would be added based on config
+
+    # Estimator step (placeholder)
+    # In real implementation, this would use backend.models.factory to get estimator
+
+    return Pipeline(steps)
+
+
+def apply_monotonic_constraints(estimator, column_meta: Dict[str, "ColumnMeta"], feature_names: list = None):
+    """Apply monotonic constraints to estimator if supported.
+
+    Handles:
+    - XGBoost native: monotone_constraints (with 'e')
+    - LightGBM native: monotonic_constraints
+    - sklearn models: wrap with MonotonicConstraintRegressor/Classifier
+    """
+    import inspect as _inspect
+
+    # Build constraint dict (feature index -> monotonic value)
+    constraints = {}
+    for col, meta in column_meta.items():
+        if meta.monotonic == 0:
+            continue
+        idx = None
+        if feature_names and col in feature_names:
+            idx = feature_names.index(col)
+        else:
+            try:
+                idx = int(col)
+            except (ValueError, TypeError):
+                if hasattr(estimator, 'feature_names_in_') and col in estimator.feature_names_in_:
+                    idx = list(estimator.feature_names_in_).index(col)
+                else:
+                    idx = col
+        constraints[idx] = meta.monotonic
+
+    if not constraints:
+        return estimator
+
+    # Detect estimator type and apply constraints appropriately
+    cls_name = type(estimator).__name__
+    module = type(estimator).__module__
+
+    # XGBoost native monotonicity
+    if 'xgboost' in module.lower():
+        try:
+            estimator.set_params(monotone_constraints=constraints)
+        except Exception as e:
+            logger.warning(f"Failed to set XGBoost monotone_constraints: {e}")
+        return estimator
+
+    # LightGBM native monotonicity
+    if 'lightgbm' in module.lower():
+        try:
+            estimator.set_params(monotonic_constraints=constraints)
+        except Exception as e:
+            logger.warning(f"Failed to set LightGBM monotonic_constraints: {e}")
+        return estimator
+
+    # CatBoost native monotonicity
+    if 'catboost' in module.lower():
+        try:
+            estimator.set_params(monotone_constraints=list(constraints.values()))
+        except Exception as e:
+            logger.warning(f"Failed to set CatBoost monotone_constraints: {e}")
+        return estimator
+
+    # For sklearn-compatible models: wrap with MonotonicConstraintRegressor/Classifier
+    try:
+        from backend.models.monotonic_wrapper import (
+            MonotonicConstraintRegressor, MonotonicConstraintClassifier
+        )
+        from sklearn.base import is_classifier, is_regressor
+        import numpy as np
+
+        is_clf = is_classifier(estimator)
+        is_reg = is_regressor(estimator)
+        n_features = None
+        if hasattr(estimator, 'n_features_in_'):
+            n_features = estimator.n_features_in_
+        elif feature_names:
+            n_features = len(feature_names)
+        if n_features is None:
+            logger.warning("Cannot determine n_features for monotonic wrapper.")
+            return estimator
+
+        # Build monotonic_constraints tuple
+        mono_list = [0] * n_features
+        for idx, val in constraints.items():
+            try:
+                i = int(idx)
+                if 0 <= i < n_features:
+                    mono_list[i] = val
+            except (ValueError, TypeError):
+                continue
+        mono_tuple = tuple(mono_list)
+
+        if is_clf:
+            return MonotonicConstraintClassifier(
+                base_estimator=estimator,
+                monotonic_constraints=mono_tuple,
+            )
+        elif is_reg:
+            return MonotonicConstraintRegressor(
+                base_estimator=estimator,
+                monotonic_constraints=mono_tuple,
+            )
+        else:
+            logger.warning(f"Unknown estimator type: {cls_name}. Cannot apply monotonic constraints.")
+            return estimator
+    except ImportError as e:
+        logger.warning(f"Failed to import monotonic wrappers: {e}")
+        return estimator
+    except Exception as e:
+        logger.warning(f"Failed to apply monotonic constraints: {e}")
+        return estimator
+
+
+def extract_group_array(column_meta: Dict[str, "ColumnMeta"]) -> Optional[np.ndarray]:
+    """Extract group array from column metadata."""
+    if not column_meta:
+        return None
+    groups = {}
+    for col, meta in column_meta.items():
+        if meta.group:
+            groups.setdefault(meta.group, []).append(col)
+    if not groups:
+        return None
+    # Return first group as array (simplified)
+    first_group = next(iter(groups.values()))
+    return np.array(first_group)

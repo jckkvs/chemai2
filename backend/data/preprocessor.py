@@ -22,12 +22,12 @@ from sklearn.preprocessing import (
     RobustScaler,
     MaxAbsScaler,
     PowerTransformer,
-    QuantileTransformer,
     Normalizer,
     OneHotEncoder,
     OrdinalEncoder,
     LabelEncoder,
 )
+from backend.ml.transformers import AdaptiveQuantileTransformer
 from sklearn.base import BaseEstimator, TransformerMixin
 
 from backend.data.type_detector import ColumnType, DetectionResult
@@ -101,7 +101,7 @@ class PreprocessConfig:
     エキスパートモードではユーザーが明示的に指定できる。
     """
     # 数値変数
-    numeric_scaler: str = "auto"
+    numeric_scaler: str = "quantile_uniform"  # User preference: uniform performs well
     # "auto" | "standard" | "minmax" | "robust" | "maxabs" | "power_yj"
     # | "power_bc" | "quantile_normal" | "quantile_uniform" | "log" | "none"
 
@@ -132,7 +132,7 @@ class PreprocessConfig:
 
     # QuantileTransformer設定
     quantile_n_quantiles: int = 1000
-    quantile_output_distribution: str = "normal"  # "normal" | "uniform"
+    quantile_output_distribution: str = "uniform"  # User preference: uniform performs well
 
     # 周期変数の周期設定 {col_name: period}
     periodic_periods: dict[str, float] = field(default_factory=dict)
@@ -350,14 +350,14 @@ class Preprocessor:
             "maxabs": MaxAbsScaler(),
             "power_yj": PowerTransformer(method="yeo-johnson"),
             "power_bc": PowerTransformer(method="box-cox"),
-            "quantile_normal": QuantileTransformer(
+            "quantile_normal": AdaptiveQuantileTransformer(
                 n_quantiles=cfg.quantile_n_quantiles,
-                output_distribution="normal",
+                output_distribution=cfg.quantile_output_distribution,  # User preference: uniform
                 random_state=RANDOM_STATE,
             ),
-            "quantile_uniform": QuantileTransformer(
+            "quantile_uniform": AdaptiveQuantileTransformer(
                 n_quantiles=cfg.quantile_n_quantiles,
-                output_distribution="uniform",
+                output_distribution=cfg.quantile_output_distribution,  # User preference: uniform
                 random_state=RANDOM_STATE,
             ),
             "log": Pipeline([

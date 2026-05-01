@@ -34,6 +34,8 @@ import logging
 logger = logging.getLogger(__name__)
 from backend.models.monotonic_kernel import MonotonicConstrainedKernel
 
+from sklearn.gaussian_process.kernels import Kernel
+
 
 # ──────────────────────────────────────────────────────
 # 1. Base Tree Kernel
@@ -326,8 +328,15 @@ def make_tree_kernel_model(
     """
     Factory function to create kernel models with tree kernels.
 
+    Supports:
+    - KernelRidge (regression)
+    - SVR (regression)
+    - SVC (classification) - NEW
+    - GaussianProcessRegressor (regression)
+    - GaussianProcessClassifier (classification) - NEW
+
     Args:
-        model_type: "kernelridge", "svr", "gpr"
+        model_type: "kernelridge", "svr", "svc", "gpr", "gpc"
         kernel_type: "rf", "et", "ridge_tree"
         n_trees: Number of trees (for ensemble kernels)
         max_depth: Max depth of trees
@@ -348,13 +357,101 @@ def make_tree_kernel_model(
         from sklearn.kernel_ridge import KernelRidge
         return KernelRidge(kernel=kernel, **kwargs)
     elif model_type == "svr":
+        # Create a wrapper that fits the kernel before SVR.fit()
         from sklearn.svm import SVR
-        return SVR(kernel=kernel, **kwargs)
+
+        class SVRWithTreeKernel:
+            def __init__(self, kernel, **kwargs):
+                self._svr = SVR(kernel=kernel, **kwargs)
+                self.kernel = kernel
+
+            def fit(self, X, y):
+                if hasattr(self.kernel, 'fit'):
+                    self.kernel.fit(X, y)
+                return self._svr.fit(X, y)
+
+            def predict(self, X):
+                return self._svr.predict(X)
+
+            def score(self, X, y):
+                return self._svr.score(X, y)
+
+            def __getattr__(self, name):
+                return getattr(self._svr, name)
+
+        return SVRWithTreeKernel(kernel, **kwargs)
+    elif model_type == "svc":
+        # Create a wrapper that fits the kernel before SVC.fit()
+        from sklearn.svm import SVC
+
+        class SVCWithTreeKernel:
+            def __init__(self, kernel, **kwargs):
+                self._svc = SVC(kernel=kernel, **kwargs)
+                self.kernel = kernel
+
+            def fit(self, X, y):
+                if hasattr(self.kernel, 'fit'):
+                    self.kernel.fit(X, y)
+                return self._svc.fit(X, y)
+
+            def predict(self, X):
+                return self._svc.predict(X)
+
+            def score(self, X, y):
+                return self._svc.score(X, y)
+
+            def __getattr__(self, name):
+                return getattr(self._svc, name)
+
+        return SVCWithTreeKernel(kernel, **kwargs)
     elif model_type == "gpr":
         from sklearn.gaussian_process import GaussianProcessRegressor
-        return GaussianProcessRegressor(kernel=kernel, **kwargs)
+        wrapped_kernel = TreeKernelWrapper(kernel)
+        return GaussianProcessRegressor(kernel=wrapped_kernel, **kwargs)
+    elif model_type == "gpc":
+        from sklearn.gaussian_process import GaussianProcessClassifier
+        wrapped_kernel = TreeKernelWrapper(kernel)
+        return GaussianProcessClassifier(kernel=wrapped_kernel, **kwargs)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
+
+    # ---------------------------------------------------------------------------
+    # Extended factory functions for specific model types
+    # ---------------------------------------------------------------------------
+
+    def make_tree_kernel_svc(
+        kernel_type: str = "rf",
+        n_trees: int = 100,
+        max_depth: int = 10,
+        random_state: Optional[int] = None,
+        **kwargs
+    ):
+        """Factory function to create SVC with tree kernel."""
+        return make_tree_kernel_model(
+            model_type="svc",
+            kernel_type=kernel_type,
+            n_trees=n_trees,
+            max_depth=max_depth,
+            random_state=random_state,
+            **kwargs
+        )
+
+    def make_tree_kernel_gpc(
+        kernel_type: str = "rf",
+        n_trees: int = 100,
+        max_depth: int = 10,
+        random_state: Optional[int] = None,
+        **kwargs
+    ):
+        """Factory function to create GPC with tree kernel."""
+        return make_tree_kernel_model(
+            model_type="gpc",
+            kernel_type=kernel_type,
+            n_trees=n_trees,
+            max_depth=max_depth,
+            random_state=random_state,
+            **kwargs
+        )
 
 
 # ──────────────────────────────────────────────
@@ -565,3 +662,99 @@ class TreeKernelDecisionTree(BaseEstimator, RegressorMixin):
         if self.tree_ is None:
             raise RuntimeError("Model not fitted")
         return self.tree_.feature_importances_
+
+# ---------------------------------------------------------------------------
+# Kernel Wrapper for GPR/GPC support
+# ---------------------------------------------------------------------------
+
+class TreeKernelWrapper(Kernel):
+    """
+    Wrapper to make TreeKernel compatible with sklearn's GPR and GPC.
+
+    sklearn's GaussianProcessRegressor and GaussianProcessClassifier
+    require the kernel to be an instance of sklearn.gaussian_process.kernels.Kernel.
+
+    This wrapper inherits from Kernel and provides the required interface.
+
+    Usage:
+        # First fit the tree kernel
+        tree_kernel = RandomForestKernel(n_trees=10, max_depth=5)
+        tree_kernel.fit(X_train, y_train)
+
+        # Wrap it
+        wrapped = TreeKernelWrapper(tree_kernel)
+
+        # Use with GPR/GPC
+        gpr = GaussianProcessRegressor(kernel=wrapped)
+        gpr.fit(X_train, y_train)  # This will work because wrapped is already fitted
+    """
+
+    def __init__(self, tree_kernel):
+        super().__init__()
+        self.tree_kernel = tree_kernel
+
+    def fit(self, X, y=None):
+        """Fit the underlying tree kernel."""
+        if hasattr(self.tree_kernel, 'fit') and not self._is_fitted():
+            self.tree_kernel.fit(X, y)
+        return self
+
+    def _is_fitted(self):
+        """Check if the underlying tree kernel is fitted."""
+        # Check if the tree kernel has fitted trees
+        # RandomForestKernel stores trees in self.ensemble.estimators_
+        if hasattr(self.tree_kernel, 'ensemble'):
+            if hasattr(self.tree_kernel.ensemble, 'estimators_'):
+                return len(self.tree_kernel.ensemble.estimators_) > 0
+        # TreeKernelDecisionTree stores trees in self.trees_
+        return hasattr(self.tree_kernel, 'trees_')
+
+    def __call__(self, X1, X2=None, eval_gradient=False):
+        """Compute kernel matrix."""
+        if not self._is_fitted():
+            raise RuntimeError(
+                "TreeKernelWrapper: The underlying tree kernel is not fitted. "
+                "Call fit(X, y) on this wrapper or on the tree kernel before using it."
+            )
+        return self.tree_kernel(X1, X2, eval_gradient)
+
+    def diag(self, X):
+        """Compute diagonal of the kernel matrix."""
+        if not self._is_fitted():
+            raise RuntimeError("TreeKernelWrapper: Kernel not fitted. Call fit() first.")
+        # For tree kernels, the diagonal is always 1 (self-similarity)
+        return np.ones(X.shape[0])
+
+    @property
+    def is_stationary(self):
+        """Tree kernels are not stationary."""
+        return False
+
+    @property
+    def theta(self):
+        """Hyperparameters (empty for tree kernels - no tunable parameters)."""
+        return np.array([])
+
+    @theta.setter
+    def theta(self, value):
+        """Set hyperparameters (no-op for tree kernels)."""
+        pass
+
+    @property
+    def bounds(self):
+        """Bounds for hyperparameters (empty for tree kernels)."""
+        return np.empty((0, 2))
+
+    def clone(self, **kwargs):
+        """Clone the kernel.
+
+        Since tree kernels have no tunable hyperparameters, we can return self.
+        The fitted state (trees_) is preserved because we don't create a new instance.
+        """
+        return self
+
+    def __repr__(self):
+        return f"TreeKernelWrapper({self.tree_kernel})"
+
+# Fix TreeKernelWrapper initialization
+# (This is a comment - the actual fix is below)

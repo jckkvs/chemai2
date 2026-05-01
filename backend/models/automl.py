@@ -24,6 +24,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.base import clone
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 
 def _execute_prediction_pipeline(
     estimator, X_train: np.ndarray, y_arr: np.ndarray, cv_obj, **kwargs
@@ -424,6 +425,7 @@ class AutoMLEngine:
                     n_splits=self.cv_folds,
                     extra_params=cv_extra_params
                 )
+                scoring = self._get_scoring(task)
                 result = run_cross_validation(
                     pipeline, X_for_cv, y, cv_config,
                     scoring=scoring,
@@ -545,7 +547,7 @@ class AutoMLEngine:
             num_cols = X_for_eda.select_dtypes(include='number').columns
             if X_for_eda[num_cols].isna().any().any():
                 preproc_report.missing_value_handled = True
-                preproc_report.imputations = {c: preprocess_cfg.numerical_imputer for c in num_cols if X_for_eda[c].isna().any()}
+                preproc_report.imputations = {c: preprocess_cfg.numeric_imputer for c in num_cols if X_for_eda[c].isna().any()}
 
         except Exception as e:
             logger.warning(f"前処理後データの取得に失敗: {e}")
@@ -557,7 +559,7 @@ class AutoMLEngine:
         try:
             from sklearn.model_selection import cross_val_predict
             from backend.models.cv_manager import get_cv
-            _cv_splitter = get_cv(CVConfig(cv_key=cv_key, n_splits=self.cv_folds, extra_params=cv_extra_params))
+            _cv_splitter = get_cv(CVConfig(cv_key=self.cv_key, n_splits=self.cv_folds, extra_params=cv_extra_params), task=task, groups=groups)
             # OOF/Train予測にはpredict（ラベル出力）を使用。
             # predict_proba → argmax だと非連続クラスラベル（例: [2,5,7]）で
             # インデックスとラベルが不一致になるバグがある。
@@ -630,6 +632,15 @@ class AutoMLEngine:
                                 resolved_constraints[col] = val
         except Exception as _e:
             logger.debug(f"自動検出済みの単調性制約抽出に失敗: {_e}")
+
+        # モデル自動保存（joblib）
+        try:
+            save_path = Path("models/automl_best_model.joblib")
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            joblib.dump(best_pipeline, save_path)
+            logger.info(f"モデルを自動保存しました: {save_path}")
+        except Exception as e:
+            logger.warning(f"モデル自動保存に失敗: {e}")
 
         return AutoMLResult(
             task=task,
@@ -942,397 +953,3 @@ class AutoMLEngine:
             logger.debug(f"Applied native monotonic constraints: {monotonic_array}")
         
         return estimator
-
-
-@dataclass
-class ModelResult:
-    """モデル結果のデータクラス"""
-    model_name: str
-    cv_scores: List[float]
-    cv_mean: float
-    cv_std: float
-    test_score: float
-    feature_importance: Optional[Dict[str, float]] = None
-    predictions: Optional[List[float]] = None
-    model_params: Dict = field(default_factory=dict)
-    training_time: float = 0.0
-    
-    def to_dict(self) -> Dict:
-        return asdict(self)
-
-
-class AutoML:
-    """自動機械学習クラス"""
-    
-    SUPPORTED_MODELS = {
-        'random_forest': {'reg': RandomForestRegressor, 'clf': RandomForestClassifier},
-        'lightgbm': {'reg': lgb.LGBMRegressor, 'clf': lgb.LGBMClassifier} if HAS_LIGHTGBM else None,
-        'xgboost': {'reg': xgb.XGBRegressor, 'clf': xgb.XGBClassifier} if HAS_XGBOOST else None,
-    }
-    
-    def __init__(self):
-        self.models: Dict[str, ModelResult] = {}
-        self.best_model: Optional[ModelResult] = None
-        self.best_model_name: str = ""
-        self.preprocessing: Dict = {}
-        self.target_encoder: Optional[LabelEncoder] = None
-        self.is_classification: bool = False
-        
-    def run_automl(
-        self,
-        df: pd.DataFrame,
-        target_col: str,
-        models: List[str] = None,
-        cv_folds: int = 5,
-        metric: str = 'rmse',
-        max_trials: int = 20,
-        progress_callback: Optional[Callable[[float, str], None]] = None
-    ) -> Dict:
-        """
-        AutoMLを実行
-        
-        Args:
-            df: 入力データ
-            target_col: 目的変数
-            models: 使用するモデルリスト
-            cv_folds: 交差検証のfold数
-            metric: 評価指標
-            max_trials: 最大試行回数
-            progress_callback: 進捗コールバック関数
-        
-        Returns:
-            結果の辞書
-        """
-        import time
-        start_time = time.time()
-        
-        if not HAS_SKLEARN:
-            raise ImportError("scikit-learnが必要です: pip install scikit-learn")
-        
-        if progress_callback:
-            progress_callback(0.0, "データの検証中...")
-        
-        # 1. データの検証と前処理
-        X, y, feature_names = self._preprocess_data(df, target_col)
-        
-        if progress_callback:
-            progress_callback(0.15, f"特徴量数: {len(feature_names)}, サンプル数: {len(y)}")
-        
-        # 2. モデルの訓練
-        if models is None:
-            models = ['random_forest']
-            if HAS_LIGHTGBM:
-                models.append('lightgbm')
-            if HAS_XGBOOST:
-                models.append('xgboost')
-        
-        # 使用可能なモデルのみを選択
-        available_models = [m for m in models if self.SUPPORTED_MODELS.get(m) is not None]
-        if not available_models:
-            raise ValueError("使用可能なモデルがありません")
-        
-        results = {}
-        for i, model_name in enumerate(available_models):
-            if progress_callback:
-                progress_callback(
-                    0.2 + (0.6 * (i + 1) / len(available_models)),
-                    f"{model_name}を訓練中..."
-                )
-            
-            model_start = time.time()
-            result = self._train_model(X, y, model_name, cv_folds, metric)
-            result.training_time = time.time() - model_start
-            
-            results[model_name] = result
-            self.models[model_name] = result
-            
-            if progress_callback:
-                progress_callback(
-                    0.2 + (0.6 * (i + 1) / len(available_models)),
-                    f"{model_name}完了 - CVスコア: {result.cv_mean:.4f}"
-                )
-        
-        # 3. 最良モデルの選択
-        is_higher_better = metric in ['r2', 'accuracy', 'f1', 'precision', 'recall']
-        if is_higher_better:
-            self.best_model_name = max(results.keys(), key=lambda k: results[k].cv_mean)
-        else:
-            self.best_model_name = min(results.keys(), key=lambda k: results[k].cv_mean)
-            
-        self.best_model = results[self.best_model_name]
-        
-        total_time = time.time() - start_time
-        
-        if progress_callback:
-            progress_callback(1.0, f"完了 - 総時間: {total_time:.2f}秒, 最良モデル: {self.best_model_name}")
-        
-        return {
-            'results': {k: v.to_dict() for k, v in results.items()},
-            'best_model': self.best_model_name,
-            'best_cv_score': self.best_model.cv_mean,
-            'feature_names': feature_names,
-            'is_classification': self.is_classification,
-            'metric': metric,
-            'total_time': total_time
-        }
-    
-    def _preprocess_data(self, df: pd.DataFrame, target_col: str) -> Tuple:
-        """データを前処理"""
-        # 目的変数の分離
-        if target_col not in df.columns:
-            raise ValueError(f"目的変数 '{target_col}' がデータに存在しません")
-        
-        y = df[target_col].copy()
-        
-        # 分類か回帰かを判定
-        unique_values = y.nunique()
-        self.is_classification = unique_values <= 10 or y.dtype == 'object'
-        
-        if self.is_classification and y.dtype == 'object':
-            # カテゴリカルな目的変数をエンコード
-            self.target_encoder = LabelEncoder()
-            y = self.target_encoder.fit_transform(y)
-        
-        # 数値特徴量の選択
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        if target_col in numeric_cols:
-            numeric_cols.remove(target_col)
-        
-        # カテゴリカル変数の処理（One-Hot Encoding）
-        categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-        if target_col in categorical_cols:
-            categorical_cols.remove(target_col)
-        
-        X = df[numeric_cols + categorical_cols].copy()
-        
-        # カテゴリカル変数をOne-Hot Encoding
-        if categorical_cols:
-            X = pd.get_dummies(X, columns=categorical_cols, drop_first=True)
-        
-        # 欠損値の補完
-        X = X.fillna(0)
-        
-        # 標準化
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-        
-        self.preprocessing = {
-            'scaler': scaler,
-            'feature_names': X.columns.tolist(),
-            'numeric_cols': numeric_cols,
-            'categorical_cols': categorical_cols
-        }
-        
-        return X_scaled, y, X.columns.tolist()
-    
-    def _train_model(self, X, y, model_name: str, cv_folds: int, metric: str) -> ModelResult:
-        """単一モデルを訓練"""
-        if model_name not in self.SUPPORTED_MODELS:
-            raise ValueError(f"サポートされていないモデル: {model_name}")
-        
-        model_class = self.SUPPORTED_MODELS[model_name]
-        if model_class is None:
-            raise ImportError(f"{model_name}はインストールされていません")
-        
-        # モデルのインスタンス化
-        if model_name == 'random_forest':
-            model = model_class['clf' if self.is_classification else 'reg'](
-                n_estimators=100,
-                max_depth=10,
-                min_samples_split=5,
-                min_samples_leaf=2,
-                random_state=42,
-                n_jobs=-1
-            )
-        elif model_name == 'lightgbm':
-            model = model_class['clf' if self.is_classification else 'reg'](
-                n_estimators=100,
-                max_depth=10,
-                learning_rate=0.1,
-                random_state=42,
-                n_jobs=-1,
-                verbose=-1
-            )
-        elif model_name == 'xgboost':
-            model = model_class['clf' if self.is_classification else 'reg'](
-                n_estimators=100,
-                max_depth=6,
-                learning_rate=0.1,
-                random_state=42,
-                n_jobs=-1,
-                verbosity=0
-            )
-        else:
-            model = model_class['clf' if self.is_classification else 'reg']()
-        
-        # 評価指標の設定
-        scoring = self._get_scoring_metric(metric, self.is_classification)
-        
-        # 交差検証
-        cv_scores = cross_val_score(model, X, y, cv=cv_folds, scoring=scoring, n_jobs=-1)
-        
-        # スコアの調整（neg_系は負の値なので反転）
-        if scoring.startswith('neg_'):
-            cv_scores = -cv_scores
-        
-        # テストデータの訓練
-        model.fit(X, y)
-        predictions = model.predict(X)
-        
-        # テストスコアの計算
-        test_score = self._calculate_metric(y, predictions, metric, self.is_classification)
-        
-        # 特徴量重要度
-        feature_importance = None
-        if hasattr(model, 'feature_importances_'):
-            feature_importance = dict(
-                zip(self.preprocessing['feature_names'],
-                   [float(x) for x in model.feature_importances_])
-            )
-        
-        return ModelResult(
-            model_name=model_name,
-            cv_scores=[float(x) for x in cv_scores],
-            cv_mean=float(np.mean(cv_scores)),
-            cv_std=float(np.std(cv_scores)),
-            test_score=float(test_score),
-            feature_importance=feature_importance,
-            predictions=[float(x) for x in predictions],
-            model_params=model.get_params()
-        )
-    
-    def _get_scoring_metric(self, metric: str, is_classification: bool) -> str:
-        """scikit-learn用のスコアリング指標を取得"""
-        if is_classification:
-            mapping = {
-                'accuracy': 'accuracy',
-                'f1': 'f1_weighted',
-                'precision': 'precision_weighted',
-                'recall': 'recall_weighted',
-                'rmse': 'neg_root_mean_squared_error',
-                'mae': 'neg_mean_absolute_error',
-                'r2': 'r2'
-            }
-        else:
-            mapping = {
-                'rmse': 'neg_root_mean_squared_error',
-                'mae': 'neg_mean_absolute_error',
-                'r2': 'r2',
-                'accuracy': 'r2',  # 回帰ではaccuracyは使えない
-                'f1': 'r2'
-            }
-        return mapping.get(metric, 'r2')
-    
-    def _calculate_metric(self, y_true, y_pred, metric: str, is_classification: bool) -> float:
-        """指定された指標でスコアを計算"""
-        if is_classification:
-            if metric == 'accuracy':
-                return accuracy_score(y_true, y_pred)
-            elif metric == 'f1':
-                return f1_score(y_true, y_pred, average='weighted', zero_division=0)
-            elif metric == 'precision':
-                return precision_score(y_true, y_pred, average='weighted', zero_division=0)
-            elif metric == 'recall':
-                return recall_score(y_true, y_pred, average='weighted', zero_division=0)
-            elif metric == 'rmse':
-                return np.sqrt(mean_squared_error(y_true, y_pred))
-            elif metric == 'mae':
-                return mean_absolute_error(y_true, y_pred)
-            else:
-                return accuracy_score(y_true, y_pred)
-        else:
-            if metric == 'rmse':
-                return np.sqrt(mean_squared_error(y_true, y_pred))
-            elif metric == 'mae':
-                return mean_absolute_error(y_true, y_pred)
-            elif metric == 'r2':
-                return r2_score(y_true, y_pred)
-            else:
-                return r2_score(y_true, y_pred)
-    
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
-        """最良モデルで予測"""
-        if self.best_model is None:
-            raise ValueError("モデルが訓練されていません")
-        
-        # 前処理
-        X_processed = self._apply_preprocessing(X)
-        
-        # 予測
-        predictions = self.best_model.model.predict(X_processed)
-        
-        # 分類の場合、ラベルをデコード
-        if self.is_classification and self.target_encoder:
-            predictions = self.target_encoder.inverse_transform(predictions)
-        
-        return predictions
-    
-    def _apply_preprocessing(self, X: pd.DataFrame) -> np.ndarray:
-        """訓練時と同じ前処理を適用"""
-        # カテゴリカル変数のOne-Hot Encoding
-        categorical_cols = self.preprocessing.get('categorical_cols', [])
-        if categorical_cols:
-            X = pd.get_dummies(X, columns=categorical_cols, drop_first=True)
-        
-        # 欠損値補完
-        X = X.fillna(0)
-        
-        # 標準化
-        scaler = self.preprocessing.get('scaler')
-        if scaler:
-            X = scaler.transform(X)
-        
-        return X
-    
-    def save_model(self, path: str):
-        """モデルを保存"""
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        
-        # モデルオブジェクトをシリアライズ可能な形式に変換
-        save_data = {
-            'best_model_name': self.best_model_name,
-            'best_model_params': self.best_model.model_params if self.best_model else None,
-            'best_cv_score': self.best_model.cv_mean if self.best_model else None,
-            'preprocessing': self.preprocessing,
-            'is_classification': self.is_classification,
-            'target_encoder_classes': self.target_encoder.classes_.tolist() if self.target_encoder else None,
-            'all_models': {k: v.to_dict() for k, v in self.models.items()}
-        }
-        
-        joblib.dump(save_data, path)
-        logger.info(f"モデルを保存: {path}")
-    
-    def load_model(self, path: str):
-        """モデルを読み込み"""
-        data = joblib.load(path)
-        
-        self.best_model_name = data['best_model_name']
-        self.preprocessing = data['preprocessing']
-        self.is_classification = data['is_classification']
-        
-        if data['target_encoder_classes'] is not None:
-            self.target_encoder = LabelEncoder()
-            self.target_encoder.classes_ = np.array(data['target_encoder_classes'])
-        
-        logger.info(f"モデルを読み込み: {path}")
-    
-    def export_report(self, path: str, results: Dict):
-        """解析レポートをJSONで出力"""
-        report = {
-            'timestamp': datetime.now().isoformat(),
-            'summary': {
-                'best_model': results['best_model'],
-                'best_cv_score': results['best_cv_score'],
-                'metric': results['metric'],
-                'total_time': results['total_time'],
-                'is_classification': results['is_classification']
-            },
-            'all_models': results['results'],
-            'feature_importance': self.models[results['best_model']].feature_importance
-        }
-        
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(report, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"レポートを出力: {path}")

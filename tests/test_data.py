@@ -469,3 +469,103 @@ class TestPreprocessor:
         ct = pp.build(res)
         Xt = ct.fit_transform(sample_df[["numeric_normal"]])
         assert Xt.shape[0] == len(sample_df)
+
+
+# ============================================================
+# T-004: tabular_50_safe.csv を使った統合テスト
+# ============================================================
+
+class TestTabular50SafeLoader:
+    """T-004: tabular_50_safe.csv のローダーテスト。"""
+
+    def test_load_tabular_50_safe_csv(self) -> None:
+        """tabular_50_safe.csv を正しく読み込めること。(T-004-01)"""
+        from pathlib import Path
+        csv_path = Path("data/samples/tabular_50_safe.csv")
+        assert csv_path.exists(), f"ファイルが見つかりません: {csv_path}"
+        df = load_file(csv_path)
+        assert isinstance(df, pd.DataFrame)
+        assert df.shape == (50, 9)
+        assert list(df.columns) == ['Feature_1', 'Feature_2', 'Feature_3', 'Feature_4', 'Feature_5', 'Feature_6', 'Feature_7', 'Feature_8', 'Target']
+
+    def test_tabular_50_safe_no_missing_values(self) -> None:
+        """tabular_50_safe.csv に欠損値がないこと。(T-004-02)"""
+        from pathlib import Path
+        df = load_file(Path("data/samples/tabular_50_safe.csv"))
+        assert df.isnull().sum().sum() == 0
+
+    def test_tabular_50_safe_all_numeric(self) -> None:
+        """tabular_50_safe.csv の全列が数値型であること。(T-004-03)"""
+        from pathlib import Path
+        df = load_file(Path("data/samples/tabular_50_safe.csv"))
+        assert all(pd.api.types.is_numeric_dtype(df[col]) for col in df.columns)
+
+    def test_tabular_50_safe_target_stats(self) -> None:
+        """tabular_50_safe.csv のTarget列の基本統計量。(T-004-04)"""
+        from pathlib import Path
+        df = load_file(Path("data/samples/tabular_50_safe.csv"))
+        assert df['Target'].dtype == np.float64
+        assert df['Target'].shape[0] == 50
+        assert not df['Target'].isnull().any()
+
+
+class TestTabular50SafePreprocessor:
+    """T-005: tabular_50_safe.csv を使った前処理テスト。"""
+
+    @pytest.fixture
+    def tabular_df(self) -> pd.DataFrame:
+        """tabular_50_safe.csv を読み込む。"""
+        from pathlib import Path
+        return load_file(Path("data/samples/tabular_50_safe.csv"))
+
+    def test_preprocessor_with_tabular_data(self, tabular_df: pd.DataFrame) -> None:
+        """tabular_50_safe.csv で Preprocessor が正しく動作すること。(T-005-01)"""
+        from sklearn.compose import ColumnTransformer
+        dt = TypeDetector()
+        X = tabular_df.drop(columns=['Target'])
+        result = dt.detect(X)
+        pp = Preprocessor()
+        ct = pp.build(result, target_col=None)
+        assert isinstance(ct, ColumnTransformer)
+        X_transformed = ct.fit_transform(tabular_df)
+        assert X_transformed.shape[0] == 50
+
+    def test_preprocessor_target_exclusion(self, tabular_df: pd.DataFrame) -> None:
+        """Target列を除外して前処理ができること。(T-005-02)"""
+        dt = TypeDetector()
+        X = tabular_df.drop(columns=['Target'])
+        y = tabular_df['Target'].values
+        result = dt.detect(X)
+        pp = Preprocessor()
+        ct = pp.build(result, target_col='Target')
+        Xt = ct.fit_transform(tabular_df, y)
+        assert Xt.shape[0] == 50
+        assert Xt.shape[1] > 0
+
+    def test_preprocessor_all_features_transform(self, tabular_df: pd.DataFrame) -> None:
+        """全ての特徴量が変換されること。(T-005-03)"""
+        dt = TypeDetector()
+        X = tabular_df.drop(columns=['Target'])
+        result = dt.detect(X)
+        pp = Preprocessor(PreprocessConfig(exclude_constant=False))
+        ct = pp.build(result, target_col=None)
+        Xt = ct.fit_transform(tabular_df.drop(columns=['Target']))
+        assert Xt.shape[0] == 50
+        # 8特徴量が少なくとも8列以上に変換される（OneHot等で増える可能性あり）
+        assert Xt.shape[1] >= 8
+
+    def test_build_full_pipeline_with_tabular(self, tabular_df: pd.DataFrame) -> None:
+        """tabular_50_safe.csv で build_full_pipeline が動作すること。(T-005-04)"""
+        from sklearn.linear_model import LinearRegression
+        dt = TypeDetector()
+        X = tabular_df.drop(columns=['Target'])
+        y = tabular_df['Target'].values
+        result = dt.detect(X)
+        pipeline = build_full_pipeline(
+            result,
+            LinearRegression(),
+            target_col=None,
+        )
+        pipeline.fit(X, y)
+        preds = pipeline.predict(X)
+        assert preds.shape == (50,)

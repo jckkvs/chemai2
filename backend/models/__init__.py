@@ -21,6 +21,11 @@ except ImportError:
     pass
 
 try:
+    from backend.models.regularized_tree import RegularizedTree
+except ImportError:
+    pass
+
+try:
     from backend.models.monotonic_kernel import (
         MonotonicKernelWrapper,
         MonotonicKernelClassifierWrapper,

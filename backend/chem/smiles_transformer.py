@@ -52,7 +52,7 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
         self.active_engines = active_engines
         self.count_normalization = count_normalization  # "raw" or "density"
         self.fraction_type = fraction_type
-        
+
         self.components = []
         if isinstance(smiles_col, str):
             self.components = [{"smiles_col": smiles_col, "fraction_col": None}]
@@ -68,11 +68,11 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
         """SMILESリストから記述子DataFrameを計算する。"""
         from backend.chem import RDKitAdapter, MordredAdapter
         from backend.chem.psmiles_adapter import PSmilesAdapter
-        
+
         # ポリマーSMILES (PSMILES) の検出
         # リストの先頭50件を見て、1件でも '*' または '[*]' があればポリマーとみなす
         has_psmiles = any(PSmilesAdapter.is_psmiles(smi) for smi in smiles_list[:50] if isinstance(smi, str))
-        
+
         # Streamlit セッションからの事前計算結果の再利用（存在する場合）
         try:
             import streamlit as st
@@ -81,7 +81,7 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
                 precalc_df = st.session_state.get("precalc_smiles_df")
                 orig_df = st.session_state.get("df")
                 orig_smiles_col = st.session_state.get("smiles_col")
-                
+
                 if precalc_df is not None and not precalc_df.empty and orig_df is not None and orig_smiles_col:
                     if not hasattr(st.session_state, "_smiles_precalc_dict"):
                         mapping = {}
@@ -89,9 +89,9 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
                             if pd.notna(smi) and idx in precalc_df.index:
                                 mapping[str(smi)] = precalc_df.loc[idx]
                         st.session_state["_smiles_precalc_dict"] = mapping
-                    
+
                     smi_dict = st.session_state["_smiles_precalc_dict"]
-                    
+
                     hit_rows = []
                     all_hit = True
                     for smi in smiles_list:
@@ -101,17 +101,17 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
                         else:
                             all_hit = False
                             break
-                            
+
                     if all_hit and hit_rows:
                         logger.info("事前計算された記述子キャッシュを再利用します。")
                         cached_df = pd.DataFrame(hit_rows)
                         cached_df.index = range(len(cached_df))
-                        
+
                         if self.selected_descriptors and not has_psmiles:
                             valid_cols = [c for c in self.selected_descriptors if c in cached_df.columns]
                             if valid_cols:
                                 return cached_df[valid_cols]
-                        
+
                         return cached_df
         except Exception as e:
             logger.debug(f"キャッシュ再利用スキップ: {e}")
@@ -135,25 +135,27 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
             X_chem = X_chem.loc[:, ~X_chem.columns.duplicated()]
             return X_chem
         else:
-            # ── プラグインレジストリ経由で全記述子を計算 ──
+            # ── プラグインリストリ経由で全記述子を計算 ──
             try:
                 from backend.chem.descriptors import compute_all_descriptors, get_plugins_by_engine
-                
+
                 # エンジン名から必要なプラグイン名を特定
                 plugin_names = None
                 if self.active_engines is not None:
                     plugin_names = []
                     for e in self.active_engines:
                         # RDKitAdapter -> RDKit 等の変換
-                        eng_map = {"RDKitAdapter": "RDKit", "XTBAdapter": "XTB", "MordredAdapter": "Mordred", 
-                                "SkfpAdapter": "scikit-FP", "Mol2VecAdapter": "Mol2Vec", "GroupContribAdapter": "GroupContrib",
-                                "MolAIAdapter": "MolAI", "UMAAdapter": "UMA", "PaDELAdapter": "PaDEL", 
-                                "DescriptaStorusAdapter": "DescriptaStorus", "MolfeatAdapter": "Molfeat", 
-                                "ChempropAdapter": "Chemprop", "CosmoAdapter": "COSMO", "UniPkaAdapter": "UniPKa"}
+                        eng_map = {
+                            "RDKitAdapter": "RDKit", "XTBAdapter": "XTB", "MordredAdapter": "Mordred",
+                            "SkfpAdapter": "scikit-FP", "Mol2VecAdapter": "Mol2Vec", "GroupContribAdapter": "GroupContrib",
+                            "MolAIAdapter": "MolAI", "UMAAdapter": "UMA", "PaDELAdapter": "PaDEL",
+                            "DescriptaStorusAdapter": "DescriptaStorus", "MolfeatAdapter": "Molfeat",
+                            "ChempropAdapter": "Chemprop", "CosmoAdapter": "COSMO", "UniPkaAdapter": "UniPka"
+                        }
                         eng_str = eng_map.get(e, e)
                         for p in get_plugins_by_engine(eng_str):
                             plugin_names.append(p.name)
-                            
+
                 X_chem = compute_all_descriptors(smiles_list, plugin_names=plugin_names)
                 if not X_chem.empty:
                     # 選択されている場合はフィルタリング
@@ -168,9 +170,9 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
                             )
                     return X_chem
                 else:
-                    logger.warning("プラグインレジストリから記述子が0件。従来アダプタにフォールバック。")
+                    logger.warning("プラグインリストリから記述子が0件。従来アダプタにフォールバック。")
             except Exception as e:
-                logger.warning(f"プラグインレジストリ経由の計算に失敗: {e}。従来アダプタにフォールバック。")
+                logger.warning(f"プラグインリストリ経由の計算に失敗: {e}。従来アダプタにフォールバック。")
 
             # フォールバック: 従来のRDKit+Mordredアダプタ
             from backend.chem import RDKitAdapter, MordredAdapter
@@ -191,18 +193,18 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
             X_chem = pd.concat(desc_dfs, axis=1)
             X_chem = X_chem.loc[:, ~X_chem.columns.duplicated()]
 
-        # 選択されている場合はフィルタリング
-        if self.selected_descriptors:
-            valid = [c for c in self.selected_descriptors if c in X_chem.columns]
-            if valid:
-                X_chem = X_chem[valid]
-            else:
-                logger.warning(
-                    "selected_descriptorsの記述子がいずれも最終計算結果に存在しません。"
-                    "全記述子を使用します (フォールバック)。"
-                )
-                
-        return X_chem
+            # 選択されている場合はフィルタリング
+            if self.selected_descriptors:
+                valid = [c for c in self.selected_descriptors if c in X_chem.columns]
+                if valid:
+                    X_chem = X_chem[valid]
+                else:
+                    logger.warning(
+                        "selected_descriptorsの記述子がいずれも最終計算結果に存在しません。"
+                        "全記述子を使用します (フォールバック)。"
+                    )
+
+            return X_chem
 
     def _apply_count_normalization(
         self, X_chem: pd.DataFrame, smiles_list: list[str]
@@ -215,8 +217,8 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
 
         Implements: van Krevelen 2009 - 密度正規化記述子
         引用: 分子サイズの影響を除外するため、カウント系記述子を
-              モル体積で正規化。これにより異なるサイズの分子間で
-              官能基密度を公平に比較可能。
+        モル体積で正規化。これにより異なるサイズの分子間で
+        官能基密度を公平に比較可能。
         """
         if self.count_normalization != "density":
             return X_chem
@@ -292,82 +294,82 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
         n_samples = len(X)
         descs_list = []
         mw_list = []
-        W_given_list = []
-        
+        w_given_list = []
+
         for comp in self.components:
             s_col = comp.get("smiles_col")
             f_col = comp.get("fraction_col")
-            
+
             smi_list = X[s_col].tolist() if s_col and s_col in X.columns else [""] * n_samples
-            
+
             # デスクリプタ計算
             desc = self._compute_descriptors(smi_list)
             desc = self._apply_count_normalization(desc, smi_list)
             descs_list.append(desc)
-            
+
             # 分子量計算
             mw = self._compute_molecular_weight(smi_list)
             mw_list.append(mw)
-            
+
             # 割合取得
             if f_col and f_col in X.columns:
                 w = pd.to_numeric(X[f_col], errors="coerce").fillna(0.0).values
             else:
                 w = np.ones(n_samples)
-            W_given_list.append(w)
-            
+            w_given_list.append(w)
+
         # wt/mol 分率の計算
-        W_given_mat = np.column_stack(W_given_list)
+        w_given_mat = np.column_stack(w_given_list)
         MW_mat = np.column_stack(mw_list)
-        
-        W_sum = W_given_mat.sum(axis=1, keepdims=True)
-        W_sum[W_sum == 0] = 1.0
-        W_given_mat = W_given_mat / W_sum # normalize
-        
+
+        w_sum = w_given_mat.sum(axis=1, keepdims=True)
+        w_sum[w_sum == 0] = 1.0
+        w_given_mat = w_given_mat / w_sum  # normalize
+
         if self.fraction_type == "wt":
-            wt_frac = W_given_mat
-            moles = W_given_mat / MW_mat
+            wt_frac = w_given_mat
+            moles = w_given_mat / MW_mat
             mol_sum = moles.sum(axis=1, keepdims=True)
             mol_sum[mol_sum == 0] = 1.0
             mol_frac = moles / mol_sum
-        else: # mol
-            mol_frac = W_given_mat
-            weights = W_given_mat * MW_mat
+        else:  # mol
+            mol_frac = w_given_mat
+            weights = w_given_mat * MW_mat
             wt_sum = weights.sum(axis=1, keepdims=True)
             wt_sum[wt_sum == 0] = 1.0
             wt_frac = weights / wt_sum
-            
+
         # ベースとするカラムセットは最初の有効な成分のものとする
         ref_cols = descs_list[0].columns if descs_list else pd.Index([])
-        
+
         res = pd.DataFrame(index=X.index, columns=ref_cols)
-        
+
         for col in ref_cols:
             rule = default_rules_manager.get_rule(str(col))
             fracs = wt_frac if rule == "wt" else mol_frac
-            
+
             val = np.zeros(n_samples)
             for i in range(len(self.components)):
                 if col in descs_list[i].columns:
                     val += fracs[:, i] * descs_list[i][col].values
             res[col] = val
-            
+
         return res
 
     def fit(self, X: pd.DataFrame, y: Any = None) -> "SmilesDescriptorTransformer":
         for comp in self.components:
             if comp["smiles_col"] not in X.columns:
                 raise ValueError(f"SMILES列 '{comp['smiles_col']}' がDataFrameに存在しません。")
-                
+
         X_chem = self._transform_mixture(X)
-        
+
         # 全NaN列の除去
         all_nan_cols = [c for c in X_chem.columns if X_chem[c].isna().all()]
         if all_nan_cols:
             X_chem = X_chem.drop(columns=all_nan_cols)
-            
+
         self._descriptor_cols = X_chem.columns.tolist()
-        
+
         # 削除すべきSMILES列を特定
         drop_cols = [c["smiles_col"] for c in self.components]
         self._non_smiles_cols = [c for c in X.columns if c not in drop_cols]
@@ -377,7 +379,7 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
         for comp in self.components:
             if comp["smiles_col"] not in X.columns:
                 raise ValueError(f"SMILES列 '{comp['smiles_col']}' がDataFrameに存在しません。")
-                
+
         X_chem = self._transform_mixture(X)
 
         for col in self._descriptor_cols:
@@ -398,6 +400,7 @@ class SmilesDescriptorTransformer(BaseEstimator, TransformerMixin):
     def get_feature_names_out(self, input_features: Any = None) -> np.ndarray:
         return np.array(self._non_smiles_cols + self._descriptor_cols)
 
+
 def progressive_precalculate(smiles_list: list[str], target_col_name: str = ""):
     """
     ユーザーの要求に応じ、優先順位をつけて事前計算を行い、進捗を yield するジェネレータ。
@@ -410,7 +413,7 @@ def progressive_precalculate(smiles_list: list[str], target_col_name: str = ""):
 
     # PSMILES check
     has_psmiles = any(PSmilesAdapter.is_psmiles(smi) for smi in smiles_list[:50] if isinstance(smi, str))
-    
+
     if has_psmiles:
         yield 0.1, "PSMILES形式を検出しました。Polymer用モデルをロード中...", pd.DataFrame()
         adapter = PSmilesAdapter()
@@ -440,7 +443,7 @@ def progressive_precalculate(smiles_list: list[str], target_col_name: str = ""):
             df_result = pd.concat([df_result, df_rd_rec], axis=1)
         except Exception:
             pass
-    df_result = df_result.loc[:, ~df_result.columns.duplicated()]
+        df_result = df_result.loc[:, ~df_result.columns.duplicated()]
 
     # --- ステップ2: 数え上げ系記述子 (is_count=True) ---
     yield 0.6, "数え上げ系記述子（原子数、環数等）を計算中...", df_result
@@ -453,7 +456,7 @@ def progressive_precalculate(smiles_list: list[str], target_col_name: str = ""):
                 df_result = pd.concat([df_result, df_counts], axis=1)
         except Exception:
             pass
-    df_result = df_result.loc[:, ~df_result.columns.duplicated()]
+        df_result = df_result.loc[:, ~df_result.columns.duplicated()]
 
     # --- ステップ3: 意味のある主要記述子 (厳選12個) ---
     CURATED_DESCRIPTORS = [
@@ -555,18 +558,18 @@ def precalculate_all_descriptors(
     # --- ステップ2: 追加エンジン ---
     _progress(4, 5, "追加エンジンの記述子を計算中...")
     _engine_adapters = {
-        "use_mordred":  ("Mordred",      "backend.chem.mordred_adapter",       "MordredAdapter",      {"selected_only": True}),
-        "use_xtb":      ("XTB",          "backend.chem.xtb_adapter",           "XTBAdapter",          {}),
-        "use_cosmo":    ("COSMO-RS",     "backend.chem.cosmo_adapter",         "CosmoAdapter",        {}),
-        "use_unipka":   ("UniPKa",       "backend.chem.unipka_adapter",        "UniPkaAdapter",       {}),
-        "use_contrib":  ("GroupContrib", "backend.chem.group_contrib_adapter", "GroupContribAdapter", {}),
-        "use_uma":      ("UMA",          "backend.chem.uma_adapter",           "UMAAdapter",          {}),
-        "use_skfp":     ("scikit-FP",    "backend.chem.skfp_adapter",          "SkfpAdapter",         {}),
-        "use_padel":    ("PaDEL",        "backend.chem.padel_adapter",         "PaDELAdapter",        {}),
-        "use_ds":       ("DescriptaStorus","backend.chem.descriptastorus_adapter","DescriptaStorusAdapter",{}),
-        "use_mol2vec":  ("Mol2Vec",      "backend.chem.mol2vec_adapter",       "Mol2VecAdapter",      {}),
-        "use_molfeat":  ("Molfeat",      "backend.chem.molfeat_adapter",       "MolfeatAdapter",      {}),
-        "use_chemprop": ("Chemprop",     "backend.chem.chemprop_adapter",      "ChempropAdapter",     {}),
+        "use_mordred": ("Mordred", "backend.chem.mordred_adapter", "MordredAdapter", {"selected_only": True}),
+        "use_xtb": ("XTB", "backend.chem.xtb_adapter", "XTBAdapter", {}),
+        "use_cosmo": ("COSMO-RS", "backend.chem.cosmo_adapter", "CosmoAdapter", {}),
+        "use_unipka": ("UniPka", "backend.chem.unipka_adapter", "UniPkaAdapter", {}),
+        "use_contrib": ("GroupContrib", "backend.chem.group_contrib_adapter", "GroupContribAdapter", {}),
+        "use_uma": ("UMA", "backend.chem.uma_adapter", "UMAAdapter", {}),
+        "use_skfp": ("scikit-FP", "backend.chem.skfp_adapter", "SkfpAdapter", {}),
+        "use_padel": ("PaDEL", "backend.chem.padel_adapter", "PaDELAdapter", {}),
+        "use_ds": ("DescriptaStorus", "backend.chem.descriptastorus_adapter", "DescriptaStorusAdapter", {}),
+        "use_mol2vec": ("Mol2Vec", "backend.chem.mol2vec_adapter", "Mol2VecAdapter", {}),
+        "use_molfeat": ("Molfeat", "backend.chem.molfeat_adapter", "MolfeatAdapter", {}),
+        "use_chemprop": ("Chemprop", "backend.chem.chemprop_adapter", "ChempropAdapter", {}),
     }
     extra_results: list[tuple[str, int]] = []  # [(name, n_new_cols), ...]
 

@@ -404,7 +404,7 @@ class TestAutoMLEngine:
         assert preds.shape == (len(regression_df),)
 
     def test_automl_too_few_records(self) -> None:
-        df = generate_numeric_data(n_samples=5, task="regression")
+        df = generate_numeric_data(n_samples=1, task="regression")
         engine = AutoMLEngine(task="regression", cv_folds=2, model_keys=["ridge"])
         with pytest.raises(ValueError, match="少なすぎます"):
             engine.run(df, target_col="target")

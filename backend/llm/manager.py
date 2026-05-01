@@ -37,9 +37,14 @@ class LLMState(str, Enum):
 class LLMManager:
     """
     Singleton manager for all LLM-related operations
-    
+
     Provides state-aware initialization, model switching, streaming chat,
     and benchmark execution with persistent settings.
+
+    Operation modes:
+    - 'local': Use local LLM (default, recommended)
+    - 'api': Use external API (OpenAI, etc.)
+    - 'prompt_only': Generate prompts only (secure mode, no LLM call)
     """
     _instance: Optional["LLMManager"] = None
     _state: LLMState = LLMState.UNINITIALIZED
@@ -49,92 +54,193 @@ class LLMManager:
     _current_model: Optional[LLMModelConfig] = None
     _engine: Optional[LLMEngine] = None
     _benchmark_runner: BenchmarkRunner
-    
+    _operation_mode: str = "local"
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._settings = load_settings()
             cls._instance._benchmark_runner = BenchmarkRunner()
             cls._instance._engine = None
+            cls._instance._operation_mode = cls._instance._settings.operation_mode or "local"
         return cls._instance
-    
+
     @property
     def state(self) -> LLMState:
         return self._state
-    
+
     @property
     def hardware(self) -> Optional[HardwareProfile]:
         return self._hardware
-    
+
     @property
     def current_model(self) -> Optional[LLMModelConfig]:
         return self._current_model
-    
+
+    @property
+    def operation_mode(self) -> str:
+        return self._operation_mode
+
     async def initialize(
         self,
         preferred_model: Optional[str] = None,
         force_cpu: bool = False,
         skip_benchmark_check: bool = False,
+        auto_download: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Initialize LLM system with hardware detection and model loading
-        
+
         Args:
             preferred_model: Override auto-selection
             force_cpu: Disable GPU even if available
             skip_benchmark_check: Skip benchmark recommendation lookup
-        
+            auto_download: Override auto-download setting (None = use settings)
+
         Returns:
             Status dict with model info and performance expectations
         """
         async with self._state_lock:
             if self._state == LLMState.READY:
                 return self._get_status()
-            
+
             self._state = LLMState.DETECTING_HARDWARE
-            logger.info("Starting LLM initialization...")
-            
+            self._operation_mode = self._settings.operation_mode or "local"
+            logger.info(f"Starting LLM initialization (mode: {self._operation_mode})...")
+
             try:
-                # 1. Detect hardware
-                self._hardware = detect_hardware()
-                logger.info(f"Hardware detected: {self._hardware.gpu_name} | {self._hardware.ram_available_gb:.1f}GB RAM")
-                
-                # 2. Check user benchmarks for recommendation
-                if not skip_benchmark_check:
-                    rec = self._benchmark_runner.get_user_recommendation(
-                        task="chemistry" if self._settings.prefer_chemistry_model else "general",
-                        max_latency_ms=self._settings.max_latency_ms,
+                # Mode-specific initialization
+                if self._operation_mode == "prompt_only":
+                    logger.info("Prompt-only mode: skipping LLM engine initialization")
+                    self._state = LLMState.READY
+                    return self._get_status()
+
+                elif self._operation_mode == "api":
+                    logger.info("API mode: using external API")
+                    # API mode doesn't need local model loading
+                    # Just verify API key is set
+                    if not self._settings.api_key:
+                        logger.warning("API mode selected but no API key configured")
+                    self._state = LLMState.READY
+                    return self._get_status()
+
+                elif self._operation_mode == "local":
+                    # 1. Detect hardware
+                    self._hardware = detect_hardware()
+                    logger.info(f"Hardware detected: {self._hardware.gpu_name} | {self._hardware.available_ram_gb:.1f}GB RAM")
+
+                    # 2. Check user benchmarks for recommendation
+                    if not skip_benchmark_check:
+                        rec = self._benchmark_runner.get_user_recommendation(
+                            task="chemistry" if self._settings.prefer_chemistry_model else "general",
+                            max_latency_ms=self._settings.max_latency_ms,
+                        )
+                        if rec and not preferred_model:
+                            preferred_model = rec["model_name"]
+                            logger.info(f"Using benchmark-recommended model: {preferred_model}")
+
+                    # 3. Select optimal model
+                    self._state = LLMState.LOADING_MODEL
+                    self._current_model = select_optimal_model(
+                        self._hardware, preferred_model, force_cpu
                     )
-                    if rec and not preferred_model:
-                        preferred_model = rec["model_name"]
-                        logger.info(f"Using benchmark-recommended model: {preferred_model}")
-                
-                # 3. Select optimal model
-                self._state = LLMState.LOADING_MODEL
-                self._current_model = select_optimal_model(
-                    self._hardware, preferred_model, force_cpu
-                )
-                logger.info(f"Selected model: {self._current_model.description}")
-                
-                # 4. Initialize engine
-                if self._engine is None:
-                    self._engine = LLMEngine()
-                
-                await self._engine.initialize(self._hardware, self._current_model, force_cpu)
-                
-                # 5. Update settings
-                self._settings.last_loaded_model = self._current_model.repo_id.split("/")[-1]
-                self._settings.force_cpu = force_cpu
-                save_settings(self._settings)
-                
-                self._state = LLMState.READY
-                logger.info("LLM initialization completed successfully.")
-                return self._get_status()
-                
+                    logger.info(f"Selected model: {self._current_model.description}")
+
+                    # 4. Auto-download on first run if enabled
+                    should_auto_download = (
+                        auto_download if auto_download is not None
+                        else self._settings.auto_download_on_first_run
+                    )
+
+                    if should_auto_download and self._current_model:
+                        await self._ensure_model_available(self._current_model, force_cpu)
+
+                    # 5. Initialize engine
+                    if self._engine is None:
+                        self._engine = LLMEngine()
+
+                    await self._engine.initialize(self._hardware, self._current_model, force_cpu)
+
+                    # 6. Update settings
+                    self._settings.last_loaded_model = self._current_model.repo_id.split("/")[-1]
+                    self._settings.force_cpu = force_cpu
+                    save_settings(self._settings)
+
+                    self._state = LLMState.READY
+                    logger.info("LLM initialization completed successfully.")
+                    return self._get_status()
+
+                else:
+                    raise ValueError(f"Unknown operation mode: {self._operation_mode}")
+
             except Exception as e:
                 self._state = LLMState.ERROR
                 logger.error(f"LLM initialization failed: {e}", exc_info=True)
                 raise RuntimeError(f"LLM initialization failed: {e}")
+
+    async def _ensure_model_available(self, model_config: LLMModelConfig, force_cpu: bool):
+        """Ensure model is available, download if missing"""
+        try:
+            from backend.llm.providers.hf_provider import is_model_downloaded, download_model_async, get_hf_token
+
+            model_id = model_config.repo_id
+            if is_model_downloaded(model_id):
+                logger.info(f"Model {model_id} already downloaded")
+                return
+
+            logger.info(f"Auto-downloading model: {model_id}")
+            token = get_hf_token()
+
+            # Download synchronously for initialization
+            from huggingface_hub import snapshot_download
+            snapshot_download(
+                repo_id=model_id,
+                token=token or None,
+                ignore_patterns=["*.msgpack", "*.h5", "flax_model*", "tf_model*"],
+            )
+            logger.info(f"Model {model_id} downloaded successfully")
+
+        except ImportError:
+            logger.warning("huggingface_hub not available, skipping auto-download")
+        except Exception as e:
+            logger.warning(f"Auto-download failed: {e}. Will try to load anyway.")
+
+    def generate_prompt_for_external_llm(
+        self,
+        user_prompt: str,
+        system_prompt: Optional[str] = None,
+        template: str = "standard",
+    ) -> str:
+        """
+        Generate prompt for external LLM (prompt_only mode).
+
+        Returns a formatted prompt string that can be copied to external LLM.
+        """
+        if system_prompt is None:
+            system_prompt = SYSTEM_PROMPT_ANALYSIS
+
+        # Apply template
+        if template == "chemistry":
+            system_prompt += "\n\nYou are a chemistry and materials informatics expert."
+        elif template == "code":
+            system_prompt += "\n\nYou are a Python code generation expert for scientific computing."
+
+        # Format as chat prompt
+        prompt = f"""# Instructions for External LLM
+
+## System Prompt
+{system_prompt}
+
+## User Prompt
+{user_prompt}
+
+## Notes
+- Copy the above to your preferred LLM (ChatGPT, Claude, etc.)
+- The system prompt sets the context and expertise area
+- The user prompt contains the specific task
+- Execute any generated code in a safe environment
+"""
+        return prompt
     
     async def switch_model(self, model_name: str) -> Dict[str, Any]:
         """Switch to a different model with proper cleanup"""

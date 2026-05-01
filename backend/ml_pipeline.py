@@ -13,7 +13,8 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler, PowerTransformer, QuantileTransformer
+from sklearn.preprocessing import StandardScaler, PowerTransformer
+from backend.ml.transformers import AdaptiveQuantileTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.feature_selection import (
     SelectFromModel, RFE, SelectKBest, f_regression, f_classif,
@@ -84,9 +85,9 @@ class PreprocessingConfig:
             from sklearn.preprocessing import RobustScaler
             scaler = RobustScaler()
         elif self.scaler == 'quantile_uniform':
-            scaler = QuantileTransformer(output_distribution='uniform')
+            scaler = AdaptiveQuantileTransformer(output_distribution='uniform')
         elif self.scaler == 'quantile_normal':
-            scaler = QuantileTransformer(output_distribution='normal')
+            scaler = AdaptiveQuantileTransformer(output_distribution='normal')
         elif self.scaler == 'power_yeojohnson':
             scaler = PowerTransformer(method='yeo-johnson', standardize=True)
         elif self.scaler == 'power_boxcox':

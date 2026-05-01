@@ -38,6 +38,13 @@ from backend.utils.config import RANDOM_STATE, AUTOML_N_JOBS
 
 logger = logging.getLogger(__name__)
 
+# Try to import CVStrategyFactory for unified CV creation
+try:
+    from backend.ml.cv_factory import CVStrategyFactory, CVConfig as FactoryCVConfig
+    _HAS_FACTORY = True
+except ImportError:
+    _HAS_FACTORY = False
+
 
 # ============================================================
 # WalkForward（時系列 Walk-Forward Validation）
@@ -342,19 +349,39 @@ class CVConfig:
     extra_params: dict[str, Any] = field(default_factory=dict)
 
 
-def get_cv(config: CVConfig) -> Any:
+def get_cv(config: CVConfig, task: str = "regression", groups: Any = None) -> Any:
     """
     CVConfig に基づいて CV スプリッタを返す。
     全引数が extra_params 経由で設定可能。
 
     Args:
         config: CVConfig インスタンス
+        task: "regression" or "classification" (for auto mode)
+        groups: group labels (for auto mode)
 
     Returns:
         sklearn互換のCV スプリッタ
     """
     key = config.cv_key
-    
+
+    # Try to use CVStrategyFactory if available (unified CV creation)
+    if _HAS_FACTORY:
+        try:
+            factory_config = FactoryCVConfig(strategy=key, n_splits=config.n_splits)
+            # Pass extra_params as additional kwargs
+            return CVStrategyFactory.create(factory_config, X=None, y=None, groups=groups)
+        except Exception:
+            pass  # Fall back to original logic
+
+    # Handle 'auto' mode
+    if key == "auto":
+        if groups is not None:
+            key = "group_kfold"
+        elif task == "classification":
+            key = "stratified_kfold"
+        else:
+            key = "kfold"
+
     # クラスの取得
     if key in _CV_REGISTRY:
         entry = _CV_REGISTRY[key]
@@ -500,7 +527,7 @@ def run_cross_validation(
             "std_test_score": float,
         }
     """
-    cv = get_cv(cv_config)
+    cv = get_cv(cv_config, task=cv_config.task if hasattr(cv_config, 'task') else "regression", groups=groups)
 
     # groupsはCV・cross_validate両方に渡す
     effective_groups = groups if groups is not None else cv_config.groups

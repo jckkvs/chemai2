@@ -101,13 +101,12 @@ class ModelExporter:
             logger.error(f"PMML export failed: {e}")
             raise
     
-    def export_pickle(self, model, output_path: str = None) -> Path:
-        """Export native pickle model"""
-        import pickle
-        out_path = output_path or self.output_dir / f"model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
-        with open(out_path, "wb") as f:
-            pickle.dump(model, f)
-        logger.info(f"Pickle model exported to {out_path}")
+    def export_joblib(self, model, output_path: str = None) -> Path:
+        """Export model using joblib"""
+        import joblib
+        out_path = output_path or self.output_dir / f"model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.joblib"
+        joblib.dump(model, out_path)
+        logger.info(f"Model exported to {out_path} (joblib)")
         return Path(out_path)
     
     def export_pdf_report(self, model_info: Dict[str, Any], plots: Dict[str, Any] = None, 

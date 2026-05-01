@@ -5,8 +5,9 @@ import numpy as np
 import pandas as pd
 import logging
 from sklearn.base import BaseEstimator, TransformerMixin, clone
-from sklearn.model_selection import cross_val_score, KFold, RFECV
+from sklearn.model_selection import cross_val_score, KFold
 from sklearn.feature_selection import (
+    RFECV,
     SelectFromModel,
     SelectPercentile,
     SelectKBest,
@@ -47,6 +48,7 @@ class FeatureSelectorConfig:
     stability_n_iterations: int = 5
     stability_threshold: float = 0.7
     random_state: int = 42
+    estimator_key: str = None  # For pipeline_grid compatibility
 
 def select_features_stable(
     X: pd.DataFrame,

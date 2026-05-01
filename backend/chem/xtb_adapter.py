@@ -352,7 +352,11 @@ class XTBAdapter(BaseChemAdapter):
                 if result.returncode != 0:
                     logger.warning(f"xTB failed for SMILES {smiles!r}: {result.stderr[:200]}")
                     return {}
-                
+
+                if not result.stdout:
+                    logger.warning(f"xTB produced no output for SMILES {smiles!r}")
+                    return {}
+
                 properties = _parse_xtb_output(result.stdout)
                 
                 # 最適化後座標の読み取り試行

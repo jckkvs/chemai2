@@ -19,22 +19,37 @@ logger = logging.getLogger(__name__)
 
 class LLMSettings(BaseModel):
     """LLM configuration schema with validation"""
-    # Model selection
-    preferred_model: Optional[str] = Field(None, description="Override auto-selection")
+    # Operation mode: 'local', 'api', 'prompt_only'
+    operation_mode: str = Field(
+        "local",
+        description="Operation mode: 'local' (default, local LLM), 'api' (external API), 'prompt_only' (secure, prompt generation only)"
+    )
+
+    # Model selection (local mode)
+    preferred_model: Optional[str] = Field("jckkvs/bonsai-8b-1.58bit", description="Override auto-selection (default: local bonsai)")
     prefer_chemistry_model: bool = Field(True, description="Boost chemistry-fine-tuned models")
     force_cpu: bool = Field(False, description="Disable GPU even if available")
-    
+
     # Performance
     max_latency_ms: float = Field(200.0, ge=50, le=1000, description="Max acceptable latency per token")
     default_temperature: float = Field(0.7, ge=0.0, le=1.5)
     default_max_tokens: int = Field(1024, ge=64, le=4096)
     context_override: Optional[int] = Field(None, ge=2048, le=16384)
-    
+
     # Paths & cache
     cache_dir: str = Field("~/.cache/chemai/llm")
     config_dir: str = Field("~/.config/chemai")
-    auto_download: bool = Field(True, description="Automatically download missing models")
-    
+    auto_download: bool = Field(True, description="Automatically download missing models on first run")
+    auto_download_on_first_run: bool = Field(True, description="Download default model (bonsai-8b) on first startup")
+
+    # API settings (api mode)
+    api_endpoint: Optional[str] = Field(None, description="External API endpoint")
+    api_key: Optional[str] = Field(None, description="External API key")
+    api_model_name: str = Field("gpt-4o-mini", description="External API model name")
+
+    # Prompt-only mode settings
+    prompt_template: str = Field("standard", description="Prompt template: 'standard', 'chemistry', 'code'")
+
     # State tracking
     last_loaded_model: Optional[str] = None
     last_benchmark_run: Optional[str] = None

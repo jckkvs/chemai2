@@ -17,7 +17,15 @@
       "Bash(python3 -c \"from nicegui.elements.mixins.content_element import ContentElement; print\\([m for m in dir\\(ContentElement\\) if 'content' in m.lower\\(\\) or 'set' in m.lower\\(\\)]\\)\")",
       "Bash(python3 -c \"from nicegui import ui; c = ui.chip\\('test'\\); print\\([m for m in dir\\(c\\) if not m.startswith\\('__'\\)]\\)\")",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(xargs ls *)",
+      "Bash(find C:\\\\\\\\Users\\\\\\\\horie\\\\\\\\chemai2_cc -type d)",
+      "Bash(xargs grep *)",
+      "Bash(python3 *)",
+      "Bash(echo.)",
+      "Bash(findstr /n \"cv_folds\")",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(tasklist //FI \"IMAGENAME eq python.exe\")"
     ]
   }
 }
