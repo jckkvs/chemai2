@@ -117,6 +117,9 @@ def probe_all_optional_libraries() -> dict[str, bool]:
         ("torch", "torch"),
         ("mlflow", "mlflow"),
         ("statsmodels", "statsmodels"),
+        # ドキュメント読み込み
+        ("pptx", "python-pptx"),
+        ("docx", "python-docx"),
         # パイプライン拡張
         ("skrebate", "relieff"),
         ("sklearn_genetic", "sklearn-genetic-opt"),

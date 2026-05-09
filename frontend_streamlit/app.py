@@ -184,6 +184,7 @@ with st.sidebar:
             ("📐", "次元削減",     "dim_reduction", has_data),
             ("🧬", "化合物解析",   "chem",          True),
             ("📚", "推奨変数ヘルプ","help_page",    True),
+            ("🤖", "LLM アシスタント","llm_assistant",True),
         ]
         for icon, label, pkey, enabled in expert_pages:
             if enabled:
@@ -204,7 +205,7 @@ page = st.session_state["page"]
 # メインUI — 詳細ツールページ以外は 3 タブ構造
 # ===============================================================
 _EXPERT_PAGES = {"data_load", "eda", "preprocess", "pipeline", "evaluation",
-                 "dim_reduction", "chem", "interpret", "help_page"}
+                 "dim_reduction", "chem", "interpret", "help_page", "llm_assistant"}
 
 if page in _EXPERT_PAGES:
     # サイドバーの「詳細ツール」から入ったページはそのまま表示
@@ -246,6 +247,9 @@ if page in _EXPERT_PAGES:
     elif page == "help_page":
         from frontend_streamlit.pages import help_page
         help_page.render_help_page()
+    elif page == "llm_assistant":
+        from frontend_streamlit.pages.pipeline import llm_assistant_page
+        llm_assistant_page.render()
 
 else:
     # ── メイン画面：3 タブ ──────────────────────────────────
