@@ -83,7 +83,7 @@ class PipelineConfig:
     n_jobs: int = 1
     cache_enabled: bool = True
     cache_dir: str = field(
-        default_factory=lambda: os.path.expanduser("~/.chemai2/cache/xtb_cosmo")
+        default_factory=lambda: os.path.expanduser("~/.chemai/cache/xtb_cosmo")
     )
     cache_ttl_hours: int = 168
     

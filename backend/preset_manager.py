@@ -2,7 +2,7 @@
 backend/preset_manager.py
 
 パイプライン設定プリセットの保存・読込・一覧・削除。
-YAML形式で ~/.chemai2/presets/ に保存する。
+YAML形式で ~/.chemai/presets/ に保存する。
 3フレームワーク共通で使えるバックエンド関数。
 
 Implements: 設定プリセット保存/読込（UI課題レポート §5.5, §7.2）
@@ -17,7 +17,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ── デフォルト保存先 ──
-DEFAULT_PRESET_DIR = Path.home() / ".chemai2" / "presets"
+DEFAULT_PRESET_DIR = Path.home() / ".chemai" / "presets"
 
 # ── 保存可能なstateキー（パイプライン設定に関するもののみ） ──
 PIPELINE_KEYS = [
@@ -62,7 +62,7 @@ def save_preset(
         state: 共有ステート辞書
         description: 説明文
         tags: タグリスト
-        preset_dir: 保存先ディレクトリ（デフォルト: ~/.chemai2/presets/）
+        preset_dir: 保存先ディレクトリ（デフォルト: ~/.chemai/presets/）
 
     Returns:
         保存先パス
@@ -269,7 +269,7 @@ def _make_serializable(obj: Any) -> Any:
 # ================================================================
 # 解析履歴管理
 # ================================================================
-DEFAULT_HISTORY_DIR = Path.home() / ".chemai2" / "history"
+DEFAULT_HISTORY_DIR = Path.home() / ".chemai" / "history"
 
 
 def record_analysis(

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class SettingsManager:
     """アプリケーション設定の一元管理（シングルトン）"""
 
-    DEFAULT_CONFIG_FILE = Path.home() / ".chemai2" / "config.json"
+    DEFAULT_CONFIG_FILE = Path.home() / ".chemai" / "config.json"
 
     def __init__(self, config_file: Optional[Path] = None):
         self.config_file = config_file or self.DEFAULT_CONFIG_FILE

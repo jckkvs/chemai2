@@ -365,7 +365,7 @@ def describe_constraint(item: dict[str, Any]) -> str:
 # ═══════════════════════════════════════════════════════════
 # テンプレート IO
 # ═══════════════════════════════════════════════════════════
-TEMPLATE_DIR = Path.home() / ".chemai2" / "constraint_templates"
+TEMPLATE_DIR = Path.home() / ".chemai" / "constraint_templates"
 
 
 def save_template(
